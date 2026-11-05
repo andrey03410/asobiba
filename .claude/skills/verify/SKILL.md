@@ -51,10 +51,11 @@ npm run dev        # сервер :8787 + сайт :5173
 ## Проверочный аккаунт и токен
 
 ```bash
-node scripts/seed-verify.mjs   # создаёт verify-a и verify-b, печатает путь к storage/verify/accounts.json
+npx tsx --env-file-if-exists=.env scripts/seed-verify.ts   # пересоздаёт verify-a (админ) и verify-b
 ```
 
 Логины, пароли и MCP-токен лежат в `storage/verify/accounts.json`. В чат и в git их не выводить.
+Скрипт пишет прямо в базу разработки, поэтому сервер может быть уже запущен.
 
 ## HTTP-пробы
 
@@ -64,6 +65,15 @@ node scripts/seed-verify.mjs   # создаёт verify-a и verify-b, печат
 ## Драйв UI
 
 Встроенный браузер Claude: `preview_start` с именем `asobiba-dev` из `.claude/launch.json`,
-затем `read_page`, `find`, `computer`. Для двух игроков — две вкладки: вторую логинь
-под `verify-b` через `javascript_tool` (`fetch('/api/auth/login', …)` и перезагрузка) или
-используй драйвер WebSocket для второго игрока.
+затем `read_page`, `find`, `computer`. Если сессия запущена из другой папки (например, Douga),
+`preview_start {name}` возьмёт чужой `launch.json`: тогда запусти `npm run dev` фоновой
+командой с логом в `storage/verification/<задача>/` и открой адрес через `preview_start {url}`.
+
+Вход: на странице `/login` заполни форму или выполни в странице
+`fetch('/api/auth/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({login, password})})`
+и перезагрузи. Пароль бери из `accounts.json`, в чат не выводи.
+
+Два игрока в одном браузере: куки привязаны к хосту, а не к порту, поэтому первый игрок
+открывает `http://localhost:5173`, второй — `http://127.0.0.1:5173` в другой вкладке.
+Сессии не пересекаются. Другой путь — второй игрок через драйвер WebSocket
+(`scripts/verify-game.mjs` как образец).
