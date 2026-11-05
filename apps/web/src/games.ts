@@ -1,0 +1,28 @@
+/**
+ * Games the site can draw. A new game adds its definition (for local
+ * validation) and its React client (board, seat icon, animation CSS) here.
+ */
+import { ticTacToe } from "@asobiba/game-tic-tac-toe";
+import { ticTacToeClient } from "@asobiba/game-tic-tac-toe/client";
+import { type AnyGame, type BoardProps, createCatalog, type GameClient, type SeatIconProps } from "@asobiba/sdk";
+import type { ComponentType } from "react";
+
+export type WebGameClient = GameClient<ComponentType<BoardProps>, ComponentType<SeatIconProps>>;
+
+const definitions: AnyGame[] = [ticTacToe];
+
+export const gameClients: Record<string, WebGameClient> = {
+  [ticTacToeClient.gameId]: ticTacToeClient,
+};
+
+/** Catalog for local validation in the browser; the server validates again. */
+export const catalog = createCatalog(definitions);
+
+export function gameClient(gameId: string): WebGameClient | undefined {
+  return gameClients[gameId];
+}
+
+/** Animation CSS of every game, injected once in the app root. */
+export const gamesCss = Object.values(gameClients)
+  .map((c) => c.css)
+  .join("\n");

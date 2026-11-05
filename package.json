@@ -1,0 +1,36 @@
+{
+  "name": "asobiba",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "games/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "node scripts/prisma.mjs migrate deploy && tsx watch --env-file-if-exists=.env --clear-screen=false apps/server/src/main.ts",
+    "dev:web": "npm run dev -w @asobiba/web",
+    "build": "npm run build -w @asobiba/web",
+    "start": "node scripts/prisma.mjs migrate deploy && NODE_ENV=production tsx --env-file-if-exists=.env apps/server/src/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "node scripts/prisma.mjs migrate dev",
+    "db:deploy": "node scripts/prisma.mjs migrate deploy",
+    "db:generate": "node scripts/prisma.mjs generate",
+    "postinstall": "node scripts/prisma.mjs generate",
+    "invite": "tsx --env-file-if-exists=.env scripts/invite.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String         @id
+  login          String         @unique
+  passwordHash   String
+  role           String         @default("user") // admin | user
+  createdAt      DateTime       @default(now())
+  sessions       Session[]
+  tokens         ApiToken[]
+  assets         Asset[]
+  uploadTickets  UploadTicket[]
+  configs        GameConfig[]
+  hostedLobbies  Lobby[]        @relation("LobbyHost")
+  memberships    LobbyMember[]
+  invitesCreated Invite[]       @relation("InviteCreator")
+  inviteUsed     Invite?        @relation("InviteUser")
+}
+
+/// Browser session. id is the sha256 of the cookie token.
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+}
+
+/// Single-use registration invite. Only the sha256 of the code is stored.
+model Invite {
+  id          String    @id
+  codeHash    String    @unique
+  role        String    @default("user")
+  createdById String?
+  createdBy   User?     @relation("InviteCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  usedById    String?   @unique
+  usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  usedAt      DateTime?
+}
+
+/// Personal MCP token (asb_…). Only the sha256 is stored.
+model ApiToken {
+  id         String    @id
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  tokenHash  String    @unique
+  prefix     String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId])
+}
+
+/// User image in the personal pool. path is relative to the storage dir.
+model Asset {
+  id        String   @id
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  mime      String
+  width     Int
+  height    Int
+  bytes     Int
+  path      String
+  source    String // upload | svg | url
+  createdAt DateTime @default(now())
+
+  @@index([ownerId])
+}
+
+/// One-time upload link for agents. id is the sha256 of the ticket.
+model UploadTicket {
+  id        String    @id
+  ownerId   String
+  owner     User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  expiresAt DateTime
+  usedAt    DateTime?
+  assetId   String?
+  createdAt DateTime  @default(now())
+}
+
+/// Saved game config document (see packages/sdk ConfigDocument).
+model GameConfig {
+  id        String   @id
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  gameId    String
+  title     String
+  document  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+/// Lobby with a frozen copy of the normalized config.
+model Lobby {
+  id        String        @id
+  name      String
+  gameId    String
+  config    Json
+  seats     Int
+  hostId    String
+  host      User          @relation("LobbyHost", fields: [hostId], references: [id], onDelete: Cascade)
+  status    String        @default("waiting") // waiting | playing | finished | closed
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  members   LobbyMember[]
+  matches   Match[]
+
+  @@index([status])
+}
+
+model LobbyMember {
+  lobbyId  String
+  userId   String
+  role     String // player | spectator
+  joinedAt DateTime @default(now())
+  lobby    Lobby    @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([lobbyId, userId])
+}
+
+/// One match of a lobby. log holds human actions with timestamps; replaying
+/// config + seed + startedAt + log reproduces the state exactly.
+model Match {
+  id         String    @id
+  lobbyId    String
+  lobby      Lobby     @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  seed       Int
+  startedAt  DateTime
+  seatUsers  Json // userId by seat
+  log        Json
+  status     String // playing | finished | aborted
+  result     Json?
+  finishedAt DateTime?
+
+  @@index([lobbyId])
+}
