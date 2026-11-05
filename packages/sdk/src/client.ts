@@ -37,6 +37,6 @@ export interface GameClient<Component = unknown, Icon = unknown> {
   SeatIcon: Icon;
   /** CSS for animations; inject once per page. */
   css: string;
-  /** Sample position for previews: `start` — empty board, `end` — a finished random round. */
+  /** Sample position for previews: `start` — empty board, `end` — a sampled random round, possibly intermediate when the game computation budget is reached. Check phase/lastRound before describing it as finished. */
   previewMatch(config: ConfigDocument, moment: "start" | "end", seed: number): MatchView;
 }

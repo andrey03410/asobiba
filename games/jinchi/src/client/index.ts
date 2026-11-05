@@ -15,13 +15,17 @@ export { JINCHI_CSS } from './css';
 
 /** Seeded sample positions use the engine, including manual dice rolls. */
 export function previewMatch(config: ConfigDocument, moment: 'start' | 'end', seed: number): MatchView {
+  const started = performance.now();
+  const budget = jinchi.simulationBudget?.(config.rules as never);
   const seats = jinchi.seats(config.rules as never).max;
   const quiet: ConfigDocument = { ...config, timer: { turnSeconds: 0, onTimeout: 'random' } };
   const match = Match.start({ game: jinchi, config: quiet, seats, seed, startedAt: 0 });
   if (moment === 'end') {
     const rng = createRng(seed * 31 + 7);
-    // Preview stays responsive even for the largest custom maps.
-    for (let turn = 1; turn <= 1800; turn++) {
+    // Share the game computation budget; a large map may show an intermediate position.
+    const maxActions = Math.min(1800, budget?.maxTotalActions ?? 1800);
+    for (let turn = 1; turn <= maxActions; turn++) {
+      if (performance.now() - started >= (budget?.maxDurationMs ?? 1000)) break;
       const summary = match.view(null);
       if (summary.phase !== 'playing') break;
       const seat = summary.currentSeats[0];

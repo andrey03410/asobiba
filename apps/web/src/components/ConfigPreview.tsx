@@ -29,6 +29,7 @@ function PreviewBoard({ config, moment, seed }: Props) {
           </span>
         ))}
       </div>
+      {moment === "end" && match.phase === "playing" && !match.lastRound && <p className="preview-summary muted">Показан промежуточный ход — партия на этой карте ещё не завершена.</p>}
       {moment === "end" && summary && <p className="preview-summary muted">{summary}</p>}
     </>
   );

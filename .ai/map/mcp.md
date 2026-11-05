@@ -29,6 +29,10 @@
 Карта — `rules.map: {width,height,rows}`: строки из `.`, `#`, `1`…`8`. Новый набор
 инструментов не нужен: validate/simulate/preview/save/lobby_create работают через каталог.
 `node --import tsx scripts/verify-jinchi.mjs` проверяет этот путь и сохраняет PNG.
+Симуляция Jinchi ограничена общим бюджетом по площади: ответ содержит requestedRounds,
+rounds (начатые), skippedRounds и отдельную диагностику budget-exceeded.
+Превью возвращает phase и partial; end может быть промежуточным положением большой
+карты. Не считай такое превью победой или бесконечной партией.
 
 ## Грабли
 

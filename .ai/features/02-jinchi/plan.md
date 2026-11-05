@@ -28,11 +28,11 @@
 
 Файлы: `games/jinchi/package.json`, `src/{rules,visual,game,presets,guide,index}.ts`, `src/game.test.ts`.
 Интерфейсы: все типы и функции T02.
-- [ ] Написать и увидеть красные тесты: прямоугольники, поворот, ошибка соседства/стены/чужого,
+- [x] Написать и увидеть красные тесты: прямоугольники, поворот, ошибка соседства/стены/чужого,
   захват обеих моделей, диагональ, защита базы, выбывание, пропуски, лимиты и воспроизведение.
-- [ ] Реализовать схемы/проверки/движок/правила по конфигу; 6 пресетов из P19.
-- [ ] Проверить все пресеты симуляцией; измерить поиск на 200×200.
-- [ ] Коммит `feat(jinchi): add configurable territory game engine`.
+- [x] Реализовать схемы/проверки/движок/правила по конфигу; 6 пресетов из P19.
+- [x] Проверить все пресеты симуляцией; измерить поиск на 200×200.
+- [x] Коммит `feat(jinchi): add configurable territory game engine`.
 
 ### 2. Доска и навигация
 
@@ -41,39 +41,39 @@
 MapViewport props: `{width,height,cells,colors,wallColor?,background?,grid?,children?,
 onCellHover?(x,y),onCellClick?(x,y),onStrokeStart?(x,y),onStrokeMove?(x,y),
 onStrokeEnd?(x,y),drawing?:boolean,focusCells?:number[],lastCells?:number[],toolbar?:ReactNode}`.
-- [ ] Красные тесты SSR: чистый SVG staticRender, цвета/стены, правила и HUD обычного Board.
-- [ ] Реализовать SVG paths, обзор, zoom/pan/pinch, fullscreen, горячие клавиши, миникарту.
-- [ ] Реализовать ghost, R/правый клик, hints H, тач-подтверждение, счёт/кубики/события/волну.
-- [ ] Проверить SSR и браузер 200×200/мобильный размер.
-- [ ] Коммит `feat(jinchi): add interactive board and map navigation`.
+- [x] Красные тесты SSR: чистый SVG staticRender, цвета/стены, правила и HUD обычного Board.
+- [x] Реализовать SVG paths, обзор, zoom/pan/pinch, fullscreen, горячие клавиши, миникарту.
+- [x] Реализовать ghost, R/правый клик, hints H, тач-подтверждение, счёт/кубики/события/волну.
+- [x] Проверить SSR и браузер 200×200/мобильный размер.
+- [x] Коммит `feat(jinchi): add interactive board and map navigation`.
 
 ### 3. Редактор карты
 
 Файлы: `games/jinchi/src/client/{MapEditor,editor-model}.tsx/ts`, тесты editor-model.
 Интерфейс: `MapEditor({value,onChange})`, карта T01; использует MapViewport задачи 2.
-- [ ] Красные тесты: resize сохраняет пересечение, flood, симметрия с номерами 1–4/1–2,
+- [x] Красные тесты: resize сохраняет пересечение, flood, симметрия с номерами 1–4/1–2,
   undo/redo пользовательского жеста и границы карты.
-- [ ] Кисть/прямоугольник/заливка, выбор материала, симметрия, resize, undo/redo/clear.
-- [ ] Проверка карты и счётчики во время рисования, понятный UI с подсказками.
-- [ ] Коммит `feat(jinchi): add map editor with symmetry and history`.
+- [x] Кисть/прямоугольник/заливка, выбор материала, симметрия, resize, undo/redo/clear.
+- [x] Проверка карты и счётчики во время рисования, понятный UI с подсказками.
+- [x] Коммит `feat(jinchi): add map editor with symmetry and history`.
 
 ### 4. Интеграция
 
 Файлы: `apps/{server,web}/package.json`, каталоги, SchemaForm, NewLobbyPage, LobbyPage,
 `packages/sdk/src/client.ts`, интеграционные тесты, `scripts/verify-jinchi.mjs`.
-- [ ] Зарегистрировать игру и клиент, workspace lock, override rules.map, передать имена в Board.
-- [ ] Добавить правила в лобби; изолировать превью от интерактивной панели.
-- [ ] Настоящий MCP: возможности→валидация→симуляция→PNG→лобби; два WebSocket до итога.
-- [ ] В браузере создать карту/лобби, зайти двумя игроками, сыграть, проверить F/R/H и мобильный вид.
-- [ ] Коммит `feat(web): integrate Jinchi configuration and lobbies`.
+- [x] Зарегистрировать игру и клиент, workspace lock, override rules.map, передать имена в Board.
+- [x] Добавить правила в лобби; изолировать превью от интерактивной панели.
+- [x] Настоящий MCP: возможности→валидация→симуляция→PNG→лобби; два WebSocket до итога.
+- [x] В браузере создать карту/лобби, зайти двумя игроками, сыграть, проверить F/R/H и мобильный вид.
+- [x] Коммит `feat(web): integrate Jinchi configuration and lobbies`.
 
 ### 5. QG, ревью и вливание
 
-- [ ] `npm test` → `npm run build` → `npx tsc --noEmit` после последних правок.
-- [ ] Живые проверки по verify; скриншоты/PNG/JSON в `storage/verification/02-jinchi/`.
-- [ ] Свежий независимый ревьюер, исправления существенного, запись в verify.md.
+- [x] `npm test` → `npm run build` → `npx tsc --noEmit` после последних правок.
+- [x] Живые проверки по verify; скриншоты/PNG/JSON в `storage/verification/02-jinchi/`.
+- [x] Свежий независимый ревьюер, исправления существенного, запись в verify.md.
 - [ ] PR, stage review; автономная приёмка; history, stage merged и merge в main.
 
 ### 6. Знания
 
-- [ ] Обновить `.ai/map/{games,sdk,web,server,mcp}.md` по фактическому коду и проверкам.
+- [x] Обновить `.ai/map/{games,sdk,web,server,mcp}.md` по фактическому коду и проверкам.

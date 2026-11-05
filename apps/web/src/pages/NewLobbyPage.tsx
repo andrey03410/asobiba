@@ -330,7 +330,7 @@ export function NewLobbyPage() {
                     Начало
                   </button>
                   <button type="button" className={moment === "end" ? "is-active" : ""} onClick={() => setMoment("end")}>
-                    Конец
+                    {gameId === "jinchi" ? "Пример партии" : "Конец"}
                   </button>
                 </div>
                 <button type="button" className="btn btn-small" onClick={() => setSeed(Math.floor(Math.random() * 1_000_000) + 1)} disabled={moment === "start"}>
