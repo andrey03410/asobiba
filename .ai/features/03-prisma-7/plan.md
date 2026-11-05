@@ -2,15 +2,15 @@
 
 ## Задачи
 
-- [ ] **1. Пакеты, генератор, конфиг.** Файлы: `apps/server/package.json` (точные 7.10.1 и адаптер),
+- [x] **1. Пакеты, генератор, конфиг.** Файлы: `apps/server/package.json` (точные 7.10.1 и адаптер),
   `schema.prisma` (`prisma-client`, `output`, без `url`), `prisma.config.ts`, `scripts/prisma.mjs`,
   `.gitignore`. Готово, когда: `npm install` генерирует клиент в `apps/server/src/generated/prisma`.
-- [ ] **2. Клиент и импорты.** Файлы: `apps/server/src/db.ts`, новый `apps/server/src/sqlite.ts`,
+- [x] **2. Клиент и импорты.** Файлы: `apps/server/src/db.ts`, новый `apps/server/src/sqlite.ts`,
   импорты в `auth`, `assets`, `configs`, `lobbies`. Тесты: `db.int.test.ts` — формат дат
   (целые миллисекунды) и запрос вне транзакции не попадает в чужую транзакцию (сначала красный).
-- [ ] **3. Совместимость с живой базой.** Копия `storage/asobiba.db`: `migrate status`, чтение,
+- [x] **3. Совместимость с живой базой.** Копия `storage/asobiba.db`: `migrate status`, чтение,
   новые записи пишутся числами, сессии остаются живыми.
-- [ ] **4. Знания.** Карточки `dev-env.md`, `server.md`, строка стека в `AGENTS.md`.
+- [x] **4. Знания.** Карточки `dev-env.md`, `server.md`, строка стека в `AGENTS.md`.
 
 ## Живые проверки
 

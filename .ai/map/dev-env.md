@@ -10,9 +10,10 @@
   - `dev` — `concurrently` запускает `dev:server` (миграции, затем `tsx watch apps/server/src/main.ts`, :8787) и `dev:web` (Vite, :5173);
   - `build` — сборка сайта в `apps/web/dist`; `start` — миграции и сервер в режиме production на :8787 вместе с сайтом;
   - `test` (`vitest run`), `typecheck`, `db:migrate`, `db:deploy`, `db:generate`, `invite`;
-  - `postinstall` генерирует Prisma-клиент.
-- [`scripts/prisma.mjs`](../../scripts/prisma.mjs) — обёртка Prisma CLI. Подставляет `--schema apps/server/prisma/schema.prisma` и абсолютный `DATABASE_URL` по умолчанию (`storage/asobiba.db`), читает `.env`.
-- [`apps/server/prisma/`](../../apps/server/prisma/) — схема и миграции.
+  - `postinstall` генерирует Prisma-клиент в `apps/server/src/generated/prisma` (папка в `.gitignore`).
+- [`scripts/prisma.mjs`](../../scripts/prisma.mjs) — точка входа в Prisma CLI: читает `.env`, подставляет абсолютный `DATABASE_URL` по умолчанию (`storage/asobiba.db`) и запускает CLI из корня. После `migrate dev` сам вызывает `generate`: в Prisma 7 миграция клиент не перегенерирует.
+- [`prisma.config.ts`](../../prisma.config.ts) — конфиг CLI Prisma 7: путь схемы, папка миграций, адрес базы. В `schema.prisma` адреса больше нет (P1012).
+- [`apps/server/prisma/`](../../apps/server/prisma/) — схема и миграции. Prisma 7.10.1, генератор `prisma-client`, клиент работает через адаптер [`apps/server/src/sqlite.ts`](../../apps/server/src/sqlite.ts) ([server.md](server.md)).
 - [`apps/server/src/env.ts`](../../apps/server/src/env.ts) — переменные окружения и умолчания.
 - [`tsconfig.json`](../../tsconfig.json) — один проект на все пакеты (`moduleResolution: Bundler`, `verbatimModuleSyntax`).
 - [`vitest.config.ts`](../../vitest.config.ts) и [`scripts/test-setup.ts`](../../scripts/test-setup.ts) — тестовая база и файлы.
@@ -51,7 +52,8 @@
 - Порт 3000 занят Douga. Asobiba живёт на 8787 и 5173. Перед `npm run dev` проверь оба: `lsof -nP -iTCP:8787 -sTCP:LISTEN; lsof -nP -iTCP:5173 -sTCP:LISTEN`. У Vite `strictPort`, второй экземпляр не уедет на другой порт.
 - Если сессия Claude запущена из папки Douga, `preview_start` берёт `.claude/launch.json` Douga и поднимает её dev-сервер. Сервер Asobiba тогда запускай фоновой командой (`npm run dev:server` с логом в `storage/verification/…`), а в браузере открывай адрес через `preview_start {url}`.
 - `Match.seed` — знаковый `INT` в SQLite: зерно партии берётся 31-битным (`randomSeed`). Беззнаковое 32-битное ломало старт партии примерно в половине случаев.
-- Prisma CLI тянет `deepmerge-ts` с предупреждением `npm audit` (high). Это только CLI-конфиг, в рантайм сервера не попадает. Обновление — переход на Prisma 7.
+- Версии Prisma закреплены точно (`7.10.1`): тег `latest` у пакета `prisma` указывает на кандидат Prisma 8 — другую ORM с другим API. Подсказка CLI «npm i prisma@latest» поставит именно её. Prisma 8 пока не подходит: SQLite там экспериментальный, а даты из нашей базы не читаются (задача 03).
+- `better-sqlite3` — нативный модуль: после смены версии Node нужен `npm rebuild`.
 - `npm run dev` пишет логи сервера в JSON (pino). Для чтения удобно `| grep -v '"incoming request"'`.
 
 ## Как проверить
@@ -63,3 +65,4 @@
 ## История
 
 - [задача 01](../features/01-rebuild/README.md) — пересборка на TypeScript, монорепо, SQLite и миграции
+- [задача 03](../features/03-prisma-7/README.md) — переход на Prisma 7.10.1, `prisma.config.ts`, клиент в `src/generated`

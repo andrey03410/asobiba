@@ -11,7 +11,7 @@
 ## Стек и команды
 
 TypeScript-монорепо на npm workspaces · Node 22 · Zod 4 · Fastify 5 + WebSocket ·
-Prisma 6 + SQLite · Vite + React 19 · MCP (Streamable HTTP) · Vitest.
+Prisma 7 + SQLite · Vite + React 19 · MCP (Streamable HTTP) · Vitest.
 
 | Команда | Что делает |
 |---|---|
