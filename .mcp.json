@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "asobiba": {
+      "type": "http",
+      "url": "http://localhost:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ASOBIBA_MCP_TOKEN}"
+      }
+    }
+  }
+}
