@@ -1,0 +1,77 @@
+# Технические решения
+
+## Исходная система
+
+Проверены `GameDefinition`, `Match`, `simulate`, каталог сервера, React-клиенты,
+`renderPreview`, `SchemaForm`, `NewLobbyPage`, `LobbyPage`. Игры — отдельные workspace-
+пакеты; схема Zod задаёт версию конфига; сервер повторно валидирует действия и конфиги.
+Превью рендерится тем же компонентом доски в статический SVG и PNG. Движок уже ведёт
+серии, таймеры и воспроизводимый журнал. Ветка синхронизирована с Prisma 7 из main.
+
+## Решения (агент, автономный режим)
+
+### T01. Представление карты
+
+Варианты: массив объектов клеток / строки. Выбраны `map: { width, height, rows }`:
+`rows` — ровно height строк длины width, `.` — пусто, `#` — стена, `1`…`8` — базы.
+Это компактные данные, удобные для MCP и редактора. Схема игры `jinchi`, версия 1.
+В состоянии плоский `cells: number[]`: -2 стена, -1 пусто, 0…7 места игроков.
+
+### T02. Публичный контракт
+
+`games/jinchi/src/index.ts` экспортирует `jinchi`, `JinchiRules`, `JinchiVisual`,
+`JinchiState`, `JinchiView`, `JinchiAction`, `checkRules`, `placementError`,
+`findPlacements`, `rulesText`, `DEFAULT_COLORS`.
+
+Правила: `map`, `dice: { sides, roll: 'auto'|'manual' }`,
+`placement: { adjacency: 'side'|'corner', overlapOwn }`,
+`capture: { walls, diagonal, opponents: 'all'|'except-starts'|'none' }`,
+`starts: { assignment: 'random'|'ordered', unused: 'empty'|'wall' }`,
+`end: { skipRounds, maxRounds, targetPercent }`.
+Визуал: `colors: string[8]`, `wallColor`, `background`, `grid`,
+`animations: { place: 'pop'|'none', capture: 'wave'|'none', durationMs }`.
+
+Состояние/вид: `width`, `height`, `cells`, `bases` (исходный владелец базы или -1),
+`currentSeat`, `turn` (номер хода), `cycle` (круг), `dice: [number,number]|null`,
+`scores`, `eliminated: boolean[]`, `events`, `lastMove`, `result`, `rules`, `area`.
+`lastMove: { seat, indices: number[], captured: number[], turn } | null`.
+Событие: `{ id: number, seat: number, type: 'roll'|'place'|'skip'|'capture'|'eliminate', text: string }`.
+Вид дополнительно `canAct: boolean`; полные списки ходов по сети не передаются.
+Действия: `{type:'roll'}` и `{type:'place', x:number, y:number, rotated:boolean}`.
+`placementError(state, seat, x, y, rotated): string|null` возвращает русскую причину.
+`findPlacements(state, seat, rotated?): JinchiAction[]` — только постановки,
+при undefined обе ориентации. `rulesText(rules): string[]`.
+
+### T03. Алгоритмы
+
+Проверки прямоугольников — интегральные суммы для занятости/соседства, O(площадь)
+на поиск всех якорей. Захват — итеративная заливка компонент без рекурсии.
+Диагональное кольцо: проход свободной области по 4 соседям, иначе по 8.
+При стенах открыты все максимальные по размеру компоненты, касающиеся игрока;
+остальные соприкасающиеся компоненты захватываются. В режиме только своих клеток
+открыты компоненты, достижимые от края; стены проходимы для проверки окружения.
+Автопропуски рассчитываются детерминированно до следующего допустимого хода или итога.
+При отключённом лимите пропусков, если даже максимальная фигура не помещается,
+перебросы продолжаются с защитой от зависания; случайность только из ctx.rng.
+
+### T04. Рендерер и камера
+
+Общая SVG-поверхность `MapViewport` для редактора и партии. Территории объединяются
+в SVG path по цветам; сетка pattern и только при достаточном масштабе. Полный экран
+с fallback на фиксированное окно, pointer-перетаскивание, pinch, колесо, клавиатура,
+мини-карта с рамкой, ручные переходы. Обновления партии камеру не сдвигают.
+Статический Board возвращает чистый SVG для существующего PNG-превью.
+
+### T05. Редактор и сайт
+
+`MapEditor` принимает `{ value: JinchiRules['map'], onChange(map) }`.
+Кисть/прямоугольник/заливка, симметрия с нумерацией баз, undo/redo, изменение размеров.
+SchemaForm получает универсальный override поля по пути; `rules.map` заменяется
+редактором, остальные настройки остаются схемой. В лобби и партии — правила из конфига.
+Для HUD BoardProps расширяется необязательными именами игроков и таймером сервера.
+Новые библиотеки для интерфейса не нужны.
+
+## Зоны
+
+Игры, SDK (клиентский контракт), web, серверный каталог/превью, MCP (через каталог).
+Карточки всех этих зон обновляются после проверки.
