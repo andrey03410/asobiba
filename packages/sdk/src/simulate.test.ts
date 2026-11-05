@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createCatalog, validateConfig } from "./config";
+import { createCatalog, presetDocument, validateConfig } from "./config";
 import { defineGame } from "./game";
 import { simulate } from "./simulate";
 import { raceGame } from "./testing";
@@ -35,5 +35,190 @@ describe("simulate", () => {
 
   it("is deterministic for a seed", () => {
     expect(simulate(raceGame, cfg("race"), { seed: 5 })).toEqual(simulate(raceGame, cfg("race"), { seed: 5 }));
+  });
+});
+
+const fixedRace = defineGame({ ...raceGame, legalActions: () => [{ add: 1 as const }] });
+const budgetRace = defineGame({ ...fixedRace, simulationBudget: () => ({ maxTotalActions: 12 }) });
+
+function issueCodes(report: ReturnType<typeof simulate>) {
+  return report.issues.map((issue) => issue.code);
+}
+
+describe("simulation computation budget", () => {
+  it("applies the game's total budget across finished and partially attempted rounds", () => {
+    const report = simulate(budgetRace, cfg("race"), { rounds: 5 });
+    expect(report).toMatchObject({ requestedRounds: 5, rounds: 2, skippedRounds: 3, finished: 1, unfinished: 1, averageActions: 6, maxActions: 10 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+    expect(report.finished + report.unfinished).toBe(report.rounds);
+  });
+
+  it("lets callers lower a game's budget but never raise it", () => {
+    const lower = simulate(budgetRace, cfg("race"), { rounds: 5, maxTotalActions: 3 });
+    expect(lower).toMatchObject({ rounds: 1, skippedRounds: 4, finished: 0, unfinished: 1, maxActions: 3 });
+    const higher = simulate(budgetRace, cfg("race"), { rounds: 5, maxTotalActions: 100 });
+    expect(higher).toMatchObject({ rounds: 2, skippedRounds: 3, finished: 1, unfinished: 1, maxActions: 10 });
+    expect(issueCodes(lower)).toEqual(["budget-exceeded"]);
+  });
+
+  it("counts an outcome reached by the final allowed global or per-round action", () => {
+    const global = simulate(fixedRace, cfg("race"), { rounds: 1, maxTotalActions: 10 });
+    expect(global).toMatchObject({ rounds: 1, requestedRounds: 1, skippedRounds: 0, finished: 1, unfinished: 0 });
+    expect(global.issues).toEqual([]);
+    const perRound = simulate(fixedRace, cfg("race"), { rounds: 1, maxActions: 10 });
+    expect(perRound.finished).toBe(1);
+    expect(perRound.issues).toEqual([]);
+  });
+
+  it("does not start another round when the cap exactly finishes the prior one", () => {
+    const report = simulate(fixedRace, cfg("race"), { rounds: 5, maxTotalActions: 20 });
+    expect(report).toMatchObject({ requestedRounds: 5, rounds: 2, skippedRounds: 3, finished: 2, unfinished: 0, averageActions: 10 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+
+  it("reports independent per-round failures without calling a budget-cut round never-ending", () => {
+    const report = simulate(endless, cfg("endless"), { rounds: 5, maxActions: 3, maxTotalActions: 7 });
+    expect(report).toMatchObject({ requestedRounds: 5, rounds: 3, skippedRounds: 2, finished: 0, unfinished: 3, averageActions: 2.3, maxActions: 3 });
+    expect(issueCodes(report)).toEqual(["never-ends", "budget-exceeded"]);
+    expect(report.issues.find((issue) => issue.code === "never-ends")?.message).toMatch(/^2 из 3 /);
+  });
+
+  it("retains per-round limit failures when no global budget exists", () => {
+    const report = simulate(endless, cfg("endless"), { rounds: 4, maxActions: 3 });
+    expect(report).toMatchObject({ requestedRounds: 4, rounds: 4, skippedRounds: 0, unfinished: 4, maxActions: 3 });
+    expect(issueCodes(report)).toEqual(["never-ends"]);
+  });
+
+  it("normalizes finite caller limits to whole actions with a minimum of one", () => {
+    for (const maxTotalActions of [0, -4, 0.5, 1.8]) {
+      const report = simulate(fixedRace, cfg("race"), { rounds: 2, maxTotalActions });
+      expect(report).toMatchObject({ rounds: 1, requestedRounds: 2, skippedRounds: 1, unfinished: 1, maxActions: 1 });
+      expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+    }
+  });
+
+  it("leaves older games unbounded unless a caller supplies a finite limit", () => {
+    for (const maxTotalActions of [undefined, Infinity, NaN]) {
+      const report = simulate(fixedRace, cfg("race"), { rounds: 4, maxTotalActions });
+      expect(report).toMatchObject({ rounds: 4, requestedRounds: 4, skippedRounds: 0, finished: 4, unfinished: 0 });
+      expect(report.issues).toEqual([]);
+    }
+  });
+
+  it("counts realtime ticks and recognizes a result at the budget boundary", () => {
+    const realtime = defineGame({
+      ...endless,
+      kind: "realtime",
+      legalActions: () => [],
+      tick: (s) => ({ ...s, moves: s.moves + 1 }),
+      roundResult: (s) => s.moves >= 2 ? { winners: [0], losers: [1], draw: false, reason: "test" } : null,
+      simulationBudget: () => ({ maxTotalActions: 3 }),
+    });
+    const report = simulate(realtime, cfg("endless"), { rounds: 4 });
+    expect(report).toMatchObject({ requestedRounds: 4, rounds: 2, skippedRounds: 2, finished: 1, unfinished: 1, maxActions: 2 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+});
+
+
+describe("Jinchi simulation budget", () => {
+  it("scales the game budget by map area and allows smaller caller limits", async () => {
+    const { jinchi } = await import("../../../games/jinchi/src/index");
+    const config = presetDocument(jinchi);
+    const rules = jinchi.rulesSchema.parse({ map: { width: 200, height: 200, rows: Array.from({ length: 200 }, (_, y) => y === 0 ? "1" + ".".repeat(199) : y === 199 ? ".".repeat(199) + "2" : ".".repeat(200)) }, dice: { sides: 2 } });
+    config.rules = rules;
+    expect(jinchi.simulationBudget?.(rules)).toEqual({ maxTotalActions: 500, maxDurationMs: 1000 });
+    const report = simulate(jinchi, config, { rounds: 100, maxTotalActions: 2 });
+    expect(report).toMatchObject({ requestedRounds: 100, rounds: 1, skippedRounds: 99, finished: 0, unfinished: 1, maxActions: 2 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+});
+
+describe("simulation duration budget", () => {
+  it("stops after an expensive setup before running any actions", () => {
+    let clock = 0;
+    let actionCalls = 0;
+    const expensiveSetup = defineGame({
+      ...fixedRace,
+      simulationBudget: () => ({ maxTotalActions: 1000, maxDurationMs: 10 }),
+      setup: (ctx) => { clock += 15; return fixedRace.setup(ctx); },
+      applyAction: (s, seat, action, ctx) => { actionCalls++; return fixedRace.applyAction(s, seat, action, ctx); },
+    });
+    const report = simulate(expensiveSetup, cfg("race"), { rounds: 4, nowMs: () => clock });
+    expect(report).toMatchObject({ rounds: 1, requestedRounds: 4, skippedRounds: 3, finished: 0, unfinished: 1, averageActions: 0, maxActions: 0 });
+    expect(actionCalls).toBe(0);
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+    expect(report.issues[0]?.message).toMatch(/времени.*10 мс/);
+    expect(report.issues[0]?.message).not.toMatch(/1000 действий/);
+  });
+
+  it("does not start the first round when time expired before setup", () => {
+    let reads = 0;
+    const report = simulate(fixedRace, cfg("race"), { rounds: 3, maxDurationMs: 10, nowMs: () => reads++ === 0 ? 0 : 10 });
+    expect(report).toMatchObject({ rounds: 0, requestedRounds: 3, skippedRounds: 3, finished: 0, unfinished: 0, averageActions: 0, maxActions: 0 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+
+  it("counts the round finished by an expensive final action and skips future rounds", () => {
+    let clock = 0;
+    const expensiveFinish = defineGame({
+      ...fixedRace,
+      applyAction: (s, seat, action, ctx) => { clock += 1; return fixedRace.applyAction(s, seat, action, ctx); },
+    });
+    const report = simulate(expensiveFinish, cfg("race"), { rounds: 4, maxDurationMs: 10, nowMs: () => clock });
+    expect(report).toMatchObject({ rounds: 1, skippedRounds: 3, finished: 1, unfinished: 0, maxActions: 10 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+
+  it("leaves an expensive nonterminal action partial without reporting never-ends", () => {
+    let clock = 0;
+    const expensiveAction = defineGame({
+      ...fixedRace,
+      applyAction: (s, seat, action, ctx) => { clock += 15; return fixedRace.applyAction(s, seat, action, ctx); },
+    });
+    const report = simulate(expensiveAction, cfg("race"), { rounds: 3, maxDurationMs: 10, nowMs: () => clock });
+    expect(report).toMatchObject({ rounds: 1, skippedRounds: 2, finished: 0, unfinished: 1, maxActions: 1, averageActions: 1 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+
+  it("counts a terminal setup even when the setup itself exceeds the time limit", () => {
+    let clock = 0;
+    const terminalSetup = defineGame({
+      ...fixedRace,
+      setup: (ctx) => { clock += 15; return { ...fixedRace.setup(ctx), winner: 0 }; },
+    });
+    const report = simulate(terminalSetup, cfg("race"), { rounds: 2, maxDurationMs: 10, nowMs: () => clock });
+    expect(report).toMatchObject({ rounds: 1, skippedRounds: 1, finished: 1, unfinished: 0, maxActions: 0 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+
+  it("lets a caller lower but never raise the game duration limit", () => {
+    function run(maxDurationMs: number) {
+      let clock = 0;
+      const timed = defineGame({
+        ...fixedRace,
+        simulationBudget: () => ({ maxTotalActions: 1000, maxDurationMs: 4 }),
+        applyAction: (s, seat, action, ctx) => { clock++; return fixedRace.applyAction(s, seat, action, ctx); },
+      });
+      return simulate(timed, cfg("race"), { rounds: 3, maxDurationMs, nowMs: () => clock });
+    }
+    expect(run(2).maxActions).toBe(2);
+    expect(run(20).maxActions).toBe(4);
+  });
+});
+
+describe("simulation deadline before action execution", () => {
+  it("does not execute an action when legal-action enumeration exhausts the deadline", () => {
+    let clock = 0;
+    let actionCalls = 0;
+    const expensiveLegal = defineGame({
+      ...fixedRace,
+      legalActions: () => { clock += 15; return [{ add: 1 as const }]; },
+      applyAction: (s, seat, action, ctx) => { actionCalls++; return fixedRace.applyAction(s, seat, action, ctx); },
+    });
+    const report = simulate(expensiveLegal, cfg("race"), { rounds: 2, maxDurationMs: 10, nowMs: () => clock });
+    expect(actionCalls).toBe(0);
+    expect(report).toMatchObject({ rounds: 1, unfinished: 1, skippedRounds: 1, maxActions: 0 });
+    expect(issueCodes(report)).toEqual(["budget-exceeded"]);
   });
 });

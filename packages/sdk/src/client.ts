@@ -16,6 +16,12 @@ export interface BoardProps {
   onAction?: (action: unknown) => void;
   /** Server-side previews: no animations, no interaction. */
   staticRender?: boolean;
+  /** Display names by seat for compact in-board HUDs. */
+  playerNames?: string[];
+  /** Server clock offset; clients use it for turn countdowns. */
+  clockOffset?: number;
+  /** Remaining turn time, for clients that supply a countdown directly. */
+  turnRemainingMs?: number | null;
 }
 
 export interface SeatIconProps {
@@ -31,6 +37,6 @@ export interface GameClient<Component = unknown, Icon = unknown> {
   SeatIcon: Icon;
   /** CSS for animations; inject once per page. */
   css: string;
-  /** Sample position for previews: `start` — empty board, `end` — a finished random round. */
+  /** Sample position for previews: `start` — empty board, `end` — a sampled random round, possibly intermediate when the game computation budget is reached. Check phase/lastRound before describing it as finished. */
   previewMatch(config: ConfigDocument, moment: "start" | "end", seed: number): MatchView;
 }

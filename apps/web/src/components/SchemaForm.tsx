@@ -23,6 +23,7 @@ interface FormContextValue {
   root: JsonSchema;
   issues: Map<string, ConfigIssue[]>;
   allIssues: readonly ConfigIssue[];
+  overrides?: Record<string, FieldOverride>;
 }
 
 const FormContext = createContext<FormContextValue>({ root: {}, issues: new Map(), allIssues: [] });
@@ -172,7 +173,7 @@ function EnumField({ name, path, schema, value, required, onChange }: FieldProps
         {!known && value !== undefined && <option value={JSON.stringify(value)}>{JSON.stringify(value)} (не из списка)</option>}
         {choices.map((c) => (
           <option key={JSON.stringify(c)} value={JSON.stringify(c)}>
-            {String(c)}
+            {schema.enumNames?.[choices.indexOf(c)] ?? String(c)}
             {schema.default !== undefined && c === schema.default ? " · по умолчанию" : ""}
           </option>
         ))}
@@ -369,8 +370,12 @@ function ObjectField({ name, path, schema, value, required, depth, onChange }: F
   );
 }
 
+export type FieldOverride = (props: { value: unknown; onChange: (value: unknown) => void }) => ReactNode;
+
 function Field(props: FieldProps) {
-  const { root } = useContext(FormContext);
+  const { root, overrides } = useContext(FormContext);
+  const override = overrides?.[props.path];
+  if (override) return override({ value: props.value, onChange: props.onChange });
   switch (fieldKind(props.schema, root)) {
     case "const":
       return null;
@@ -399,17 +404,18 @@ interface SchemaFormProps {
   value: unknown;
   onChange: (value: Record<string, unknown>) => void;
   issues?: readonly ConfigIssue[];
+  overrides?: Record<string, FieldOverride>;
 }
 
 /** Top-level properties become sections; `const` ones (sdk, game, versions) are kept as they are. */
-export function SchemaForm({ schema, value, onChange, issues = [] }: SchemaFormProps) {
+export function SchemaForm({ schema, value, onChange, issues = [], overrides }: SchemaFormProps) {
   const root = useMemo(() => resolveSchema(schema, (schema ?? {}) as JsonSchema), [schema]);
   const byPath = useMemo(() => {
     const map = new Map<string, ConfigIssue[]>();
     for (const issue of issues) map.set(issue.path, [...(map.get(issue.path) ?? []), issue]);
     return map;
   }, [issues]);
-  const ctx = useMemo(() => ({ root, issues: byPath, allIssues: issues }), [root, byPath, issues]);
+  const ctx = useMemo(() => ({ root, issues: byPath, allIssues: issues, overrides }), [root, byPath, issues, overrides]);
   const doc = isPlainObject(value) ? value : {};
   const required = new Set(root.required ?? []);
 

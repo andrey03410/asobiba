@@ -3,12 +3,17 @@ import { type AnyGame, isActionError, type Seat } from "./game";
 import { createRng } from "./rng";
 
 export interface SimulationIssue {
-  code: "never-ends" | "always-draw" | "first-seat-dominates" | "illegal-legal-action" | "stuck";
+  code: "never-ends" | "always-draw" | "first-seat-dominates" | "illegal-legal-action" | "stuck" | "budget-exceeded";
   message: string;
 }
 
 export interface SimulationReport {
+  /** Rounds actually started, including an interrupted partial round. */
   rounds: number;
+  /** Normalized requested count, before applying the computation budget. */
+  requestedRounds: number;
+  /** Requested rounds that were never started because of the computation budget. */
+  skippedRounds: number;
   finished: number;
   unfinished: number;
   draws: number;
@@ -24,6 +29,16 @@ export interface SimulateOptions {
   seed?: number;
   /** Turn games: actions per round before the round counts as never-ending. */
   maxActions?: number;
+  /** Total simulation steps across all rounds; may lower, but never raise, the game's budget. */
+  maxTotalActions?: number;
+  /** Wall-clock budget for this invocation; may only lower the game's duration budget. */
+  maxDurationMs?: number;
+  /** Monotonic clock override for deterministic tests; never part of game configuration. */
+  nowMs?: () => number;
+}
+
+function computationLimit(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(1, Math.floor(value)) : Infinity;
 }
 
 /**
@@ -32,7 +47,14 @@ export interface SimulateOptions {
  * does the first seat always win.
  */
 export function simulate(game: AnyGame, config: ConfigDocument, options: SimulateOptions = {}): SimulationReport {
-  const rounds = Math.max(1, Math.min(options.rounds ?? 50, 500));
+  const requestedRounds = Math.max(1, Math.min(Math.floor(Number.isNaN(options.rounds) ? 50 : options.rounds ?? 50), 500));
+  const nowMs = options.nowMs ?? (() => performance.now());
+  const startedAt = nowMs();
+  const gameBudget = game.simulationBudget?.(config.rules);
+  const maxTotalActions = Math.min(computationLimit(options.maxTotalActions), computationLimit(gameBudget?.maxTotalActions));
+  const maxDurationMs = Math.min(computationLimit(options.maxDurationMs), computationLimit(gameBudget?.maxDurationMs));
+  const durationExpired = () => Number.isFinite(maxDurationMs) && nowMs() - startedAt >= maxDurationMs;
+  let rounds = 0;
   const seats = game.seats(config.rules).max;
   const maxActions = options.maxActions ?? 2000;
   const winsBySeat = Array.from({ length: seats }, () => 0);
@@ -43,34 +65,58 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
   let longest = 0;
   let stuck = 0;
   let illegal = 0;
+  let neverEnds = 0;
+  let budgetExceeded: "actions" | "duration" | null = null;
 
-  for (let r = 0; r < rounds; r++) {
+  for (let r = 0; r < requestedRounds; r++) {
+    if (durationExpired()) {
+      budgetExceeded = "duration";
+      break;
+    }
+    if (totalActions >= maxTotalActions) {
+      budgetExceeded = "actions";
+      break;
+    }
+    rounds++;
     const rng = createRng((options.seed ?? 1) * 7919 + r);
     const ctx = { rules: config.rules, seats, rng, now: 0 };
     let state = game.setup({ ...ctx, round: 1, firstSeat: 0 });
     let actions = 0;
-    let done = false;
     let tick = 0;
     const step = 1000 / (game.tickRate ?? 20);
-    while (actions < maxActions) {
+    roundLoop: while (true) {
       const rr = game.roundResult(state);
       if (rr) {
         finished++;
         if (rr.draw) draws++;
         else for (const w of rr.winners) winsBySeat[w] = (winsBySeat[w] ?? 0) + 1;
-        done = true;
+        break;
+      }
+      // Check the outcome first, including after an expensive setup or final action.
+      if (durationExpired()) {
+        budgetExceeded = "duration";
+        break;
+      }
+      if (!(actions < maxActions)) {
+        neverEnds++;
+        break;
+      }
+      if (totalActions + actions >= maxTotalActions) {
+        budgetExceeded = "actions";
         break;
       }
       if (game.kind === "realtime") {
         for (let seat = 0; seat < seats; seat++) {
           if (rng.next() < 0.3) {
             const legal = game.legalActions(state, seat, ctx);
+            if (durationExpired()) continue roundLoop;
             if (legal.length > 0) {
               const next = game.applyAction(state, seat, rng.pick(legal), ctx);
               if (!isActionError(next)) state = next;
             }
           }
         }
+        if (durationExpired()) continue roundLoop;
         state = game.tick ? game.tick(state, { ...ctx, now: tick * step, tick, dtMs: step }) : state;
         tick++;
         actions++;
@@ -82,6 +128,7 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
         break;
       }
       const legal = game.legalActions(state, seat, ctx);
+      if (durationExpired()) continue;
       if (legal.length === 0) {
         if (!game.passTurn) {
           stuck++;
@@ -100,18 +147,22 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
     }
     totalActions += actions;
     longest = Math.max(longest, actions);
-    void done;
   }
 
   const unfinished = rounds - finished;
+  const skippedRounds = requestedRounds - rounds;
   if (illegal > 0) {
     issues.push({ code: "illegal-legal-action", message: `Игра отвергла ход из своего же списка допустимых в ${illegal} раундах — это ошибка игры, сообщите разработчику` });
   }
   if (stuck > 0) {
     issues.push({ code: "stuck", message: `В ${stuck} раундах у игрока не было ходов, а раунд не закончился` });
   }
-  if (unfinished - stuck - illegal > 0) {
-    issues.push({ code: "never-ends", message: `${unfinished - stuck - illegal} из ${rounds} раундов не закончились за ${maxActions} действий` });
+  if (neverEnds > 0) {
+    issues.push({ code: "never-ends", message: `${neverEnds} из ${rounds} раундов не закончились за ${maxActions} действий` });
+  }
+  if (budgetExceeded) {
+    const limit = budgetExceeded === "duration" ? `лимит времени симуляции: ${maxDurationMs} мс` : `общий лимит симуляции: ${maxTotalActions} действий`;
+    issues.push({ code: "budget-exceeded", message: `Достигнут ${limit}. Начато ${rounds} из ${requestedRounds} раундов; остальные не проверены полностью` });
   }
   if (finished >= 10 && draws / finished >= 0.95) {
     issues.push({ code: "always-draw", message: `При случайной игре ${Math.round((draws / finished) * 100)}% раундов — ничьи: победить слишком трудно` });
@@ -123,11 +174,13 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
 
   return {
     rounds,
+    requestedRounds,
+    skippedRounds,
     finished,
     unfinished,
     draws,
     winsBySeat,
-    averageActions: Math.round((totalActions / rounds) * 10) / 10,
+    averageActions: rounds > 0 ? Math.round((totalActions / rounds) * 10) / 10 : 0,
     maxActions: longest,
     issues,
   };

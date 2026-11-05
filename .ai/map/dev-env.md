@@ -47,6 +47,13 @@
 - Тесты: файлы `**/*.test.ts(x)` во всех пакетах, среда node, файлы идут последовательно. Интеграционные тесты сервера — `apps/server/src/**/*.int.test.ts`: поднимают настоящий Fastify (часто на случайном порту) с тестовой базой `storage/test/test.db`, которую `test-setup.ts` пересоздаёт миграциями перед прогоном. Базу разработки тесты не трогают, поэтому их можно гонять при работающем `npm run dev`.
 - Обязательная тройка после последних правок, в этом порядке: `npm test` → `npm run build` → `npx tsc --noEmit`.
 
+## Создание чистой SQLite-базы
+
+Prisma 7 на macOS может возвращать пустую `Schema engine error` при migrate deploy
+в отсутствующий файл. Обёртка `scripts/prisma.mjs` перед deploy атомарно создаёт пустой
+файл через `ax`; существующую базу не изменяет. Проверка — `prisma-cli.test.ts`.
+Это требуется и свежему checkout, и test globalSetup, пересоздающему storage/test.
+
 ## Грабли
 
 - Порт 3000 занят Douga. Asobiba живёт на 8787 и 5173. Перед `npm run dev` проверь оба: `lsof -nP -iTCP:8787 -sTCP:LISTEN; lsof -nP -iTCP:5173 -sTCP:LISTEN`. У Vite `strictPort`, второй экземпляр не уедет на другой порт.

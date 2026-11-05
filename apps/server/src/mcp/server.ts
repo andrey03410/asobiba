@@ -76,7 +76,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "config_simulate",
     {
       title: "Прогнать случайные партии",
-      description: "Играет раунды случайными ходами: доля ничьих, победы по местам (место 0 ходит первым), длина, проблемы never-ends / stuck / always-draw / first-seat-dominates. Работает синхронно, поэтому не больше 200 раундов.",
+      description: "Играет раунды случайными ходами: доля ничьих, победы по местам (место 0 ходит первым), длина, проблемы never-ends / stuck / always-draw / first-seat-dominates. Работает синхронно: максимум 200 запрошенных раундов. Игра может ограничивать вычисления: rounds — начатые, skippedRounds — не начатые, requestedRounds — запрошенные. budget-exceeded означает предел вычислений, а не бесконечную партию.",
       inputSchema: { config: configArg, rounds: z.int().min(1).max(200).optional().describe("Сколько раундов, по умолчанию 100") },
       annotations: { readOnlyHint: true },
     },
@@ -93,7 +93,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "config_preview",
     {
       title: "Превью картинкой",
-      description: "PNG поля так, как его увидят игроки (без анимаций): start — пустое поле, end — конец случайного раунда (видны фигуры и линия победы).",
+      description: "PNG поля без анимаций: start — стартовая позиция, end — пример случайной партии. На большой карте вычисления ограничены: partial=true означает промежуточную позицию, phase показывает состояние.",
       inputSchema: {
         config: configArg,
         moment: z.enum(["start", "end"]).optional().describe("По умолчанию end"),
@@ -106,12 +106,13 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
         const res = await validated(config);
         const preview = await renderPreview(s.assets, res.config, moment ?? "end", seed ?? 1);
         const last = preview.match.lastRound;
+        const partial = (moment ?? "end") === "end" && preview.match.phase === "playing" && !last;
         return {
           content: [
             { type: "image", data: preview.png.toString("base64"), mimeType: "image/png" },
             {
               type: "text",
-              text: JSON.stringify({ width: preview.width, height: preview.height, moment: moment ?? "end", round: last ? last.summary ?? last.reason : "раунд не начат" }),
+              text: JSON.stringify({ width: preview.width, height: preview.height, moment: moment ?? "end", phase: preview.match.phase, partial, round: last ? last.summary ?? last.reason : partial ? "Промежуточная позиция: партия ещё идёт" : "стартовая позиция" }),
             },
           ],
         };

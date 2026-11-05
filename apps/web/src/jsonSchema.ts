@@ -12,6 +12,8 @@ export interface JsonSchema {
   default?: unknown;
   const?: unknown;
   enum?: unknown[];
+  /** Optional display labels, indexed like enum; values remain unchanged. */
+  enumNames?: string[];
   properties?: Record<string, JsonSchema>;
   required?: string[];
   additionalProperties?: boolean | JsonSchema;

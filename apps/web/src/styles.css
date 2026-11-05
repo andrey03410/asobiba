@@ -1535,3 +1535,11 @@ textarea:focus {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Jinchi carries its own HUD and map camera. */
+.board-frame.board-frame-jinchi { max-width: none; border: 0; border-radius: 22px; overflow: visible; background: transparent; box-shadow: none; }
+.lobby-rules { padding-left: 20px; font-size: .85rem; line-height: 1.6; }
+.lobby-rules li { margin: 10px 0; }
+
+.sf-children > .jn-editor { grid-column: 1 / -1; min-width: 0; }
+.create-editor-jinchi .sf-key { display: none; }

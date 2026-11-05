@@ -92,6 +92,20 @@ describe("MCP over Streamable HTTP", () => {
     expect(upload.json.method).toBe("PUT");
   });
 
+  it("labels a budget-limited large map preview as an intermediate position", async () => {
+    const ann = await signUp(t, "ann");
+    const { secret } = await t.services.auth.createToken(ann.user.id, "Preview");
+    const client = await connect(secret);
+    try {
+      const rows = Array.from({ length: 200 }, (_, y) => y === 0 ? "11" + ".".repeat(198) : y === 199 ? ".".repeat(198) + "22" : ".".repeat(200));
+      const preview = await call(client, "config_preview", { config: { sdk: 1, game: "jinchi", gameVersion: 1, rules: { map: { width: 200, height: 200, rows }, dice: { sides: 2 }, capture: { walls: false }, end: { skipRounds: 0 } } }, moment: "end", seed: 1 });
+      expect(preview.isError).toBe(false);
+      expect(preview.json).toMatchObject({ phase: "playing", partial: true });
+      expect(preview.json.round).not.toBe("раунд не начат");
+      expect(preview.content.some(c => c.type === "image")).toBe(true);
+    } finally { await client.close(); }
+  });
+
   it("keeps users apart", async () => {
     const ann = await signUp(t, "ann");
     const bob = await signUp(t, "bob");
