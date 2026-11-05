@@ -16,7 +16,7 @@ from src.lobbies.ws import router as ws_router
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Sandbox Games")
+app = FastAPI(title="Asobiba")
 
 app.add_middleware(
     CORSMiddleware,

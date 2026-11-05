@@ -25,7 +25,7 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null)
 
-const TOKEN_KEY = 'sandbox_games_token'
+const TOKEN_KEY = 'asobiba_token'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
