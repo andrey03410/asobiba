@@ -23,7 +23,7 @@ export async function renderPreview(assets: AssetService, config: ConfigDocument
   const client = gameClient(config.game);
   if (!client) throw badRequest("no_preview", `У игры ${config.game} нет превью`);
   const match = client.previewMatch(config, moment, seed);
-  const uris = await assets.dataUris(collectAssetRefs(config).map((r) => r.assetId));
+  const uris = await assets.previewDataUris(collectAssetRefs(config).map((r) => r.assetId));
   const svg = renderToStaticMarkup(
     createElement(client.Board, { match, config, seat: null, assetUrl: (id: string) => uris.get(id) ?? "", staticRender: true }),
   );

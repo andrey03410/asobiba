@@ -10,6 +10,8 @@ import { newId, randomSeed } from "../ids";
 export interface Subscriber {
   userId: string;
   send(message: ServerMessage): void;
+  /** True once the connection is gone; a pending subscribe is then dropped. */
+  closed?(): boolean;
 }
 
 interface Room {
@@ -70,11 +72,20 @@ export class LobbyService {
     return row;
   }
 
+  /**
+   * The in-memory room of a lobby, created on first use. Callers outside the lobby
+   * lock may race here, so the map is checked again after the awaits: the room that
+   * holds a live match must never be replaced by a fresh one.
+   */
   private async room(lobbyId: string): Promise<Room> {
-    let room = this.rooms.get(lobbyId);
-    if (room) return room;
+    const existing = this.rooms.get(lobbyId);
+    if (existing) return existing;
+    const lobby = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { id: true } });
+    if (!lobby) throw notFound("Лобби не найдено");
     const last = await this.deps.db.match.findFirst({ where: { lobbyId }, orderBy: { startedAt: "desc" } });
-    room = {
+    const raced = this.rooms.get(lobbyId);
+    if (raced) return raced;
+    const room: Room = {
       lobbyId,
       match: null,
       matchId: last?.id ?? null,
@@ -278,8 +289,18 @@ export class LobbyService {
       if (!room.match) return { ok: false, error: { code: "no_match", message: "Партия не идёт" } };
       const seat = room.seatUsers.indexOf(user.id);
       if (seat < 0) return { ok: false, error: { code: "not_a_player", message: "Вы не играете в этой партии" } };
-      const res = room.match.dispatch(seat, action, this.deps.now());
-      if (!res.ok) return res;
+      const now = this.deps.now();
+      // run due timers first: a late action may be rejected after a timeout or the
+      // final round already happened, and clients must still see that change
+      const advanced = room.match.advance(now);
+      const res = room.match.dispatch(seat, action, now);
+      if (!res.ok) {
+        if (advanced) {
+          await this.afterMatchChange(room);
+          this.publishMatch(room);
+        }
+        return res;
+      }
       await this.deps.db.match.update({
         where: { id: room.matchId as string },
         data: { log: room.match.record().log as unknown as Prisma.InputJsonValue },
@@ -296,6 +317,7 @@ export class LobbyService {
     await this.lock(lobbyId, async () => {
       const row = await this.loadRow(lobbyId);
       const room = await this.room(lobbyId);
+      if (sub.closed?.()) return; // the socket went away while we waited for the lock
       room.subscribers.add(sub);
       sub.send({ type: "lobby", lobby: this.dto(row, room) });
       this.sendMatch(room, sub);
@@ -304,6 +326,8 @@ export class LobbyService {
 
   unsubscribe(sub: Subscriber, lobbyId?: string): void {
     for (const room of lobbyId ? [this.rooms.get(lobbyId)] : this.rooms.values()) room?.subscribers.delete(sub);
+    // a subscribe for this lobby may still be waiting for the lock: remove again after it
+    if (lobbyId) void this.lock(lobbyId, async () => void this.rooms.get(lobbyId)?.subscribers.delete(sub)).catch(() => {});
   }
 
   private async publishLobby(room: Room): Promise<LobbyDto> {

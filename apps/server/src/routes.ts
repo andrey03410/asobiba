@@ -4,6 +4,7 @@ import { describeGame, listGames } from "@asobiba/sdk";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Services } from "./app";
+import { FailureLimiter } from "./auth/rate-limit";
 import { SESSION_TTL_MS } from "./auth/service";
 import { badRequest, forbidden, HttpError, notFound, unauthorized } from "./http-errors";
 import type { Subscriber } from "./lobbies/service";
@@ -53,9 +54,26 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     return { user };
   });
 
+  // failed logins: 10 per account and 30 per address in 15 minutes
+  const perLogin = new FailureLimiter(10, 15 * 60_000, s.now);
+  const perIp = new FailureLimiter(30, 15 * 60_000, s.now);
   app.post("/api/auth/login", async (req, reply) => {
-    const body = parse(z.object({ login: z.string(), password: z.string() }), req.body);
-    const user = await s.auth.verifyPassword(body.login, body.password);
+    const body = parse(z.object({ login: z.string().max(64), password: z.string().max(256) }), req.body);
+    const loginKey = [body.login.trim().toLowerCase()];
+    const ipKey = [req.ip];
+    perLogin.check(loginKey);
+    perIp.check(ipKey);
+    let user: UserDto;
+    try {
+      user = await s.auth.verifyPassword(body.login, body.password);
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 401) {
+        perLogin.fail(loginKey);
+        perIp.fail(ipKey);
+      }
+      throw e;
+    }
+    perLogin.reset(loginKey);
     await setSession(reply, user.id);
     return { user };
   });
@@ -209,7 +227,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     const send = (msg: ServerMessage) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
     };
-    const sub: Subscriber = { userId: user.id, send };
+    const sub: Subscriber = { userId: user.id, send, closed: () => socket.readyState === socket.CLOSING || socket.readyState === socket.CLOSED };
     socket.on("message", (raw) => {
       let msg: ClientMessage;
       try {

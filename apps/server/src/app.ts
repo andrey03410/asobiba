@@ -43,11 +43,24 @@ export interface AppOptions {
   logger?: boolean | { level: string };
 }
 
+/** One-time secrets that travel in URLs must not end up in logs. */
+export function redactUrl(url: string): string {
+  return url
+    .replace(/(\/api\/uploads\/)[^/?#]+/, "$1<ticket>")
+    .replace(/(\/api\/invites\/check\/)[^/?#]+/, "$1<code>")
+    .replace(/([?&]invite=)[^&#]+/, "$1<code>");
+}
+
 export async function buildApp(options: AppOptions): Promise<{ app: FastifyInstance; services: Services }> {
   const { env, db } = options;
   const catalog = options.catalog ?? defaultCatalog;
   const now = options.now ?? Date.now;
-  const app = Fastify({ logger: options.logger ?? { level: env.production ? "info" : "warn" }, trustProxy: true, bodyLimit: 1024 * 1024 });
+  const level = options.logger === false ? undefined : typeof options.logger === "object" ? options.logger.level : env.production ? "info" : "warn";
+  const app = Fastify({
+    logger: level ? { level, serializers: { req: (req) => ({ method: req.method, url: redactUrl(req.url), remoteAddress: req.ip }) } } : false,
+    trustProxy: true,
+    bodyLimit: 1024 * 1024,
+  });
 
   const auth = new AuthService(db);
   const assets = new AssetService(db, env);

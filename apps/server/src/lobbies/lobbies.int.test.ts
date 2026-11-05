@@ -196,3 +196,54 @@ describe("a live match over WebSocket", () => {
     expect((await t.services.lobbies.action(ann.user, id, { type: "place", row: 2, col: 2 })).ok).toBe(true);
   });
 });
+
+describe("room consistency (review fixes)", () => {
+  it("keeps one room when a page load races the start after a restart", async () => {
+    const ann = await signUp(t, "ann");
+    const bob = await signUp(t, "bob");
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const { body } = await api(ann, "POST", "/api/lobbies", { name: `Гонка ${i}`, config: classic() });
+      await api(bob, "POST", `/api/lobbies/${body.lobby.id}/join`, { role: "player" });
+      ids.push(body.lobby.id);
+    }
+    await t.close();
+    t = await createTestApp(); // rooms are created lazily again
+    const lobbies = t.services.lobbies;
+    for (const [i, id] of ids.entries()) {
+      const delay = () => new Promise<void>((r) => (i % 2 ? setImmediate(r) : queueMicrotask(r)));
+      const starting = (async () => {
+        for (let k = 0; k < i; k++) await delay();
+        return lobbies.start(ann.user, id);
+      })();
+      await Promise.all([lobbies.get(id), lobbies.matchSummary(id), starting]);
+      expect((await lobbies.action(ann.user, id, { type: "place", row: 1, col: 1 })).ok, `lobby ${i}`).toBe(true);
+    }
+  });
+
+  it("publishes a timeout that a late, rejected action uncovered", async () => {
+    let clock = 5_000_000;
+    await t.close();
+    t = await createTestApp({ now: () => clock });
+    const ann = await signUp(t, "ann");
+    const bob = await signUp(t, "bob");
+    const config = { ...classic(), timer: { turnSeconds: 3, onTimeout: "lose" } };
+    const { body } = await api(ann, "POST", "/api/lobbies", { name: "Поздно", config });
+    const id = body.lobby.id;
+    await api(bob, "POST", `/api/lobbies/${id}/join`, { role: "player" });
+    const got: ServerMessage[] = [];
+    await t.services.lobbies.subscribe({ userId: bob.user.id, send: (m) => got.push(m) }, id);
+    await api(ann, "POST", `/api/lobbies/${id}/start`);
+    clock += 3_500; // past the deadline, before the real timer fired
+    const res = await t.services.lobbies.action(ann.user, id, { type: "place", row: 0, col: 0 });
+    expect(res).toMatchObject({ ok: false, error: { code: "finished" } });
+    const last = got.filter((m) => m.type === "match").at(-1) as Extract<ServerMessage, { type: "match" }>;
+    expect(last.match?.phase).toBe("finished");
+    expect(last.match?.lastRound?.reason).toBe("timeout");
+  });
+
+  it("does not create rooms for lobbies that do not exist", async () => {
+    const ann = await signUp(t, "ann");
+    await expect(t.services.lobbies.action(ann.user, "lob_nope12345", { type: "place", row: 0, col: 0 })).rejects.toMatchObject({ code: "not_found" });
+  });
+});

@@ -1,5 +1,8 @@
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { type ConfigDocument, presetDocument } from "@asobiba/sdk";
+import { ticTacToe } from "@asobiba/game-tic-tac-toe";
+import { renderPreview } from "../preview/render";
 import { createTestApp, PNG_1x1, resetDb, SIMPLE_SVG, signUp, type TestApp } from "../test/helpers";
 import { isPrivateAddress } from "./fetch";
 import { AssetService } from "./service";
@@ -104,5 +107,28 @@ describe("assets", () => {
     const second = await t.app.inject({ method: "PUT", url: path, payload: PNG_1x1 });
     expect(second.statusCode).toBe(410);
     expect((await t.services.assets.list(a.user.id)).length).toBe(1);
+  });
+});
+
+describe("heavy inputs (review fixes)", () => {
+  it("refuses an SVG whose proportions would render a huge image", async () => {
+    const a = await signUp(t, "ann");
+    const tall = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 2000"><rect width="1" height="2000"/></svg>';
+    const started = Date.now();
+    await expect(t.services.assets.createFromSvg(a.user.id, "столб", tall)).rejects.toMatchObject({ code: "svg_aspect" });
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("embeds small thumbnails in previews, even when one image fills every cell", async () => {
+    const a = await signUp(t, "ann");
+    const asset = await t.services.assets.createFromSvg(a.user.id, "клетка", SIMPLE_SVG);
+    const uris = await t.services.assets.previewDataUris([asset.id]);
+    const thumb = uris.get(asset.id) as string;
+    const png = Buffer.from(thumb.split(",")[1] as string, "base64");
+    expect(png.readUInt32BE(16)).toBeLessThanOrEqual(160);
+    const base = presetDocument(ticTacToe, ticTacToe.presets.find((p) => p.id === "gomoku")) as ConfigDocument<Record<string, unknown>, Record<string, unknown>>;
+    const config = { ...base, rules: { ...base.rules, board: { width: 15, height: 15, blocked: [] } }, visual: { ...base.visual, board: { cell: { asset: asset.id } } } };
+    const preview = await renderPreview(t.services.assets, config as ConfigDocument, "end", 3);
+    expect(preview.width).toBe(768);
   });
 });

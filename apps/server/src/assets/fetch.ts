@@ -27,6 +27,8 @@ export interface FetchOptions {
   maxBytes: number;
   timeoutMs?: number;
   maxRedirects?: number;
+  /** Whole request, including a slow body. */
+  totalTimeoutMs?: number;
 }
 
 /**
@@ -77,6 +79,14 @@ function request(url: URL, options: FetchOptions): Promise<{ status: number; loc
   };
   const lib = url.protocol === "https:" ? https : http;
   return new Promise((resolve, reject) => {
+    // the socket timeout only catches silence; a server dripping bytes needs a total deadline
+    const deadline = setTimeout(() => req.destroy(new HttpError(422, "timeout", "Ссылка отвечает слишком долго")), options.totalTimeoutMs ?? 20_000);
+    const done = <T,>(fn: (v: T) => void) => (v: T) => {
+      clearTimeout(deadline);
+      fn(v);
+    };
+    resolve = done(resolve);
+    reject = done(reject);
     const req = lib.get(
       url,
       { lookup: guardedLookup, timeout: options.timeoutMs ?? 10_000, headers: { "user-agent": "Asobiba/0.1 (+asset import)", accept: "image/*" } },

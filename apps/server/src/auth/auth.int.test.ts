@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { redactUrl } from "../app";
 import { createTestApp, resetDb, signUp, type TestApp } from "../test/helpers";
 
 let t: TestApp;
@@ -73,5 +74,25 @@ describe("auth", () => {
   it("requires a session for the API", async () => {
     expect((await t.app.inject({ url: "/api/lobbies" })).statusCode).toBe(401);
     expect((await t.app.inject({ url: "/api/games" })).statusCode).toBe(401);
+  });
+});
+
+describe("auth hardening (review fixes)", () => {
+  it("stops password guessing after 10 failures for an account", async () => {
+    const a = await signUp(t, "ann");
+    for (let i = 0; i < 10; i++) {
+      const bad = await t.app.inject({ method: "POST", url: "/api/auth/login", payload: { login: "ann", password: `guess-${i}` } });
+      expect(bad.statusCode).toBe(401);
+    }
+    const locked = await t.app.inject({ method: "POST", url: "/api/auth/login", payload: { login: "Ann", password: a.password } });
+    expect(locked.statusCode).toBe(429);
+    expect(locked.json().error.code).toBe("too_many_attempts");
+  });
+
+  it("keeps one-time secrets out of request logs", () => {
+    expect(redactUrl("/api/uploads/upl_abcDEF123")).toBe("/api/uploads/<ticket>");
+    expect(redactUrl("/api/invites/check/Srkwb9ZqRo6x")).toBe("/api/invites/check/<code>");
+    expect(redactUrl("/register?invite=Srkwb9ZqRo6x&x=1")).toBe("/register?invite=<code>&x=1");
+    expect(redactUrl("/api/lobbies/lob_1")).toBe("/api/lobbies/lob_1");
   });
 });

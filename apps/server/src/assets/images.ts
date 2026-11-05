@@ -68,8 +68,14 @@ export function rasterizeSvg(svg: string): Buffer {
   let png: Buffer;
   try {
     const resvg = new Resvg(svg, { fitTo: { mode: "width", value: SVG_RENDER_WIDTH }, font: { loadSystemFonts: false }, background: "rgba(0,0,0,0)" });
+    // check the output size before rendering: a tall viewBox would allocate gigabytes
+    const outHeight = resvg.width > 0 ? (SVG_RENDER_WIDTH * resvg.height) / resvg.width : Infinity;
+    if (!(outHeight >= 1 && outHeight <= MAX_IMAGE_SIDE)) {
+      throw new HttpError(422, "svg_aspect", `Пропорции SVG ${resvg.width}×${resvg.height} не годятся: высота должна быть не больше ${MAX_IMAGE_SIDE / SVG_RENDER_WIDTH} ширин`);
+    }
     png = resvg.render().asPng();
   } catch (e) {
+    if (e instanceof HttpError) throw e;
     throw new HttpError(422, "svg_invalid", `SVG не разобрался: ${(e as Error).message.slice(0, 200)}`);
   }
   inspectImage(png);

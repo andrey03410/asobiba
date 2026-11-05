@@ -76,8 +76,8 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "config_simulate",
     {
       title: "Прогнать случайные партии",
-      description: "Играет раунды случайными ходами: доля ничьих, победы по местам (место 0 ходит первым), длина, проблемы never-ends / always-draw / first-seat-dominates.",
-      inputSchema: { config: configArg, rounds: z.int().min(1).max(500).optional().describe("Сколько раундов, по умолчанию 100") },
+      description: "Играет раунды случайными ходами: доля ничьих, победы по местам (место 0 ходит первым), длина, проблемы never-ends / stuck / always-draw / first-seat-dominates. Работает синхронно, поэтому не больше 200 раундов.",
+      inputSchema: { config: configArg, rounds: z.int().min(1).max(200).optional().describe("Сколько раундов, по умолчанию 100") },
       annotations: { readOnlyHint: true },
     },
     ({ config, rounds }) =>

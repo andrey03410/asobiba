@@ -4,7 +4,7 @@ import { loadEnv } from "./env";
 
 const env = loadEnv();
 const db = createPrisma(env.databaseUrl);
-const { app, services } = await buildApp({ env, db, logger: { level: env.production ? "info" : "info" } });
+const { app, services } = await buildApp({ env, db, logger: { level: "info" } });
 
 const restored = await services.lobbies.restoreAll();
 if (restored.restored || restored.aborted) app.log.info(restored, "matches after restart");

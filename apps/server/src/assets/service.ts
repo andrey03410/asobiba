@@ -8,7 +8,11 @@ import type { Env } from "../env";
 import { conflict, HttpError, notFound } from "../http-errors";
 import { newId, randomString, sha256 } from "../ids";
 import { fetchPublicUrl } from "./fetch";
-import { inspectImage, MAX_IMAGE_BYTES, rasterizeSvg } from "./images";
+import { inspectImage, MAX_IMAGE_BYTES, rasterizeSvg, renderTrustedSvg } from "./images";
+
+/** Side of the thumbnails that previews embed: a 15×15 board repeats a cell image 225 times. */
+const PREVIEW_THUMB_SIDE = 160;
+const PREVIEW_THUMB_CACHE = 200;
 
 export const MAX_ASSETS_PER_USER = 300;
 const UPLOAD_TTL_MS = 10 * 60 * 1000;
@@ -32,7 +36,16 @@ function cleanName(name: string | undefined, fallback: string): string {
   return n || fallback;
 }
 
+function safeDecode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 export class AssetService {
+  private readonly thumbs = new Map<string, string>();
   constructor(
     private readonly db: Db,
     private readonly env: Env,
@@ -74,7 +87,7 @@ export class AssetService {
 
   async importUrl(ownerId: string, url: string, name?: string): Promise<AssetDto> {
     const { body, finalUrl } = await fetchPublicUrl(url, { allowPrivate: this.env.allowPrivateUrls, maxBytes: MAX_IMAGE_BYTES });
-    const fallback = decodeURIComponent(new URL(finalUrl).pathname.split("/").pop() ?? "") || "картинка";
+    const fallback = safeDecode(new URL(finalUrl).pathname.split("/").pop() ?? "") || "картинка";
     return this.save(ownerId, { name: name ?? fallback, body, source: "url" });
   }
 
@@ -116,12 +129,30 @@ export class AssetService {
     return asset ? { path: this.abs(asset.path), mime: asset.mime } : null;
   }
 
-  async dataUris(ids: readonly string[]): Promise<Map<string, string>> {
+  /**
+   * Small PNG thumbnails as data URIs for server-side previews. Full images would be
+   * inlined once per cell and piece and could grow the preview SVG to hundreds of MB.
+   * An asset id never changes its file, so thumbnails are cached by id.
+   */
+  async previewDataUris(ids: readonly string[]): Promise<Map<string, string>> {
     const out = new Map<string, string>();
-    const rows = await this.db.asset.findMany({ where: { id: { in: [...new Set(ids)] } } });
+    const missing = [...new Set(ids)].filter((id) => {
+      const hit = this.thumbs.get(id);
+      if (hit) out.set(id, hit);
+      return !hit;
+    });
+    if (missing.length === 0) return out;
+    const rows = await this.db.asset.findMany({ where: { id: { in: missing } } });
     for (const row of rows) {
       const buf = await readFile(this.abs(row.path));
-      out.set(row.id, `data:${row.mime};base64,${buf.toString("base64")}`);
+      const scale = Math.min(1, PREVIEW_THUMB_SIDE / Math.max(row.width, row.height));
+      const w = Math.max(1, Math.round(row.width * scale));
+      const h = Math.max(1, Math.round(row.height * scale));
+      const wrapper = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${row.width} ${row.height}"><image href="data:${row.mime};base64,${buf.toString("base64")}" width="${row.width}" height="${row.height}"/></svg>`;
+      const uri = `data:image/png;base64,${renderTrustedSvg(wrapper, w).toString("base64")}`;
+      this.thumbs.set(row.id, uri);
+      if (this.thumbs.size > PREVIEW_THUMB_CACHE) this.thumbs.delete(this.thumbs.keys().next().value as string);
+      out.set(row.id, uri);
     }
     return out;
   }
