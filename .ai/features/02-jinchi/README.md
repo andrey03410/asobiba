@@ -2,11 +2,11 @@
 id: 02
 title: Jinchi — захват территории кубиками
 track: product
-stage: review
+stage: merged
 branch: feat/02-jinchi
 pr: https://github.com/andrey03410/asobiba/pull/3
 started: 2026-11-05
-merged:
+merged: 2026-11-05
 ---
 
 # 02. Jinchi
@@ -28,7 +28,7 @@ merged:
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
 - [x] Проверка владельцем — автономная приёмка: QG и независимый PASS
-- [ ] Влито
+- [x] Влито
 
 ## Проверка
 

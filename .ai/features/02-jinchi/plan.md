@@ -72,7 +72,7 @@ onStrokeEnd?(x,y),drawing?:boolean,focusCells?:number[],lastCells?:number[],tool
 - [x] `npm test` → `npm run build` → `npx tsc --noEmit` после последних правок.
 - [x] Живые проверки по verify; скриншоты/PNG/JSON в `storage/verification/02-jinchi/`.
 - [x] Свежий независимый ревьюер, исправления существенного, запись в verify.md.
-- [ ] PR, stage review; автономная приёмка; history, stage merged и merge в main.
+- [x] PR, stage review; автономная приёмка; history, stage merged и merge в main.
 
 ### 6. Знания
 
