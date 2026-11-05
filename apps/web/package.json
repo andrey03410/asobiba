@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@asobiba/api": "*",
     "@asobiba/game-tic-tac-toe": "*",
     "@asobiba/sdk": "*",
     "react": "^19.3.1",

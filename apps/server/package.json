@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@asobiba/api": "*",
     "@asobiba/game-tic-tac-toe": "*",
     "@asobiba/sdk": "*",
     "@fastify/cookie": "^11.1.5",
