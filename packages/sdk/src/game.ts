@@ -100,7 +100,7 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   checkVisual?(visual: V, rules: R): ConfigIssue[];
 
   /** Optional computation limit across all rounds of one random simulation. */
-  simulationBudget?(rules: R): { maxTotalActions: number };
+  simulationBudget?(rules: R): { maxTotalActions: number; maxDurationMs?: number };
 
   setup(ctx: SetupContext<R>): S;
   /** Seats allowed to act now. Empty for realtime games where everybody may act. */

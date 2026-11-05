@@ -371,7 +371,7 @@ export const jinchi = defineGame({
   rulesSchema, visualSchema, actionSchema,
   seats: (rules) => ({ min: 2, max: startPositions(rules).length }),
   checkRules, checkVisual,
-  simulationBudget: (rules) => ({ maxTotalActions: Math.max(200, Math.floor(20_000_000 / (rules.map.width * rules.map.height))) }),
+  simulationBudget: (rules) => ({ maxTotalActions: Math.max(200, Math.floor(20_000_000 / (rules.map.width * rules.map.height))), maxDurationMs: 1000 }),
   setup: ({ rules, seats, firstSeat, rng, now }): JinchiState => {
     const positions = startPositions(rules);
     const assigned = (rules.starts.assignment === "random" ? rng.shuffle(positions) : positions).slice(0, seats);
