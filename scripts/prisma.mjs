@@ -3,7 +3,7 @@
 // DATABASE_URL defaults to an absolute path to storage/asobiba.db, so relative
 // paths never depend on where the schema file lives.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,6 +20,12 @@ if (dbPath.startsWith("/")) mkdirSync(dirname(dbPath), { recursive: true });
 
 const bin = resolve(root, "node_modules/.bin/prisma");
 const args = process.argv.slice(2); // schema, migrations and url come from prisma.config.ts
+// Prisma 7's schema engine cannot deploy into a missing SQLite file on macOS.
+// Create it exclusively: existing databases must never be truncated.
+if (args[0] === "migrate" && args[1] === "deploy" && dbPath.startsWith("/")) {
+  try { closeSync(openSync(dbPath, "ax")); }
+  catch (error) { if (error.code !== "EEXIST") throw error; }
+}
 const run = (argv) => spawnSync(bin, argv, { stdio: "inherit", env: process.env, cwd: root }).status ?? 1;
 let status = run(args);
 // Prisma 7: migrate dev no longer regenerates the client
