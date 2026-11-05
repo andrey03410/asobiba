@@ -1,6 +1,6 @@
 import type { CreateLobbyRequest, LobbyDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
 import { type ConfigDocument, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
 import type { Db } from "../db";
 import type { Env } from "../env";

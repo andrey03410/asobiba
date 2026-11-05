@@ -28,3 +28,4 @@ yarn-error.log*
 
 # --- Local data: database, uploads, verification evidence ---
 storage/
+apps/server/src/generated/

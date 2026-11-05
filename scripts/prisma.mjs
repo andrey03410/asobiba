@@ -19,6 +19,6 @@ const dbPath = process.env.DATABASE_URL.replace(/^file:/, "");
 if (dbPath.startsWith("/")) mkdirSync(dirname(dbPath), { recursive: true });
 
 const bin = resolve(root, "node_modules/.bin/prisma");
-const args = [...process.argv.slice(2), "--schema", resolve(root, "apps/server/prisma/schema.prisma")];
-const result = spawnSync(bin, args, { stdio: "inherit", env: process.env });
+const args = process.argv.slice(2); // schema, migrations and url come from prisma.config.ts
+const result = spawnSync(bin, args, { stdio: "inherit", env: process.env, cwd: root });
 process.exit(result.status ?? 1);
