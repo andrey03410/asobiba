@@ -1,3 +1,4 @@
+import { MapEditor } from "@asobiba/game-jinchi/client";
 import type { ConfigDto, CreateLobbyRequest } from "@asobiba/api";
 import { type ConfigDocument, type ConfigIssue, type GameCapabilities, type GameSummary, validateConfig } from "@asobiba/sdk";
 import { type FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -51,6 +52,7 @@ export function NewLobbyPage() {
 
   const [moment, setMoment] = useState<"start" | "end">("end");
   const [seed, setSeed] = useState(1);
+  useEffect(() => { if (gameId === "jinchi") setMoment("start"); }, [gameId]);
   const [name, setName] = useState("");
   const [saveConfig, setSaveConfig] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -289,7 +291,7 @@ export function NewLobbyPage() {
         <div className="page-loading">Загружаю настройки игры…</div>
       ) : (
         <div className="create-grid">
-          <section className="card create-editor">
+          <section className={`card create-editor${gameId === "jinchi" ? " create-editor-jinchi" : ""}`}>
             <div className="tabs" role="tablist">
               <button type="button" role="tab" aria-selected={mode === "form"} className={`tab${mode === "form" ? " is-active" : ""}`} onClick={() => switchMode("form")}>
                 Настройки
@@ -300,7 +302,13 @@ export function NewLobbyPage() {
               {dirty && <span className="dirty-mark">изменено</span>}
             </div>
             {mode === "form" ? (
-              <SchemaForm schema={caps.configSchema} value={doc} onChange={setDoc} issues={issues} />
+              <SchemaForm schema={caps.configSchema} value={doc} onChange={setDoc} issues={issues}
+                overrides={gameId === 'jinchi' ? { 'rules.map': ({ value, onChange }) => {
+                  const map = isPlainObject(value) && Array.isArray(value.rows) && typeof value.width === 'number' && typeof value.height === 'number' && value.rows.every(row => typeof row === 'string')
+                    ? value as { width: number; height: number; rows: string[] }
+                    : { width: 16, height: 16, rows: Array(16).fill('.'.repeat(16)) };
+                  return <MapEditor value={map} onChange={onChange} />;
+                } } : undefined} />
             ) : (
               <div className="json-editor">
                 <textarea spellCheck={false} value={jsonText} onChange={(e) => changeJson(e.target.value)} aria-label="Конфиг целиком в JSON" />

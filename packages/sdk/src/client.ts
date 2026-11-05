@@ -16,6 +16,12 @@ export interface BoardProps {
   onAction?: (action: unknown) => void;
   /** Server-side previews: no animations, no interaction. */
   staticRender?: boolean;
+  /** Display names by seat for compact in-board HUDs. */
+  playerNames?: string[];
+  /** Server clock offset; clients use it for turn countdowns. */
+  clockOffset?: number;
+  /** Remaining turn time, for clients that supply a countdown directly. */
+  turnRemainingMs?: number | null;
 }
 
 export interface SeatIconProps {

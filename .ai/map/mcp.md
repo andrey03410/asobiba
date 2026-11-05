@@ -23,6 +23,13 @@
 - Каждый вызов заново ищет пользователя по токену (`lastUsedAt` обновляется не чаще раза в минуту). Отозванный токен — 401.
 - Ссылки (`url` лобби, `uploadUrl`) строятся от `PUBLIC_URL`.
 
+## Jinchi
+
+`game_capabilities("jinchi")` возвращает схему v1, руководство строк карты и 6 пресетов.
+Карта — `rules.map: {width,height,rows}`: строки из `.`, `#`, `1`…`8`. Новый набор
+инструментов не нужен: validate/simulate/preview/save/lobby_create работают через каталог.
+`node --import tsx scripts/verify-jinchi.mjs` проверяет этот путь и сохраняет PNG.
+
 ## Грабли
 
 - Уже запущенная сессия Claude Code не подхватывает `.mcp.json`: для проверок используй `scripts/verify-mcp.mjs`.

@@ -9,10 +9,10 @@ export const visualSchema = z.strictObject({
   background: color("Цвет свободных клеток").default("#101a2b"),
   grid: z.boolean().default(true).meta({ description: "Показывать сетку, когда масштаб позволяет различать клетки" }),
   animations: z.strictObject({
-    place: z.enum(["pop", "none"]).default("pop").meta({ description: "Постановка: pop — появление, none — без анимации" }),
-    capture: z.enum(["wave", "none"]).default("wave").meta({ description: "Захват: wave — волна, none — без анимации" }),
+    place: z.enum(["pop", "none"]).default("pop").meta({ title: "Постановка", enumNames: ["Появление", "Без анимации"], description: "Постановка: pop — появление, none — без анимации" }),
+    capture: z.enum(["wave", "none"]).default("wave").meta({ title: "Захват", enumNames: ["Волна", "Без анимации"], description: "Захват: wave — волна, none — без анимации" }),
     durationMs: z.int().min(50).max(5000).default(450).meta({ description: "Длительность анимаций в миллисекундах (50–5000)" }),
-  }).prefault({}),
+  }).prefault({}).meta({ title: "Анимации" }),
 }).prefault({}).meta({ description: "Визуал Jinchi: цвета мест, стены, сетка и анимации" });
 
 export type JinchiVisual = z.output<typeof visualSchema>;

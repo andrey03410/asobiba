@@ -1,3 +1,4 @@
+import { rulesText, type JinchiRules } from "@asobiba/game-jinchi";
 import type { LobbyDto, LobbyMemberDto } from "@asobiba/api";
 import type { Seat } from "@asobiba/sdk";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -187,8 +188,8 @@ export function LobbyPage() {
             <>
               <MatchHud match={match} config={lobby.config} client={client} mySeat={mySeat} seatName={seatName} clockOffset={socket.clockOffset} />
               <ErrorBoundary resetKey={match}>
-                <div className={`board-frame${mySeat === null ? " is-spectator" : ""}`}>
-                  <client.Board match={match} config={lobby.config} seat={mySeat} assetUrl={assetUrl} onAction={mySeat !== null ? onAction : undefined} />
+                <div className={`board-frame${lobby.gameId === "jinchi" ? " board-frame-jinchi" : ""}${mySeat === null ? " is-spectator" : ""}`}>
+                  <client.Board match={match} config={lobby.config} seat={mySeat} assetUrl={assetUrl} onAction={mySeat !== null ? onAction : undefined} playerNames={Array.from({ length: match.seats }, (_, i) => seatName(i))} clockOffset={socket.clockOffset} />
                 </div>
               </ErrorBoundary>
               {mySeat === null && <p className="muted small center">Вы смотрите партию как зритель.</p>}
@@ -274,6 +275,10 @@ export function LobbyPage() {
             )}
           </section>
 
+          {lobby.gameId === 'jinchi' && <details className="card config-details">
+            <summary>Правила Jinchi</summary>
+            <ul className="lobby-rules">{rulesText(lobby.config.rules as JinchiRules).map((rule, i) => <li key={i}>{rule}</li>)}</ul>
+          </details>}
           <details className="card config-details">
             <summary>Конфиг игры</summary>
             <pre className="config-json">{JSON.stringify(lobby.config, null, 2)}</pre>

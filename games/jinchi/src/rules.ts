@@ -14,27 +14,27 @@ export const rulesSchema = z.strictObject({
     rows: z.array(z.string().max(MAX_SIDE)).max(MAX_SIDE).default(defaultRows).meta({ description: "Ровно height строк длины width. . — пусто, # — стена, 1…8 — стартовые зоны. В координатах x — столбец, y — строка, с нуля" }),
   }).prefault({}).meta({ description: "Карта: размеры и строки клеток" }),
   dice: z.strictObject({
-    sides: z.int().min(2).max(20).default(6).meta({ description: "Граней у обоих кубиков (2–20). Выпало a:b — прямоугольник a×b" }),
-    roll: z.enum(["auto", "manual"]).default("auto").meta({ description: "auto — бросок в начале хода, manual — по кнопке «Бросить»" }),
+    sides: z.int().min(2).max(20).default(6).meta({ title: "Грани кубиков", description: "Граней у обоих кубиков (2–20). Выпало a:b — прямоугольник a×b" }),
+    roll: z.enum(["auto", "manual"]).default("auto").meta({ title: "Бросок кубиков", enumNames: ["Автоматически", "По кнопке"], description: "auto — бросок в начале хода, manual — по кнопке «Бросить»" }),
   }).prefault({}).meta({ description: "Два одинаковых кубика" }),
   placement: z.strictObject({
-    adjacency: z.enum(["side", "corner"]).default("side").meta({ description: "side — фигура касается своей территории стороной; corner — также углом" }),
-    overlapOwn: z.boolean().default(false).meta({ description: "Разрешить накрывать свои клетки, если хотя бы одна клетка фигуры свободна. Чужие клетки и стены накрывать нельзя" }),
+    adjacency: z.enum(["side", "corner"]).default("side").meta({ title: "Соседство", enumNames: ["Стороной", "Стороной или углом"], description: "side — фигура касается своей территории стороной; corner — также углом" }),
+    overlapOwn: z.boolean().default(false).meta({ title: "Разрешить накрывать свою территорию", description: "Разрешить накрывать свои клетки, если хотя бы одна клетка фигуры свободна. Чужие клетки и стены накрывать нельзя" }),
   }).prefault({}).meta({ description: "Постановка прямоугольника" }),
   capture: z.strictObject({
-    walls: z.boolean().default(true).meta({ description: "Края и стены помогают замкнуть кольцо. Из касающихся игрока областей открыты все самые большие, меньшие захватываются" }),
-    diagonal: z.boolean().default(true).meta({ description: "Касание своих клеток углом замыкает кольцо (заливка по 4 соседям, иначе по 8)" }),
-    opponents: z.enum(["all", "except-starts", "none"]).default("all").meta({ description: "Чужие клетки внутри кольца: все забираются, кроме исходных баз или не забираются" }),
-  }).prefault({}).meta({ description: "Окружение проверяется после постановки только для походившего игрока" }),
+    walls: z.boolean().default(true).meta({ title: "Края и стены замыкают кольцо", description: "Края и стены помогают замкнуть кольцо. Из касающихся игрока областей открыты все самые большие, меньшие захватываются" }),
+    diagonal: z.boolean().default(true).meta({ title: "Касание углом замыкает кольцо", description: "Касание своих клеток углом замыкает кольцо (заливка по 4 соседям, иначе по 8)" }),
+    opponents: z.enum(["all", "except-starts", "none"]).default("all").meta({ title: "Чужие клетки внутри кольца", enumNames: ["Забирать все", "Кроме стартовых зон", "Не забирать"], description: "Чужие клетки внутри кольца: все забираются, кроме исходных баз или не забираются" }),
+  }).prefault({}).meta({ title: "Окружение", description: "Окружение проверяется после постановки только для походившего игрока" }),
   starts: z.strictObject({
-    assignment: z.enum(["random", "ordered"]).default("random").meta({ description: "random — случайная раздача стартовых позиций по зерну, ordered — по номерам" }),
-    unused: z.enum(["empty", "wall"]).default("empty").meta({ description: "Лишние стартовые зоны при неполном составе становятся пустыми клетками или стенами" }),
+    assignment: z.enum(["random", "ordered"]).default("random").meta({ title: "Раздача стартовых позиций", enumNames: ["Случайно", "По порядку"], description: "random — случайная раздача стартовых позиций по зерну, ordered — по номерам" }),
+    unused: z.enum(["empty", "wall"]).default("empty").meta({ title: "Лишние стартовые зоны", enumNames: ["Свободные клетки", "Стены"], description: "Лишние стартовые зоны при неполном составе становятся пустыми клетками или стенами" }),
   }).prefault({}).meta({ description: "Стартовые позиции и состав 2–8 игроков" }),
   end: z.strictObject({
-    skipRounds: z.int().min(0).max(100).default(2).meta({ description: "Кругов подряд без постановок до конца партии (0 — выключено, по умолчанию 2)" }),
-    maxRounds: z.int().min(0).max(10000).default(0).meta({ description: "Лимит кругов (0 — выключено). Круг — каждый оставшийся игрок сходил или пропустил" }),
-    targetPercent: z.number().min(0).max(100).refine((n) => n === 0 || n >= 10, { error: "Доля победы — 10–100 %, либо 0 для отключения" }).default(0).meta({ description: "Немедленная победа при доле карты 10–100 % (0 — выключено). Стены в площадь не входят" }),
-  }).prefault({}).meta({ description: "Всегда конец, если остался один игрок или ни у кого нет постановки 1×1" }),
+    skipRounds: z.int().min(0).max(100).default(2).meta({ title: "Кругов подряд без постановок", description: "Кругов подряд без постановок до конца партии (0 — выключено, по умолчанию 2)" }),
+    maxRounds: z.int().min(0).max(10000).default(0).meta({ title: "Лимит кругов", description: "Лимит кругов (0 — выключено). Круг — каждый оставшийся игрок сходил или пропустил" }),
+    targetPercent: z.number().min(0).max(100).refine((n) => n === 0 || n >= 10, { error: "Доля победы — 10–100 %, либо 0 для отключения" }).default(0).meta({ title: "Доля карты для победы, %", description: "Немедленная победа при доле карты 10–100 % (0 — выключено). Стены в площадь не входят" }),
+  }).prefault({}).meta({ title: "Конец партии", description: "Всегда конец, если остался один игрок или ни у кого нет постановки 1×1" }),
 }).prefault({}).meta({ description: "Правила Jinchi v1" });
 
 export type JinchiRules = z.output<typeof rulesSchema>;
