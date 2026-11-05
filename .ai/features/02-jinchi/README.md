@@ -2,7 +2,7 @@
 id: 02
 title: Jinchi — захват территории кубиками
 track: product
-stage: plan
+stage: build
 branch: feat/02-jinchi
 pr:
 started: 2026-11-05
@@ -25,7 +25,7 @@ merged:
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [product.md](product.md)
 - [x] Техника — [tech.md](tech.md)
-- [ ] План — [plan.md](plan.md)
+- [x] План — [plan.md](plan.md)
 - [ ] Реализация и QG — [verify.md](verify.md)
 - [ ] Проверка владельцем
 - [ ] Влито
