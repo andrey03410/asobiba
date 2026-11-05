@@ -86,14 +86,14 @@ function finishByCount(state: TttState, rules: TttRules): RoundResult {
   const target = rules.win.misere ? Math.min(...counts) : Math.max(...counts);
   const best = counts.flatMap((c, i) => (c === target ? [i] : []));
   if (best.length === state.seats || (target === 0 && !rules.win.misere)) {
-    return { winners: [], losers: [], draw: true, reason: "most-lines", summary: "Поровну линий — ничья" };
+    return { winners: [], losers: [], draw: true, reason: "most-lines", summary: "поровну линий" };
   }
   return {
     winners: best,
     losers: Array.from({ length: state.seats }, (_, i) => i).filter((s) => !best.includes(s)),
     draw: false,
     reason: "most-lines",
-    summary: rules.win.misere ? "Меньше всех линий" : "Больше всех линий",
+    summary: rules.win.misere ? "меньше всех линий" : "больше всех линий",
   };
 }
 
@@ -173,8 +173,8 @@ export const ticTacToe = defineGame({
         .find((r) => r.length >= rules.win.line);
       if (run) {
         const result: RoundResult = rules.win.misere
-          ? { winners: others(s.seats, seat), losers: [seat], draw: false, reason: "line", summary: `Место ${seat + 1} собрало линию и проиграло` }
-          : { winners: [seat], losers: others(s.seats, seat), draw: false, reason: "line", summary: `Место ${seat + 1} собрало линию` };
+          ? { winners: others(s.seats, seat), losers: [seat], draw: false, reason: "line", summary: "линия в мизере — проигрыш" }
+          : { winners: [seat], losers: others(s.seats, seat), draw: false, reason: "line", summary: "собрана линия" };
         return { ...next, winLines: [run], result };
       }
     }
@@ -185,7 +185,7 @@ export const ticTacToe = defineGame({
         const winLines = result.draw ? [] : lines.filter((l) => result.winners.includes(l.seat)).map((l) => l.cells);
         return { ...next, winLines, result };
       }
-      return { ...next, result: { winners: [], losers: [], draw: true, reason: "board-full", summary: "Ходов не осталось — ничья" } };
+      return { ...next, result: { winners: [], losers: [], draw: true, reason: "board-full", summary: "ходов не осталось" } };
     }
 
     if (next.movesLeft - 1 <= 0) {

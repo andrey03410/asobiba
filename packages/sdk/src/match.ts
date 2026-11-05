@@ -228,7 +228,7 @@ export class Match {
     const policy = this.config.timer.onTimeout;
     if (policy === "lose") {
       const others = Array.from({ length: this.seats }, (_, i) => i).filter((s) => s !== seat);
-      this.endRound({ winners: others, losers: [seat], draw: false, reason: "timeout", summary: `Место ${seat + 1} не успело походить` }, at);
+      this.endRound({ winners: others, losers: [seat], draw: false, reason: "timeout", summary: "время на ход вышло" }, at);
       return;
     }
     const startKey = this.currentTurnKey();

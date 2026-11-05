@@ -43,7 +43,7 @@ export const raceGame = defineGame({
   roundResult: (s: RaceState) =>
     s.winner === null
       ? null
-      : { winners: [s.winner], losers: [], draw: false, reason: "target", summary: `Место ${s.winner + 1} дошло до цели` },
+      : { winners: [s.winner], losers: [], draw: false, reason: "target", summary: "дошёл до цели" },
   view: (s: RaceState, seat) => ({ ...s, you: seat }),
   guide: "Тестовая игра.",
   presets: [{ id: "default", title: "По умолчанию", description: "До 10", config: {} }],

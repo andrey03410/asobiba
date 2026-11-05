@@ -11,7 +11,10 @@ export interface RoundResult {
   draw: boolean;
   /** Machine-readable reason: line, most-lines, board-full, timeout, … */
   reason: string;
-  /** Short human text, in Russian. */
+  /**
+   * Short reason in Russian without seat numbers or names ("собрана линия").
+   * Clients prepend the winners' names themselves.
+   */
   summary?: string;
 }
 

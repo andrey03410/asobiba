@@ -39,7 +39,7 @@ export const rulesSchema = z
         mode: z
           .enum(["first-line", "most-lines"])
           .default("first-line")
-          .meta({ description: "first-line — раунд заканчивается на первой линии; most-lines — играем до заполнения поля, побеждает тот, у кого больше линий" }),
+          .meta({ title: "Когда кончается раунд", description: "first-line — раунд заканчивается на первой линии; most-lines — играем до заполнения поля, побеждает тот, у кого больше линий" }),
         misere: z.boolean().default(false).meta({ description: "Мизер: собрал линию — проиграл (в most-lines побеждает тот, у кого линий меньше)" }),
       })
       .prefault({})
@@ -47,7 +47,7 @@ export const rulesSchema = z
     placement: z
       .enum(["free", "gravity"])
       .default("free")
-      .meta({ description: "free — фигура ставится в любую свободную клетку; gravity — выбирается столбец, фигура падает вниз до препятствия" }),
+      .meta({ title: "Как ставить фигуру", description: "free — фигура ставится в любую свободную клетку; gravity — выбирается столбец, фигура падает вниз до препятствия" }),
     turns: z
       .strictObject({
         movesPerTurn: z.int().min(1).max(3).default(1).meta({ description: "Сколько фигур игрок ставит за ход (1–3)" }),
