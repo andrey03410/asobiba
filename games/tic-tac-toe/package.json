@@ -1,0 +1,23 @@
+{
+  "name": "@asobiba/game-tic-tac-toe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client/index.ts"
+  },
+  "dependencies": {
+    "@asobiba/sdk": "*",
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "react": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}
