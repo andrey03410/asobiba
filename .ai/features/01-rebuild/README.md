@@ -2,7 +2,7 @@
 id: 01
 title: Пересборка Asobiba: TypeScript-монорепо, агентский SDK игр, MCP
 track: product
-stage: product
+stage: tech
 branch: feat/01-rebuild
 pr:
 started: 2026-11-05
@@ -20,7 +20,7 @@ merged:
 ## Стадии
 
 - [x] Бриф — [brief.md](brief.md)
-- [ ] Продукт — [product.md](product.md)
+- [x] Продукт — [product.md](product.md)
 - [ ] Техника — [tech.md](tech.md)
 - [ ] План — [plan.md](plan.md)
 - [ ] Реализация и QG — [verify.md](verify.md)
