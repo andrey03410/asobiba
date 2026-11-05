@@ -2,11 +2,11 @@
 id: 01
 title: Пересборка Asobiba: TypeScript-монорепо, агентский SDK игр, MCP
 track: product
-stage: review
+stage: merged
 branch: feat/01-rebuild
 pr: https://github.com/andrey03410/asobiba/pull/1
 started: 2026-11-05
-merged:
+merged: 2026-11-05
 ---
 
 # 01. Пересборка Asobiba
@@ -24,8 +24,8 @@ merged:
 - [x] Техника — [tech.md](tech.md)
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
-- [ ] Проверка владельцем (автономный режим)
-- [ ] Влито
+- [x] Проверка владельцем — пропущена: автономный режим, QG и ревью зелёные
+- [x] Влито
 
 ## Хвосты
 
