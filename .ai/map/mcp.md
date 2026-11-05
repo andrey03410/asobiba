@@ -15,7 +15,7 @@
 
 - Инструменты:
   - `games_list`, `game_capabilities(gameId)` — схема, руководства, слоты, темы, каталог, пресеты целиком;
-  - `config_validate`, `config_simulate(config, rounds?)`, `config_preview(config, moment?, seed?)` — PNG 768 px шириной как MCP-картинка плюс текст с итогом раунда;
+  - `config_validate`, `config_simulate(config, rounds?)` (до 200 раундов, синхронно), `config_preview(config, moment?, seed?)` — PNG 768 px шириной как MCP-картинка плюс текст с итогом раунда;
   - `config_save(config, configId?)`, `config_list(gameId?)`, `config_get`;
   - `asset_list`, `asset_create_svg(name, svg)`, `asset_import_url(url, name?)`, `asset_upload_begin(name)` → `{ uploadUrl, method: "PUT", expiresAt, example }`;
   - `lobby_create(name, configId | config)` → `{ lobby: { id, url, … } }`, `lobby_list`, `lobby_get` (состав и счёт без ходов), `lobby_close` (только хозяин).
