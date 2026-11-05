@@ -9,6 +9,9 @@ export interface Rng {
   int(min: number, max: number): number;
   pick<T>(items: readonly T[]): T;
   shuffle<T>(items: readonly T[]): T[];
+  /** Internal state, for the engine to undo draws of a rejected action. */
+  state(): number;
+  restore(state: number): void;
 }
 
 export function createRng(seed: number): Rng {
@@ -24,6 +27,10 @@ export function createRng(seed: number): Rng {
   return {
     next,
     int,
+    state: () => a,
+    restore(state: number) {
+      a = state >>> 0;
+    },
     pick<T>(items: readonly T[]): T {
       if (items.length === 0) throw new Error("Rng.pick: empty list");
       return items[int(0, items.length - 1)] as T;

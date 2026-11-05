@@ -100,6 +100,22 @@ export function checkRules(rules: TttRules): ConfigIssue[] {
   const free = width * height - seen.size;
   if (free < rules.win.line) {
     issues.push({ path: "board.blocked", code: "too_many_blocked", message: `Свободных клеток ${free} — меньше длины линии`, hint: "Уберите часть заблокированных клеток" });
+  } else if (rules.placement === "gravity") {
+    // a piece falls from the top until an obstacle: only cells above the first blocked one are reachable
+    let reachable = 0;
+    for (let c = 0; c < width; c++) {
+      let r = 0;
+      while (r < height && !seen.has(`${r}:${c}`)) r++;
+      reachable += r;
+    }
+    if (reachable < rules.win.line) {
+      issues.push({
+        path: "board.blocked",
+        code: "too_many_blocked",
+        message: `При гравитации достижимых клеток ${reachable} — меньше длины линии`,
+        hint: "Не блокируйте верхний ряд: фигура падает сверху до первого препятствия",
+      });
+    }
   }
   const first = rules.turns.firstTurnMoves ?? rules.turns.movesPerTurn;
   if (first >= rules.win.line) {

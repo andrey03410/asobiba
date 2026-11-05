@@ -109,6 +109,16 @@ describe("tic-tac-toe rules", () => {
 });
 
 describe("tic-tac-toe config checks", () => {
+  it("rejects a gravity board whose top row is blocked: no piece can ever land", () => {
+    const blocked = [[0, 0], [0, 1], [0, 2]];
+    const res = validateConfig(catalog, { sdk: 1, game: "tic-tac-toe", gameVersion: 1, rules: { placement: "gravity", board: { blocked } } });
+    expect(res.ok).toBe(false);
+    expect(res.issues.find((i) => i.severity !== "warning")).toMatchObject({ path: "rules.board.blocked", code: "too_many_blocked" });
+    // a shadow below an obstacle is only a warning
+    const ok = validateConfig(catalog, { sdk: 1, game: "tic-tac-toe", gameVersion: 1, rules: { placement: "gravity", board: { blocked: [[1, 1]] } } });
+    expect(ok.ok).toBe(true);
+  });
+
   it("rejects a line longer than the board allows", () => {
     const res = validateConfig(catalog, { sdk: 1, game: "tic-tac-toe", gameVersion: 1, rules: { board: { width: 4, height: 4 }, win: { line: 5 } } });
     expect(res.ok).toBe(false);

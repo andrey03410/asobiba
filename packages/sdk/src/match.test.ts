@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type ConfigDocument, createCatalog, validateConfig } from "./config";
+import { actionError, type AnyGame, defineGame } from "./game";
 import { INTERMISSION_MS, Match } from "./match";
 import { driftGame, raceGame } from "./testing";
 
@@ -121,5 +122,50 @@ describe("Match: realtime game", () => {
     m.advance(now);
     const restored = Match.restore({ game: driftGame, config: cfg, record: m.record(), now });
     expect(restored.view(null)).toEqual(m.view(null));
+  });
+});
+
+describe("Match: safety nets from review", () => {
+  // race variant: round 2+ starts with no legal moves when rules.target is 3
+  const stuckFromRound2 = defineGame({
+    ...(raceGame as AnyGame),
+    id: "race-stuck",
+    legalActions: (s: { total: number; winner: number | null }) => (s.total < 0 ? [] : [{ add: 1 }, { add: 2 }]),
+    setup: ({ firstSeat, round }: { firstSeat: number; round: number }) => ({ total: round >= 2 ? -1 : 0, turn: firstSeat, moves: 0, firstSeat, winner: null }),
+  } as AnyGame);
+
+  it("ends a round as a draw when nobody to move has a legal action, also in later rounds", () => {
+    const cat = createCatalog([stuckFromRound2]);
+    const res = validateConfig(cat, { sdk: 1, game: "race-stuck", gameVersion: 1, rules: { target: 2 }, series: { rounds: 2, stopWhenDecided: false }, timer: { turnSeconds: 5, onTimeout: "skip" } });
+    if (!res.ok) throw new Error(JSON.stringify(res.issues));
+    const m = Match.start({ game: stuckFromRound2, config: res.config, seats: 2, seed: 1, startedAt: T0 });
+    expect(m.dispatch(0, { add: 2 }, T0 + 1)).toEqual({ ok: true });
+    m.advance(T0 + 1 + INTERMISSION_MS);
+    const v = m.view(null);
+    expect(v.phase).toBe("finished");
+    expect(v.lastRound).toMatchObject({ draw: true, reason: "no-moves" });
+    expect(m.nextWakeAt()).toBeNull();
+  });
+
+  // race variant whose applyAction draws from the rng before rejecting "add: 2"
+  const rngHungry = defineGame({
+    ...(raceGame as AnyGame),
+    id: "race-rng",
+    applyAction: (s: { total: number; moves: number; turn: number }, seat: number, action: { add: number }, ctx: { rng: { next(): number }; seats: number }) => {
+      const roll = ctx.rng.next();
+      if (action.add === 2) return actionError("no_twos", "Двойки нельзя");
+      return { ...s, total: s.total + 1, moves: s.moves + 1, turn: (s.turn + 1) % ctx.seats, roll };
+    },
+  } as AnyGame);
+
+  it("does not let a rejected action move the generator, so a replay matches the live match", () => {
+    const cat = createCatalog([rngHungry]);
+    const res = validateConfig(cat, { sdk: 1, game: "race-rng", gameVersion: 1, rules: { target: 50 } });
+    if (!res.ok) throw new Error(JSON.stringify(res.issues));
+    const live = Match.start({ game: rngHungry, config: res.config, seats: 2, seed: 7, startedAt: T0 });
+    expect(live.dispatch(0, { add: 2 }, T0 + 1)).toMatchObject({ ok: false, error: { code: "no_twos" } });
+    expect(live.dispatch(0, { add: 1 }, T0 + 2)).toEqual({ ok: true });
+    const replay = Match.restore({ game: rngHungry, config: res.config, record: live.record(), now: T0 + 3 });
+    expect(replay.view(null).game).toEqual(live.view(null).game);
   });
 });

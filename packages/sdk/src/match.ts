@@ -143,8 +143,13 @@ export class Match {
     if (this.game.kind === "turn" && !this.game.currentSeats(this.state).includes(seat)) {
       return fail("not_your_turn", "Сейчас не ваш ход");
     }
+    const rngState = this.rng.state();
     const next = this.game.applyAction(this.state, seat, parsed.data, this.ctx(time));
-    if (isActionError(next)) return { ok: false, error: next.error };
+    if (isActionError(next)) {
+      // rejected actions are not logged, so they must not move the generator either
+      this.rng.restore(rngState);
+      return { ok: false, error: next.error };
+    }
     this.state = next;
     this.log.push({ at: time, seat, action: parsed.data });
     this.afterChange(time);
@@ -252,7 +257,7 @@ export class Match {
   }
 
   private afterChange(at: number, forceTimerReset = false) {
-    const rr = this.game.roundResult(this.state);
+    const rr = this.outcome(at);
     if (rr) {
       this.endRound(rr, at);
       return;
@@ -324,12 +329,26 @@ export class Match {
     this.state = this.game.setup({ ...this.ctx(at), round: this.round, firstSeat: first });
     this.turnKey = "";
     this.resetTurnTimer(at, true);
+    this.settle(at);
   }
 
-  /** A game may end its round right at setup (degenerate rules); handle it uniformly. */
+  /** A round may be over right at setup (degenerate rules); handle it the same way every round. */
   private settle(at: number) {
-    const rr = this.game.roundResult(this.state);
+    const rr = this.outcome(at);
     if (rr) this.endRound(rr, at);
+  }
+
+  /**
+   * The game's round result. A turn-based round where nobody to move has a legal
+   * action ends as a draw instead of hanging: passing, if a game allows it, must be an action.
+   */
+  private outcome(at: number): RoundResult | null {
+    const rr = this.game.roundResult(this.state);
+    if (rr || this.game.kind !== "turn") return rr;
+    const seats = this.game.currentSeats(this.state);
+    const ctx = this.ctx(at);
+    if (seats.some((s) => this.game.legalActions(this.state, s, ctx).length > 0)) return null;
+    return { winners: [], losers: [], draw: true, reason: "no-moves", summary: "ходов нет" };
   }
 }
 
