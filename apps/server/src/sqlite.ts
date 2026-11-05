@@ -29,8 +29,14 @@ class Lock {
  *   So inside `$transaction(async (tx) => …)` use only `tx`: a query through the
  *   shared client there waits for the transaction itself until its timeout.
  */
-export function sqliteAdapter(url: string): SqlMigrationAwareDriverAdapterFactory {
-  const inner = new PrismaBetterSqlite3({ url }, { timestampFormat: "unixepoch-ms" });
+export function sqliteAdapter(
+  url: string,
+  options: { busyTimeoutMs?: number } = {},
+): SqlMigrationAwareDriverAdapterFactory {
+  const inner = new PrismaBetterSqlite3(
+    { url, timeout: options.busyTimeoutMs ?? 5000 },
+    { timestampFormat: "unixepoch-ms" },
+  );
   return {
     provider: inner.provider,
     adapterName: inner.adapterName,
@@ -69,9 +75,19 @@ function serialized(adapter: SqlDriverAdapter): SqlDriverAdapter {
   };
 }
 
-/** The transaction keeps the lock until it commits or rolls back. */
+const ROLLBACK: SqlQuery = { sql: "ROLLBACK", args: [], argTypes: [] };
+
+/**
+ * The transaction keeps the lock until it commits or rolls back.
+ *
+ * The client sends COMMIT through `executeRaw` and, when it fails, calls only
+ * `rollback()`, which in this adapter sends nothing. SQLite keeps a transaction
+ * open after a COMMIT that failed on a lock (SQLITE_BUSY), so the connection would
+ * stay inside it: later queries would never be committed. Roll it back here.
+ */
 function holdUntilDone(tx: Transaction, release: () => void): Transaction {
   let held = true;
+  let commitFailed = false;
   const finish = () => {
     if (held) {
       held = false;
@@ -83,9 +99,23 @@ function holdUntilDone(tx: Transaction, release: () => void): Transaction {
     adapterName: tx.adapterName,
     options: tx.options,
     queryRaw: (query: SqlQuery) => tx.queryRaw(query),
-    executeRaw: (query: SqlQuery) => tx.executeRaw(query),
+    executeRaw: async (query: SqlQuery) => {
+      try {
+        return await tx.executeRaw(query);
+      } catch (e) {
+        if (query.sql.trim().toUpperCase() === "COMMIT") commitFailed = true;
+        throw e;
+      }
+    },
     commit: () => tx.commit().finally(finish),
-    rollback: () => tx.rollback().finally(finish),
+    rollback: async () => {
+      try {
+        if (commitFailed) await tx.executeRaw(ROLLBACK).catch(() => undefined);
+        await tx.rollback();
+      } finally {
+        finish();
+      }
+    },
     createSavepoint: tx.createSavepoint ? (name: string) => tx.createSavepoint!(name) : undefined,
     rollbackToSavepoint: tx.rollbackToSavepoint ? (name: string) => tx.rollbackToSavepoint!(name) : undefined,
     releaseSavepoint: tx.releaseSavepoint ? (name: string) => tx.releaseSavepoint!(name) : undefined,

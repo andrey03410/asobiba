@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PrismaClient } from "./generated/prisma/client";
+import { sqliteAdapter } from "./sqlite";
 import { resetDb, testDb } from "./test/helpers";
 
 const db = testDb();
@@ -34,5 +36,39 @@ describe("SQLite client (Prisma 7 adapter)", () => {
     await db.user.create({ data: { id: "usr_out", login: "outside", passwordHash: "x" } });
     expect(await failing).toBe("rollback on purpose");
     expect((await db.user.findMany({ orderBy: { login: "asc" } })).map((u) => u.login)).toEqual(["outside"]);
+  });
+
+  it("leaves no transaction open when COMMIT fails on a lock held by another connection", async () => {
+    const url = process.env.DATABASE_URL as string;
+    const writer = new PrismaClient({ adapter: sqliteAdapter(url, { busyTimeoutMs: 100 }) });
+    const reader = new PrismaClient({ adapter: sqliteAdapter(url) });
+    try {
+      // the reader holds a shared lock, so the writer's COMMIT cannot get the exclusive one
+      let readerHolds!: () => void;
+      const holding = new Promise<void>((resolve) => (readerHolds = resolve));
+      const readerDone = reader.$transaction(async (tx) => {
+        await tx.user.count();
+        readerHolds();
+        await sleep(400);
+      });
+      await holding;
+      const failed = await writer
+        .$transaction(async (tx) => {
+          await tx.user.create({ data: { id: "usr_lost", login: "lost", passwordHash: "x" } });
+        })
+        .then(
+          () => "committed",
+          () => "failed",
+        );
+      await readerDone;
+      expect(failed).toBe("failed");
+      // the writer's connection must be back in autocommit mode
+      await writer.user.create({ data: { id: "usr_next", login: "next", passwordHash: "x" } });
+      expect((await reader.user.findMany({ orderBy: { login: "asc" } })).map((u) => u.login)).toEqual(["next"]);
+      await writer.$transaction(async (tx) => tx.user.count());
+    } finally {
+      await writer.$disconnect();
+      await reader.$disconnect();
+    }
   });
 });
