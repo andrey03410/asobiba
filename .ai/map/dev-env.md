@@ -12,7 +12,7 @@
   - `test` (`vitest run`), `typecheck`, `db:migrate`, `db:deploy`, `db:generate`, `invite`;
   - `postinstall` генерирует Prisma-клиент в `apps/server/src/generated/prisma` (папка в `.gitignore`).
 - [`scripts/prisma.mjs`](../../scripts/prisma.mjs) — точка входа в Prisma CLI: читает `.env`, подставляет абсолютный `DATABASE_URL` по умолчанию (`storage/asobiba.db`) и запускает CLI из корня. После `migrate dev` сам вызывает `generate`: в Prisma 7 миграция клиент не перегенерирует.
-- [`prisma.config.ts`](../../prisma.config.ts) — конфиг CLI Prisma 7: путь схемы, папка миграций, адрес базы. В `schema.prisma` адреса больше нет (P1012).
+- [`prisma.config.ts`](../../prisma.config.ts) — конфиг CLI Prisma 7: путь схемы, папка миграций, адрес базы. В `schema.prisma` адреса больше нет (P1012). Относительный `DATABASE_URL` теперь отсчитывается от корня репозитория, а не от `apps/server/prisma/`; надёжнее абсолютный путь.
 - [`apps/server/prisma/`](../../apps/server/prisma/) — схема и миграции. Prisma 7.10.1, генератор `prisma-client`, клиент работает через адаптер [`apps/server/src/sqlite.ts`](../../apps/server/src/sqlite.ts) ([server.md](server.md)).
 - [`apps/server/src/env.ts`](../../apps/server/src/env.ts) — переменные окружения и умолчания.
 - [`tsconfig.json`](../../tsconfig.json) — один проект на все пакеты (`moduleResolution: Bundler`, `verbatimModuleSyntax`).
