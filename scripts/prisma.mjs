@@ -19,6 +19,9 @@ const dbPath = process.env.DATABASE_URL.replace(/^file:/, "");
 if (dbPath.startsWith("/")) mkdirSync(dirname(dbPath), { recursive: true });
 
 const bin = resolve(root, "node_modules/.bin/prisma");
-const args = [...process.argv.slice(2), "--schema", resolve(root, "apps/server/prisma/schema.prisma")];
-const result = spawnSync(bin, args, { stdio: "inherit", env: process.env });
-process.exit(result.status ?? 1);
+const args = process.argv.slice(2); // schema, migrations and url come from prisma.config.ts
+const run = (argv) => spawnSync(bin, argv, { stdio: "inherit", env: process.env, cwd: root }).status ?? 1;
+let status = run(args);
+// Prisma 7: migrate dev no longer regenerates the client
+if (status === 0 && args[0] === "migrate" && args[1] === "dev") status = run(["generate"]);
+process.exit(status);
