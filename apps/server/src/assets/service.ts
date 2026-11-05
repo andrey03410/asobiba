@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { AssetDto } from "@asobiba/api";
 import type { ConfigIssue } from "@asobiba/sdk";
-import type { Asset } from "@prisma/client";
+import type { Asset } from "../generated/prisma/client";
 import type { Db } from "../db";
 import type { Env } from "../env";
 import { conflict, HttpError, notFound } from "../http-errors";

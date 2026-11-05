@@ -13,6 +13,7 @@ Fastify-процесс `apps/server`: вход по приглашениям, с
 - [`configs/service.ts`](../../apps/server/src/configs/service.ts) — проверка конфига SDK + владение картинками, библиотека конфигов.
 - [`lobbies/service.ts`](../../apps/server/src/lobbies/service.ts) — `LobbyService`: лобби, комнаты, партии, рассылка, восстановление.
 - [`preview/render.ts`](../../apps/server/src/preview/render.ts) — PNG-превью из компонента доски игры.
+- [`db.ts`](../../apps/server/src/db.ts) и [`sqlite.ts`](../../apps/server/src/sqlite.ts) — клиент Prisma 7 через адаптер `better-sqlite3`.
 - [`http-errors.ts`](../../apps/server/src/http-errors.ts) — `HttpError(status, code, message, issues?)`.
 - [`test/helpers.ts`](../../apps/server/src/test/helpers.ts) — `createTestApp`, `resetDb`, `signUp`.
 
@@ -40,6 +41,14 @@ Fastify-процесс `apps/server`: вход по приглашениям, с
 
 ## Грабли
 
+- **Клиент базы.** Prisma 7 ходит в SQLite через адаптер `better-sqlite3`, обёрнутый в `sqliteAdapter` ([`sqlite.ts`](../../apps/server/src/sqlite.ts)):
+  - даты хранятся целыми миллисекундами (`timestampFormat: "unixepoch-ms"`), как писала Prisma 6. Умолчание адаптера — ISO-строки, и смесь форматов ломает сравнения: SQLite считает любое число меньше любой строки, сессии выглядят истёкшими;
+  - на процесс одно соединение. Запросы вне транзакции ждут, пока открытая транзакция закончится, иначе они выполнились бы внутри неё и откатились бы вместе с ней;
+  - поэтому внутри `$transaction(async (tx) => …)` — только `tx`. Запрос через общий клиент там ждёт саму транзакцию до её таймаута (5 с);
+  - если `COMMIT` упёрся в чужую блокировку (другой процесс читает базу дольше 5 с), обёртка сама отправляет `ROLLBACK`. Клиент Prisma в этом случае зовёт только `rollback()` адаптера, а тот ничего не шлёт, и соединение осталось бы внутри транзакции;
+  - `better-sqlite3` синхронный: ожидание чужой блокировки (до 5 с) держит event loop сервера, а не поток движка, как было в Prisma 6.
+- Импорты моделей и `Prisma` — из `apps/server/src/generated/prisma/client`, а не из `@prisma/client`.
+
 - Комнаты не выселяются из памяти: на нагрузке «владелец и друзья» это сотни лобби, не больше.
 - Игрок, закрывший вкладку посреди партии, остаётся на месте: без таймера хода партия встанет. Выход — таймер в конфиге или закрытие лобби хозяином.
 - Fastify-хук `onRequest` срабатывает и на апгрейде WebSocket, поэтому `req.user` в обработчике `/ws` уже есть.
@@ -53,3 +62,4 @@ Fastify-процесс `apps/server`: вход по приглашениям, с
 ## История
 
 - [задача 01](../features/01-rebuild/README.md) — первая версия сервера
+- [задача 03](../features/03-prisma-7/README.md) — Prisma 7, адаптер SQLite с форматом дат и очередью вокруг транзакций

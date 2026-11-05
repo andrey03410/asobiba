@@ -1,5 +1,5 @@
 import type { InviteDto, Role, TokenDto, UserDto } from "@asobiba/api";
-import type { User } from "@prisma/client";
+import type { User } from "../generated/prisma/client";
 import bcrypt from "bcryptjs";
 import type { Db } from "../db";
 import { badRequest, conflict, notFound, unauthorized } from "../http-errors";

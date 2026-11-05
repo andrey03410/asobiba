@@ -1,6 +1,6 @@
 import type { ConfigDto } from "@asobiba/api";
 import { collectAssetRefs, type ConfigDocument, type ConfigIssue, type GameCatalog, validateConfig } from "@asobiba/sdk";
-import type { GameConfig, Prisma } from "@prisma/client";
+import type { GameConfig, Prisma } from "../generated/prisma/client";
 import type { AssetService } from "../assets/service";
 import type { Db } from "../db";
 import { conflict, invalidConfig, notFound } from "../http-errors";
