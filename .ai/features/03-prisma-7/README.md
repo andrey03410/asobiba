@@ -2,11 +2,11 @@
 id: 03
 title: Переход на Prisma 7
 track: tech
-stage: review
+stage: merged
 branch: chore/03-prisma-7
 pr: https://github.com/andrey03410/asobiba/pull/2
 started: 2026-11-05
-merged:
+merged: 2026-11-05
 ---
 
 # 03. Переход на Prisma 7
@@ -23,9 +23,10 @@ merged:
 - [x] Техника — [tech.md](tech.md)
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
-- [ ] Проверка владельцем (автономный режим)
-- [ ] Влито
+- [x] Проверка владельцем (автономный режим)
+- [x] Влито
 
 ## Хвосты
 
-- нет
+- Prisma 8: вернуться, когда выйдет из кандидатов и SQLite в ней станет стабильным (сейчас даты Prisma 6/7 не читаются).
+- Основной чекаут после вливания: `main`, `npm install`, перезапуск dev-серверов.
