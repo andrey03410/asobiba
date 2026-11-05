@@ -2,9 +2,9 @@
 id: 01
 title: Пересборка Asobiba: TypeScript-монорепо, агентский SDK игр, MCP
 track: product
-stage: build
+stage: review
 branch: feat/01-rebuild
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/1
 started: 2026-11-05
 merged:
 ---
