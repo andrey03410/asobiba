@@ -2,7 +2,7 @@
 id: 03
 title: Переход на Prisma 7
 track: tech
-stage: plan
+stage: build
 branch: chore/03-prisma-7
 pr:
 started: 2026-11-05
@@ -21,7 +21,7 @@ merged:
 
 - [x] Бриф — [brief.md](brief.md)
 - [x] Техника — [tech.md](tech.md)
-- [ ] План — [plan.md](plan.md)
+- [x] План — [plan.md](plan.md)
 - [ ] Реализация и QG — [verify.md](verify.md)
 - [ ] Проверка владельцем (автономный режим)
 - [ ] Влито
