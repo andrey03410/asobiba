@@ -47,9 +47,14 @@ function territoryPaths(width: number, height: number, cells: number[]): [number
 /** Shared map artwork; this has no HTML and is also safe for resvg previews. */
 export function MapArtwork({ width, height, cells, colors, wallColor = '#293d45', background = '#f7f3e8', grid = true, children }: Pick<MapViewportProps, 'width' | 'height' | 'cells' | 'colors' | 'wallColor' | 'background' | 'grid' | 'children'>): ReactElement {
   const uid = useId().replace(/:/g, '');
+  const hex = background.slice(1);
+  const rgb = hex.length === 3 ? hex.split('').map(c => c + c).join('') : hex.slice(0, 6);
+  const channels = [0, 2, 4].map(i => parseInt(rgb.slice(i, i + 2), 16));
+  const brightness = channels[0] * .299 + channels[1] * .587 + channels[2] * .114;
+  const gridColor = brightness < 128 ? '#d8e9e4' : '#233e42';
   const paths = useMemo(() => territoryPaths(width, height, cells), [width, height, cells]);
   return <>
-    <defs><pattern id={`jinchi-grid-${uid}`} width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="#233e42" strokeOpacity=".16" strokeWidth=".025" /></pattern></defs>
+    <defs><pattern id={`jinchi-grid-${uid}`} width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke={gridColor} strokeOpacity=".22" strokeWidth=".025" /></pattern></defs>
     <rect width={width} height={height} fill={background} />
     <g shapeRendering="crispEdges">{paths.map(([value, path]) => <path key={value} d={path} fill={value === -2 ? wallColor : colors[value] ?? '#87989a'} />)}</g>
     {grid && <rect width={width} height={height} fill={`url(#jinchi-grid-${uid})`} pointerEvents="none" />}

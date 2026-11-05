@@ -3,7 +3,7 @@ import type { BoardProps, ConfigDocument, MatchView } from '@asobiba/sdk';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { JinchiBoard, JinchiSeatIcon } from './Board';
-import { MapViewport } from './MapViewport';
+import { MapArtwork, MapViewport } from './MapViewport';
 
 const rules = {
   map: { width: 4, height: 3, rows: ['1#..', '....', '...2'] },
@@ -114,4 +114,12 @@ describe('MapViewport shared surface', () => {
     expect((html.match(/<path/g) ?? []).length).toBeLessThan(10);
     expect(html).toContain('Полный экран');
   });
+});
+
+it.each(['#101a2b', '#fff8e9'])('keeps cell boundaries visible on %s maps', (background) => {
+  const svg = renderToStaticMarkup(<svg xmlns="http://www.w3.org/2000/svg" width={200} height={200} viewBox="0 0 4 4"><MapArtwork width={4} height={4} cells={Array(16).fill(-1)} colors={colors} background={background} grid /></svg>);
+  const image = new Resvg(svg).render();
+  const pixel = (x: number, y: number) => [...image.pixels.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
+  const edge = pixel(50, 25), center = pixel(25, 25);
+  expect(Math.max(...edge.map((c, i) => Math.abs(c - center[i])))).toBeGreaterThan(15);
 });
