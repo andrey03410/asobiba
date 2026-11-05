@@ -2,9 +2,9 @@
 id: 03
 title: Переход на Prisma 7
 track: tech
-stage: build
+stage: review
 branch: chore/03-prisma-7
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/2
 started: 2026-11-05
 merged:
 ---
