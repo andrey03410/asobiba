@@ -22,7 +22,7 @@ merged:
 - [x] Бриф — [brief.md](brief.md)
 - [x] Техника — [tech.md](tech.md)
 - [x] План — [plan.md](plan.md)
-- [ ] Реализация и QG — [verify.md](verify.md)
+- [x] Реализация и QG — [verify.md](verify.md)
 - [ ] Проверка владельцем (автономный режим)
 - [ ] Влито
 
