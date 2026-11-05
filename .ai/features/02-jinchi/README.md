@@ -2,9 +2,9 @@
 id: 02
 title: Jinchi — захват территории кубиками
 track: product
-stage: build
+stage: review
 branch: feat/02-jinchi
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/3
 started: 2026-11-05
 merged:
 ---
