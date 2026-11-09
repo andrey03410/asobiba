@@ -99,6 +99,10 @@ export const JINCHI_CSS = `
 .jinchi-hints{opacity:.6}
 .jinchi-viewport.is-fullscreen,.jinchi-viewport:fullscreen{position:fixed;inset:0;width:100vw;height:100dvh;max-width:none;max-height:none;border:0;border-radius:0;z-index:10000;display:flex;flex-direction:column;overscroll-behavior:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 .jinchi-viewport.is-fullscreen .jinchi-map-stage{height:auto;min-height:0;flex:1}
+.jinchi-board.is-stage{display:flex;flex-direction:column;height:100%;padding:clamp(6px,1.5vmin,16px)}
+.jinchi-viewport.is-fill{flex:1;min-height:0;display:flex;flex-direction:column}
+.jinchi-viewport.is-fill .jinchi-map-stage{height:auto;min-height:0;flex:1}
+.jinchi-board.is-stage .jinchi-board-help{display:none}
 @keyframes jinchi-place{0%{opacity:0;transform:scale(.85)}70%{opacity:1;transform:scale(1.025)}100%{transform:scale(1)}}
 @keyframes jinchi-wave{0%{opacity:0}35%{opacity:1;fill-opacity:.7}100%{opacity:1;fill-opacity:.18}}
 @media(max-width:760px){

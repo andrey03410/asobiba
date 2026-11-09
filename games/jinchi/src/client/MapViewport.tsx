@@ -21,6 +21,10 @@ export interface MapViewportProps {
   focusCells?: number[];
   lastCells?: number[];
   toolbar?: ReactNode;
+  /** Stretch to the parent's height (the match stage) instead of the inline map height. */
+  fill?: boolean;
+  /** Fullscreen owned by the page: the button and F drive it instead of the viewport's own. */
+  externalFullscreen?: { active: boolean; available: boolean; toggle(): void };
 }
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -88,7 +92,7 @@ function SvgIcon({ kind }: { kind: 'fit' | 'focus' | 'last' | 'fullscreen' | 'ma
 }
 
 /** The editor and game use the same camera. Incoming cells never move it. */
-export function MapViewport({ width, height, cells, colors, wallColor, background, grid = true, children, onCellHover, onCellClick, onStrokeStart, onStrokeMove, onStrokeEnd, onStrokeCancel, drawing = false, focusCells = [], lastCells = [], toolbar }: MapViewportProps): ReactElement {
+export function MapViewport({ width, height, cells, colors, wallColor, background, grid = true, children, onCellHover, onCellClick, onStrokeStart, onStrokeMove, onStrokeEnd, onStrokeCancel, drawing = false, focusCells = [], lastCells = [], toolbar, fill = false, externalFullscreen }: MapViewportProps): ReactElement {
   const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const aspectRef = useRef(1.6);
@@ -179,6 +183,10 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
   }, [local, updateCamera, zoom]);
 
   const toggleFullscreen = useCallback(async () => {
+    if (externalFullscreen) {
+      externalFullscreen.toggle();
+      return;
+    }
     if (fullscreen) {
       setFullscreen(false);
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
@@ -187,7 +195,8 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
     setFullscreen(true);
     rootRef.current?.focus({ preventScroll: true });
     try { await rootRef.current?.requestFullscreen?.(); } catch { /* The fixed viewport is the mobile browser fallback. */ }
-  }, [fullscreen]);
+  }, [fullscreen, externalFullscreen]);
+  const shownFullscreen = externalFullscreen ? externalFullscreen.active : fullscreen;
   useEffect(() => {
     const change = () => { if (!document.fullscreenElement) setFullscreen(false); };
     const escape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') { setFullscreen(false); if (document.fullscreenElement) void document.exitFullscreen().catch(() => {}); } };
@@ -323,7 +332,7 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
   const visibleH = Math.max(0, Math.min(height, camera.y + camera.height) - visibleY);
   const pixelPerCell = (svgRef.current?.clientWidth ?? 800) / camera.width;
 
-  return <div className={`jinchi-viewport${fullscreen ? ' is-fullscreen' : ''}${panning ? ' is-panning' : ''}${drawing ? ' is-drawing' : ''}`} ref={rootRef} tabIndex={0} onKeyDown={keyDown} onKeyUp={event => { if (event.key === ' ') spaceDown.current = false; }} onBlur={() => { spaceDown.current = false; }} aria-label="Карта Jinchi. Стрелки — перемещение, плюс и минус — масштаб, F — полный экран">
+  return <div className={`jinchi-viewport${fullscreen && !externalFullscreen ? ' is-fullscreen' : ''}${fill ? ' is-fill' : ''}${panning ? ' is-panning' : ''}${drawing ? ' is-drawing' : ''}`} ref={rootRef} tabIndex={0} onKeyDown={keyDown} onKeyUp={event => { if (event.key === ' ') spaceDown.current = false; }} onBlur={() => { spaceDown.current = false; }} aria-label="Карта Jinchi. Стрелки — перемещение, плюс и минус — масштаб, F — полный экран">
     {toolbar && <div className="jinchi-viewport-toolbar">{toolbar}</div>}
     <div className="jinchi-map-stage">
       <svg ref={svgRef} className="jinchi-map" viewBox={`${camera.x} ${camera.y} ${camera.width} ${camera.height}`} role="img" aria-label={`Карта ${width}×${height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer}>
@@ -342,7 +351,7 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
     <nav className="jinchi-map-controls" aria-label="Навигация по карте">
       <div className="jinchi-control-group"><button type="button" onClick={() => zoom(1.25)} aria-label="Уменьшить масштаб" title="Уменьшить (−)">−</button><output aria-label="Масштаб">{zoomPercent}%</output><button type="button" onClick={() => zoom(.8)} aria-label="Увеличить масштаб" title="Увеличить (+)">+</button></div>
       <div className="jinchi-control-group"><button type="button" onClick={fit} title="Вся карта (0)"><SvgIcon kind="fit" /><span>Вся карта</span></button><button type="button" onClick={() => focus(focusCells)} disabled={!focusCells.length} title="К моей территории (M)" aria-label="К моей территории"><SvgIcon kind="focus" /><span>К себе</span></button><button type="button" onClick={() => focus(lastCells)} disabled={!lastCells.length} title="К последнему ходу (L)" aria-label="К последнему ходу"><SvgIcon kind="last" /><span>Последний</span></button></div>
-      <button type="button" className="jinchi-fullscreen" onClick={() => { void toggleFullscreen(); }} title="Полный экран (F)" aria-label={fullscreen ? 'Выйти из полного экрана' : 'Полный экран'}><SvgIcon kind="fullscreen" /><span>{fullscreen ? 'Свернуть' : 'Полный экран'}</span></button>
+      {(!externalFullscreen || externalFullscreen.available) && <button type="button" className="jinchi-fullscreen" onClick={() => { void toggleFullscreen(); }} title="Полный экран (F)" aria-label={shownFullscreen ? 'Выйти из полного экрана' : 'Полный экран'}><SvgIcon kind="fullscreen" /><span>{shownFullscreen ? 'Свернуть' : 'Полный экран'}</span></button>}
     </nav>
   </div>;
 }
