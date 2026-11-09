@@ -2,9 +2,9 @@
 id: 04
 title: Русское поле — слова и барабан
 track: product
-stage: build
+stage: review
 branch: feat/04-russkoe-pole
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/4
 started: 2026-11-09
 merged:
 ---
@@ -23,7 +23,7 @@ merged:
 - [x] Продукт — [product.md](product.md)
 - [x] Техника — [tech.md](tech.md)
 - [x] План — [plan.md](plan.md)
-- [ ] Реализация и QG — [verify.md](verify.md)
+- [x] Реализация и QG — [verify.md](verify.md)
 - [ ] Проверка владельцем
 - [ ] Влито
 
