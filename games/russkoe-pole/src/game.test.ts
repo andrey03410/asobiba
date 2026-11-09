@@ -309,3 +309,281 @@ describe("simulation and secrets", () => {
     expect(report.finished).toBeGreaterThan(0);
   });
 });
+
+describe("acceptance fixes", () => {
+  const twoWords = { ...quiet, words: { source: "custom", rounds: 2, custom: [{ question: "Кто мурлычет", answer: "КОТ" }, { question: "Кто лает", answer: "ПЁС" }] } };
+
+  it("plays every preset on a full table to the end", () => {
+    for (const preset of russkoePole.presets) {
+      const config = presetDocument(russkoePole, preset);
+      const report = simulate(russkoePole, config, { rounds: 4, seed: 7, maxActions: 600 });
+      const blocking = report.issues.filter((issue) => issue.code === "stuck" || issue.code === "never-ends" || issue.code === "illegal-legal-action");
+      expect(blocking, `${preset.id}: ${JSON.stringify(blocking)}`).toEqual([]);
+    }
+  });
+
+  it("owns its timeout so a silent player never plays a random answer", () => {
+    expect(russkoePole.timeoutPolicy).toBe("skip");
+  });
+
+  it("hands the turn clockwise past a player who just left the round", () => {
+    const state = play({ ...quiet, players: { min: 1, max: 4 } }, 4, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "letter", letter: "я" } },
+      { seat: 1, action: { type: "spin" } },
+      { seat: 1, action: { type: "letter", letter: "я" } },
+      { seat: 2, action: { type: "spin" } },
+      { seat: 2, action: { type: "solve", text: "пёс" } },
+    ]);
+    expect(state.players[2]?.outRound).toBe(true);
+    expect(state.turn).toBe(3);
+  });
+
+  it("restores lives on a new word and keeps everybody's round points", () => {
+    const lives = play({ ...twoWords, scoring: { lives: 2, wordBonus: 0 } }, 1, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "letter", letter: "я" } },
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "letter", letter: "ю" } },
+    ]);
+    expect(lives.wordIndex).toBe(1);
+    expect(lives.players[0]?.lives).toBe(2);
+    const banked = play({ ...quiet, scoring: { lives: 0, wordBonus: 100 }, players: { min: 1, max: 2 } }, 2, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "letter", letter: "к" } },
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "letter", letter: "я" } },
+      { seat: 1, action: { type: "spin" } },
+      { seat: 1, action: { type: "solve", text: "кот" } },
+    ]);
+    expect(banked.players[0]?.total).toBe(100);
+    expect(banked.players[1]?.total).toBe(100);
+  });
+
+  it("shows the played word to everybody and opens the crossword at the end", () => {
+    const next = play(twoWords, 1, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "solve", text: "кот" } },
+    ]);
+    const view = russkoePole.view(next, null);
+    expect(view.reveal?.answer).toBe("КОТ");
+    expect(view.events.some((event) => event.text.includes("КОТ"))).toBe(true);
+    expect(JSON.stringify(view.tiles)).not.toContain("П");
+  });
+
+  it("applies the sector first and then its `then`", () => {
+    const zeroAgain = { type: "zero" as const, penalty: 0, then: "again" as const };
+    const again = play({ ...quiet, players: { min: 1, max: 2 }, wheel: [zeroAgain, zeroAgain, zeroAgain, zeroAgain] }, 2, [{ seat: 0, action: { type: "spin" } }]);
+    expect(again.turn).toBe(0);
+    expect(again.phase).toBe("spin");
+    const chancePass = { type: "chance" as const, amount: 50, then: "pass" as const };
+    const passed = play({ ...quiet, players: { min: 1, max: 2 }, wheel: [chancePass, chancePass, chancePass, chancePass] }, 2, [{ seat: 0, action: { type: "spin" } }]);
+    expect(passed.players[0]?.round).toBe(50);
+    expect(passed.turn).toBe(1);
+    const prizeGuess = { type: "prize" as const, min: 10, max: 10, then: "guess" as const };
+    const guess = play({ ...quiet, wheel: [prizeGuess, prizeGuess, prizeGuess, prizeGuess] }, 1, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "prize", choice: "cash" } },
+    ]);
+    expect(guess.phase).toBe("guess");
+    expect(guess.players[0]?.round).toBe(10);
+  });
+
+  it("keeps the spin for everybody and gives its animation to the turn clock", () => {
+    const spun = play({ ...quiet, timers: { maxSpins: 10, turnSeconds: 20 } }, 1, [{ seat: 0, action: { type: "spin" } }]);
+    const extra = Math.ceil((spun.spin?.durationMs ?? 0) / 1000);
+    expect(russkoePole.turnBudgetSeconds?.(spun)).toBe(20 + extra);
+    const guessed = play(quiet, 1, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "letter", letter: "к" } },
+    ]);
+    expect(guessed.spin).not.toBeNull();
+    const mathWheel = Array.from({ length: 4 }, () => ({ type: "math" as const, min: 2, max: 2 }));
+    const posed = play({ ...quiet, wheel: mathWheel }, 1, [{ seat: 0, action: { type: "spin" } }]);
+    expect(posed.math?.startedAt).toBe((posed.spin?.startedAt ?? 0) + (posed.spin?.durationMs ?? 0));
+  });
+
+  it("refuses losing at zero without starting points and warns about unused own words", () => {
+    const zero = rulesSchema.parse({ scoring: { loseAtZero: true, startingScore: 0 } });
+    expect(russkoePole.checkRules?.(zero).some((issue) => issue.code === "instant_out" && issue.severity !== "warning")).toBe(true);
+    const ignored = rulesSchema.parse({ words: { source: "bank", custom: [{ question: "А", answer: "КОТ" }] } });
+    expect(russkoePole.checkRules?.(ignored).some((issue) => issue.code === "custom_ignored")).toBe(true);
+  });
+
+  it("treats a letter opened by Plus as already called", () => {
+    const plus = { type: "plus" as const, then: "again" as const };
+    const points = { type: "points" as const, value: 100 };
+    let state = play({ ...quiet, scoring: { lives: 3, wordBonus: 0 }, wheel: [plus, plus, plus, plus] }, 1, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "plus", index: 0 } },
+    ]);
+    expect(state.called).toContain("к");
+    const parsed = rules({ ...quiet, scoring: { lives: 3, wordBonus: 0 }, wheel: [points, points, points, points] });
+    state = { ...state, phase: "guess", sector: 0 };
+    const next = russkoePole.applyAction(state, 0, { type: "letter", letter: "к" }, { rules: parsed, seats: 1, rng: rngOf(3), now: 5_000 });
+    if ("error" in next) throw new Error(next.error.message);
+    expect(next.players[0]?.lives).toBe(3);
+  });
+
+  it("ends a solo match with no winner when the player is out", () => {
+    const deadly = { type: "roulette" as const, bulletValue: 0, capacity: 2, consequence: "lose-match" as const, hostChance: 0 };
+    const state = play({ ...quiet, wheel: [deadly, deadly, deadly, deadly] }, 1, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "roulette", bullets: 2 } },
+    ]);
+    expect(state.result?.winners).toEqual([]);
+    expect(state.tiles.every((tile) => tile.open)).toBe(true);
+  });
+
+  it("never pays a math multiplier above the sector maximum, even for an answer given during the spin", () => {
+    const math = Array.from({ length: 4 }, () => ({ type: "math" as const, min: 2, max: 2, maxMultiplier: 3 }));
+    const parsed = rules({ ...quiet, wheel: math });
+    const posed = play({ ...quiet, wheel: math }, 1, [{ seat: 0, action: { type: "spin" } }]);
+    const early = russkoePole.applyAction(posed, 0, { type: "math", value: posed.math?.value ?? 0 }, { rules: parsed, seats: 1, rng: rngOf(4), now: 2_100 });
+    if ("error" in early) throw new Error(early.error.message);
+    expect(early.players[0]?.round).toBe(300);
+  });
+
+  it("lets Plus follow an explicit `then` and starts a word without winner clockwise", () => {
+    const plusPass = { type: "plus" as const, then: "pass" as const };
+    const passed = play({ ...quiet, players: { min: 1, max: 2 }, wheel: [plusPass, plusPass, plusPass, plusPass] }, 2, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "plus", index: 0 } },
+    ]);
+    expect(passed.turn).toBe(1);
+    const three = { ...quiet, players: { min: 1, max: 3 }, scoring: { lives: 0, wordBonus: 0, wrongWord: "eliminate" }, words: { source: "custom", rounds: 2, custom: [{ question: "Кто мурлычет", answer: "КОТ" }, { question: "Кто лает", answer: "ПЁС" }] } };
+    const next = play(three, 3, [
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "letter", letter: "я" } },
+      { seat: 1, action: { type: "spin" } },
+      { seat: 1, action: { type: "solve", text: "пёс" } },
+      { seat: 2, action: { type: "spin" } },
+      { seat: 2, action: { type: "solve", text: "пёс" } },
+      { seat: 0, action: { type: "spin" } },
+      { seat: 0, action: { type: "solve", text: "пёс" } },
+    ]);
+    expect(next.wordIndex).toBe(1);
+    expect(next.turn).toBe(1);
+  });
+
+  describe("super game", () => {
+    const puzzle = {
+      source: "custom" as const,
+      mode: "solo" as const,
+      canDecline: false,
+      puzzles: [{ words: [{ question: "Украшение", answer: "КОРОНА" }, { question: "Цветок", answer: "РОЗА" }, { question: "Знак", answer: "НОТА" }] }],
+      letters: { base: 2, firstThreshold: 1000, capRatio: 0.4 },
+      modifiers: { prizeWheel: false, hints: "none" as const },
+    };
+    const toSuper = [
+      { seat: 0, action: { type: "spin" } as PoleAction },
+      { seat: 0, action: { type: "solve", text: "кот" } as PoleAction },
+    ];
+
+    it("opens letters one by one, gives extra attempts and opens everything on a loss", () => {
+      const one = play({ ...quiet, scoring: { lives: 0, wordBonus: 0 }, super: { enabled: true, ...puzzle, attempts: 2, letters: { ...puzzle.letters, oneByOne: true } } }, 1, [
+        ...toSuper,
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+      ]);
+      expect(one.phase).toBe("letters");
+      expect(one.lettersLeft[0]).toBe(1);
+      expect(russkoePole.view(one, 0).cells.some((cell) => cell.ch === "К")).toBe(true);
+      const answering = play({ ...quiet, scoring: { lives: 0, wordBonus: 0 }, super: { enabled: true, ...puzzle, attempts: 2, letters: { ...puzzle.letters, oneByOne: true } } }, 1, [
+        ...toSuper,
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+        { seat: 0, action: { type: "letters", letters: ["р"] } },
+        { seat: 0, action: { type: "solve", text: "корова" } },
+      ]);
+      expect(answering.phase).toBe("answer");
+      expect(answering.attemptsLeft).toBe(1);
+      const stopped = play({ ...quiet, scoring: { lives: 0, wordBonus: 0 }, super: { enabled: true, ...puzzle, letters: { ...puzzle.letters, oneByOne: true } } }, 1, [
+        ...toSuper,
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+        { seat: 0, action: { type: "letters", letters: [] } },
+      ]);
+      expect(stopped.phase).toBe("answer");
+      const legal = russkoePole.legalActions(one, 0, { rules: rules({ ...quiet, super: { enabled: true, ...puzzle, letters: { ...puzzle.letters, oneByOne: true } } }), seats: 1 } as never);
+      for (const action of legal) {
+        const out = russkoePole.applyAction(one, 0, action, { rules: rules({ ...quiet, super: { enabled: true, ...puzzle, letters: { ...puzzle.letters, oneByOne: true } } }), seats: 1, rng: rngOf(1), now: 9_000 });
+        expect("error" in out ? out.error : null).toBeNull();
+      }
+      const lost = play({ ...quiet, scoring: { lives: 0, wordBonus: 0 }, super: { enabled: true, ...puzzle } }, 1, [
+        ...toSuper,
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+        { seat: 0, action: { type: "solve", text: "корова" } },
+      ]);
+      expect(lost.result).not.toBeNull();
+      expect(russkoePole.view(lost, null).cells.every((cell) => cell.open)).toBe(true);
+    });
+
+    it("takes one answer per word, in its place", () => {
+      const base = { ...quiet, scoring: { lives: 0, wordBonus: 0 }, super: { enabled: true, ...puzzle } };
+      const variants = play(base, 1, [...toSuper, { seat: 0, action: { type: "letters", letters: ["к"] } }, { seat: 0, action: { type: "solve", text: "роза, корона" } }]);
+      expect(variants.events.some((event) => event.text.startsWith("Суперигра взята"))).toBe(false);
+      const listed = play(base, 1, [...toSuper, { seat: 0, action: { type: "letters", letters: ["к"] } }, { seat: 0, action: { type: "answer", answers: ["корова, корона"] } }]);
+      expect(listed.events.some((event) => event.text.startsWith("Суперигра взята"))).toBe(false);
+      const ready = play(base, 1, [...toSuper, { seat: 0, action: { type: "letters", letters: ["к"] } }]);
+      const [answer] = russkoePole.legalActions(ready, 0, { rules: rules(base), seats: 1 } as never);
+      expect(answer?.type).toBe("answer");
+      const won = russkoePole.applyAction(ready, 0, answer as PoleAction, { rules: rules(base), seats: 1, rng: rngOf(2), now: 9_000 });
+      if ("error" in won) throw new Error(won.error.message);
+      expect(won.events.some((event) => event.text === "Суперигра взята, бонусных слов: 2")).toBe(true);
+    });
+
+    it("draws the prize wheel when its spin times out", () => {
+      const base = { ...quiet, scoring: { lives: 0, wordBonus: 0 }, super: { enabled: true, ...puzzle, modifiers: { ...puzzle.modifiers, prizeWheel: true, wheel: [4, 4] } } };
+      const atWheel = play(base, 1, toSuper);
+      expect(atWheel.phase).toBe("wheel");
+      const timedOut = russkoePole.passTurn?.(atWheel, 0, { rules: rules(base), seats: 1, rng: rngOf(5), now: 9_000 });
+      expect(timedOut?.prizeMultiplier).toBe(4);
+    });
+
+    it("pays exactly the prize wheel multiplier, even ×1", () => {
+      const won = play({ ...quiet, scoring: { lives: 0, wordBonus: 1000 }, super: { enabled: true, ...puzzle, modifiers: { ...puzzle.modifiers, prizeWheel: true, wheel: [1, 1] } } }, 1, [
+        ...toSuper,
+        { seat: 0, action: { type: "spin" } },
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+        { seat: 0, action: { type: "solve", text: "корона" } },
+      ]);
+      expect(won.players[0]?.total).toBe(1000);
+    });
+
+    it("runs a skhvatka with sabotage on four seats and charges sabotage only when revealed", () => {
+      const sk = { ...puzzle, mode: "skhvatka" as const, finalists: 0, sabotage: { enabled: true, cost: 100 } };
+      const base = { ...quiet, players: { min: 1, max: 4 }, scoring: { lives: 0, wordBonus: 0, startingScore: 500 }, super: { enabled: true, ...sk } };
+      const chosen = play(base, 4, [
+        ...toSuper,
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+        { seat: 1, action: { type: "letters", letters: ["р"] } },
+        { seat: 2, action: { type: "letters", letters: ["о"] } },
+        { seat: 3, action: { type: "letters", letters: ["н"] } },
+      ]);
+      expect(chosen.phase).toBe("sk-sabotage");
+      expect([...russkoePole.currentSeats(chosen)].sort()).toEqual([0, 1, 2, 3]);
+      const armed = play(base, 4, [
+        ...toSuper,
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+        { seat: 1, action: { type: "letters", letters: ["р"] } },
+        { seat: 2, action: { type: "letters", letters: ["о"] } },
+        { seat: 3, action: { type: "letters", letters: ["н"] } },
+        { seat: 3, action: { type: "sabotage", kind: "fog", target: 0 } },
+      ]);
+      expect(armed.players[3]?.total).toBe(500);
+      const race = play(base, 4, [
+        ...toSuper,
+        { seat: 0, action: { type: "letters", letters: ["к"] } },
+        { seat: 1, action: { type: "letters", letters: ["р"] } },
+        { seat: 2, action: { type: "letters", letters: ["о"] } },
+        { seat: 3, action: { type: "letters", letters: ["н"] } },
+        { seat: 3, action: { type: "sabotage", kind: "fog", target: 0 } },
+        { seat: 0, action: { type: "sabotage", kind: "none" } },
+        { seat: 1, action: { type: "sabotage", kind: "none" } },
+        { seat: 2, action: { type: "sabotage", kind: "shield" } },
+      ]);
+      expect(race.phase).toBe("race");
+      expect(race.players[3]?.total).toBe(400);
+      expect(race.players[2]?.total).toBe(400);
+      expect(race.raceEndsAt).toBeGreaterThan(0);
+    });
+  });
+});

@@ -30,6 +30,8 @@ export const actionSchema = z.discriminatedUnion("type", [
     target: z.int().min(0).max(4).optional(),
   }),
   z.strictObject({ type: z.literal("claim"), word: z.int().min(0).max(5), text: z.string().trim().min(1).max(60) }),
+  /** Super game answer: one entry per crossword word, in order; the first is the main word. */
+  z.strictObject({ type: z.literal("answer"), answers: z.array(z.string().trim().max(60)).min(1).max(6) }),
 ]);
 export type PoleAction = z.output<typeof actionSchema>;
 
@@ -57,6 +59,16 @@ export interface SpinInfo {
   durationMs: number;
   startedAt: number;
   skipped: boolean;
+  /** Turn the spin produced: its animation is added to that turn's clock. */
+  turnNo: number;
+}
+
+/** The word that has just been played out, shown to everybody. */
+export interface Reveal {
+  word: number;
+  question: string;
+  answer: string;
+  solver: number | null;
 }
 
 export interface PoleEvent {
@@ -130,6 +142,12 @@ export interface PoleState {
   events: PoleEvent[];
   eventSeq: number;
   result: RoundResult | null;
+  reveal: Reveal | null;
+  /** Answers already used in this match: the bank does not repeat itself. */
+  used: string[];
+  oneByOne: boolean;
+  attemptsLeft: number;
+  letterCap: number;
 }
 
 export interface PoleView {
@@ -166,6 +184,11 @@ export interface PoleView {
   raceEndsAt: number;
   events: { id: number; text: string; seat: number | null }[];
   result: RoundResult | null;
+  reveal: Reveal | null;
+  oneByOne: boolean;
+  attemptsLeft: number;
+  /** Secret letters chosen by each finalist: only how many, never which. */
+  chosenCounts: (number | null)[];
 }
 
 const SUPER: ReadonlySet<Phase> = new Set(["offer", "wheel", "letters", "answer", "sk-letters", "sk-sabotage", "race"]);
@@ -195,8 +218,19 @@ function inRound(state: PoleState): number[] {
 function nextSeat(state: PoleState, from: number): number {
   const pool = inRound(state);
   if (pool.length === 0) return from;
-  const at = pool.indexOf(from);
-  return pool[(at + 1) % pool.length] ?? from;
+  // Walk the table clockwise from the seat that just played, even if it is out now.
+  for (let step = 1; step <= state.players.length; step++) {
+    const seat = (from + step) % state.players.length;
+    if (pool.includes(seat)) return seat;
+  }
+  return pool[0] ?? from;
+}
+
+/** A penalty eats this round's points first, then the bank, never below zero. */
+function deduct(player: Player, amount: number): Player {
+  if (amount <= 0) return player;
+  const fromRound = Math.min(player.round, amount);
+  return { ...player, round: player.round - fromRound, total: Math.max(0, player.total - (amount - fromRound)) };
 }
 
 function zeroOut(state: PoleState, rules: PoleRules): PoleState {
@@ -215,7 +249,7 @@ function makeTiles(answer: string, rules: PoleRules): Tile[] {
   });
 }
 
-function wordOf(rules: PoleRules, index: number, rng: { pick<T>(items: readonly T[]): T }): BankWord {
+function wordOf(rules: PoleRules, index: number, rng: { pick<T>(items: readonly T[]): T }, used: readonly string[] = []): BankWord {
   const custom = rules.words.custom;
   if (rules.words.source !== "bank" && index < custom.length) {
     const word = custom[index]!;
@@ -229,14 +263,16 @@ function wordOf(rules: PoleRules, index: number, rng: { pick<T>(items: readonly 
     .themes.filter((theme) => (rules.words.themes as readonly string[]).includes(theme.id))
     .flatMap((theme) => theme.words);
   if (pool.length === 0) return { question: "Слово откроется в партии", answer: "ПОЛЕ" };
-  const picked = rng.pick(pool);
+  const fresh = pool.filter((word) => !used.includes(word.answer.toLocaleUpperCase("ru-RU")));
+  const picked = rng.pick(fresh.length > 0 ? fresh : pool);
   return { question: picked.question, answer: picked.answer.toLocaleUpperCase("ru-RU") };
 }
 
 function withWord(state: PoleState, rules: PoleRules, index: number, turn: number, rng: { pick<T>(items: readonly T[]): T }): PoleState {
-  const word = wordOf(rules, index, rng);
+  const word = wordOf(rules, index, rng, state.used);
   return {
     ...state,
+    used: [...state.used, word.answer],
     phase: "spin",
     wordIndex: index,
     question: word.question,
@@ -253,7 +289,7 @@ function withWord(state: PoleState, rules: PoleRules, index: number, turn: numbe
     chestGood: null,
     turn,
     turnNo: state.turnNo + 1,
-    players: state.players.map((player) => ({ ...player, round: 0, outRound: player.out, correct: 0, note: "" })),
+    players: state.players.map((player) => ({ ...player, round: 0, outRound: player.out, correct: 0, note: "", lives: rules.scoring.lives })),
   };
 }
 
@@ -270,29 +306,50 @@ function sameAnswer(guess: string, answer: string, yo: boolean): boolean {
   return canonText(guess, yo) === canonText(answer, yo);
 }
 
-function bank(player: Player, bonus: number): Player {
-  return { ...player, total: player.total + player.round + bonus, round: 0, words: player.words + 1 };
+/** Everybody keeps this round's points; the word itself pays only the solver. */
+function bankRound(state: PoleState): PoleState {
+  return { ...state, players: state.players.map((player) => ({ ...player, total: player.total + player.round, round: 0 })) };
 }
 
 function finishMatch(state: PoleState): PoleState {
-  const pool = alive(state).length > 0 ? alive(state) : state.players.map((_, index) => index);
-  const best = Math.max(...pool.map((index) => state.players[index]?.total ?? 0));
-  const winners = pool.filter((index) => state.players[index]?.total === best);
+  let next = bankRound(state);
+  // Nothing stays secret once the match is over.
+  if (next.tiles.some((tile) => !tile.open) && !SUPER.has(next.phase) && next.words.length === 0) {
+    next = { ...next, tiles: next.tiles.map((tile) => ({ ...tile, open: true })), reveal: { word: next.wordIndex, question: next.question, answer: next.answer, solver: null } };
+  }
+  if (next.cells.length > 0) {
+    next = { ...next, openKeys: next.cells.map((cell) => cell.key) };
+    const main = next.words[0];
+    if (main) next = say(next, `Главное слово: ${main.answer}`);
+  }
+  const pool = alive(next);
+  if (pool.length === 0) {
+    const result: RoundResult = { winners: [], losers: next.players.map((_, index) => index), draw: false, reason: "eliminated", summary: next.players.length > 1 ? "выбыли все" : "игрок выбыл" };
+    return { ...next, phase: "done", result, turnNo: next.turnNo + 1 };
+  }
+  const best = Math.max(...pool.map((index) => next.players[index]?.total ?? 0));
+  const winners = pool.filter((index) => next.players[index]?.total === best);
   const draw = winners.length !== 1;
   const result: RoundResult = {
     winners,
-    losers: pool.filter((index) => !winners.includes(index)),
+    losers: next.players.map((_, index) => index).filter((index) => !winners.includes(index)),
     draw,
     reason: "points",
-    summary: draw ? "поровну очков" : "больше очков",
+    summary: pool.length === 1 && next.players.length === 1 ? `${best.toLocaleString("ru-RU")} очков` : draw ? "поровну очков" : "больше очков",
   };
-  return { ...state, phase: "done", result, spin: null, turnNo: state.turnNo + 1 };
+  return { ...next, phase: "done", result, turnNo: next.turnNo + 1 };
 }
 
 function endWord(state: PoleState, winner: number | null, rules: PoleRules, rng: { pick<T>(items: readonly T[]): T; int(min: number, max: number): number; shuffle<T>(items: readonly T[]): T[] }): PoleState {
-  let next = state;
-  if (winner !== null) next = patch(next, winner, (player) => bank(player, rules.scoring.wordBonus));
-  next = { ...next, tiles: next.tiles.map((tile) => ({ ...tile, open: true })), lastSolver: winner ?? next.lastSolver };
+  let next = bankRound(state);
+  if (winner !== null) next = patch(next, winner, (player) => ({ ...player, total: player.total + rules.scoring.wordBonus, words: player.words + 1 }));
+  next = {
+    ...next,
+    tiles: next.tiles.map((tile) => ({ ...tile, open: true })),
+    lastSolver: winner ?? next.lastSolver,
+    reveal: { word: next.wordIndex, question: next.question, answer: next.answer, solver: winner },
+  };
+  next = say(next, `Загаданное слово: ${next.answer}`);
   next = zeroOut(next, rules);
   if (rules.scoring.eliminateLast) {
     const active = alive(next);
@@ -305,16 +362,19 @@ function endWord(state: PoleState, winner: number | null, rules: PoleRules, rng:
   }
   if (alive(next).length === 0) return finishMatch(next);
   if (next.wordIndex + 1 < next.wordCount) {
-    const starter = winner !== null && !next.players[winner]?.out ? winner : (alive(next)[0] ?? 0);
-    return say(withWord(next, rules, next.wordIndex + 1, starter, rng), winner === null ? "Слово открыто, раунд без победителя" : "Слово угадано");
+    const order = alive(next);
+    const starter = winner !== null && !next.players[winner]?.out ? winner : (order.find((index) => index > next.turn) ?? order[0] ?? 0);
+    return say(withWord(next, rules, next.wordIndex + 1, starter, rng), winner === null ? "Раунд без победителя. Новое слово" : "Новое слово");
   }
-  return beginSuper(say(next, winner === null ? "Слово открыто" : "Слово угадано"), rules, rng);
+  return beginSuper(next, rules, rng);
 }
 
-function puzzleWords(rules: PoleRules, rng: { pick<T>(items: readonly T[]): T }): BankWord[] {
+function puzzleWords(rules: PoleRules, rng: { pick<T>(items: readonly T[]): T }, used: readonly string[] = []): BankWord[] {
   if (rules.super.source === "custom" && rules.super.puzzles.length > 0) return rng.pick(rules.super.puzzles).words;
   const puzzles = getWordBank().puzzles;
-  return (puzzles.length > 0 ? rng.pick(puzzles) : { words: [{ question: "Слово для превью", answer: "ПОЛЕ" }] }).words;
+  if (puzzles.length === 0) return [{ question: "Слово для превью", answer: "ПОЛЕ" }];
+  const fresh = puzzles.filter((puzzle) => !puzzle.words.some((word) => used.includes(word.answer.toLocaleUpperCase("ru-RU"))));
+  return rng.pick(fresh.length > 0 ? fresh : puzzles).words;
 }
 
 function beginSuper(state: PoleState, rules: PoleRules, rng: { pick<T>(items: readonly T[]): T; int(min: number, max: number): number; shuffle<T>(items: readonly T[]): T[] }): PoleState {
@@ -326,6 +386,8 @@ function beginSuper(state: PoleState, rules: PoleRules, rng: { pick<T>(items: re
     if (rules.super.who === "leader") {
       const best = Math.max(...active.map((index) => state.players[index]?.total ?? 0));
       pool = active.filter((index) => state.players[index]?.total === best);
+      const most = Math.max(...pool.map((index) => state.players[index]?.words ?? 0));
+      pool = pool.filter((index) => (state.players[index]?.words ?? 0) === most);
     } else if (rules.super.who === "most-words") {
       const best = Math.max(...active.map((index) => state.players[index]?.words ?? 0));
       pool = active.filter((index) => state.players[index]?.words === best);
@@ -356,8 +418,9 @@ function beginSuper(state: PoleState, rules: PoleRules, rng: { pick<T>(items: re
 }
 
 function openPuzzle(state: PoleState, rules: PoleRules, rng: { pick<T>(items: readonly T[]): T; int(min: number, max: number): number; shuffle<T>(items: readonly T[]): T[] }, finalists: number[]): PoleState {
-  const count = finalists.length >= 2 ? Math.min(6, Math.max(finalists.length + 1, 1)) : Math.min(6, rules.super.puzzles[0]?.words.length || 3);
-  const source = puzzleWords(rules, rng).slice(0, finalists.length >= 2 ? Math.min(6, finalists.length + 1) : count);
+  const picked = puzzleWords(rules, rng, state.used);
+  const count = finalists.length >= 2 ? Math.min(6, picked.length, finalists.length + 1) : Math.min(6, picked.length);
+  const source = picked.slice(0, Math.max(1, count));
   const placed = layoutCrossword(source) ?? layoutCrossword([{ question: source[0]?.question ?? "Слово", answer: source[0]?.answer ?? "ПОЛЕ" }]);
   const words: PuzzleWord[] = (placed ?? []).map((word, index) => ({
     ...word,
@@ -374,16 +437,18 @@ function openPuzzle(state: PoleState, rules: PoleRules, rng: { pick<T>(items: re
     openKeys,
     finalists,
     prizeMultiplier: 1,
-    sabotage: finalists.map(() => null),
+    sabotage: state.players.map(() => null),
     sabotageOpen: false,
     chosen: state.players.map(() => null),
     hardcore: rules.super.modifiers.hardcore,
     lettersLeft: allowanceFor(state, rules, words, finalists),
+    letterCap: Math.max(1, Math.floor(distinctLetters(words, (char) => canonChar(char, rules.alphabet.yoAsYe)) * rules.super.letters.capRatio)),
+    attemptsLeft: rules.super.attempts,
   };
   if (rules.super.modifiers.hints === "first") {
     for (const word of words) {
-      const cell = cells.find((item) => item.words.includes(words.indexOf(word)) && item.ch === word.answer[0]);
-      if (cell) next = { ...next, openKeys: [...next.openKeys, cell.key] };
+      const cell = cells.find((item) => item.row === word.row && item.col === word.col);
+      if (cell) next = { ...next, openKeys: [...new Set([...next.openKeys, cell.key])] };
     }
   } else if (rules.super.modifiers.hints === "random" && cells.length > 0) {
     const hidden = cells.filter((cell) => letters.has(canonChar(cell.ch, rules.alphabet.yoAsYe)));
@@ -423,7 +488,7 @@ function handTurn(state: PoleState, rules: PoleRules, rng: { pick<T>(items: read
   const passes = next.passes + 1;
   if (passes >= Math.max(3, inRound(next).length * 3)) return endWord({ ...next, passes }, null, rules, rng);
   const solo = inRound(next).length === 1;
-  return { ...next, phase: "spin", turn: solo ? (inRound(next)[0] ?? turn) : turn, turnNo: next.turnNo + 1, passes, spin: null, sector: null, math: null };
+  return { ...next, phase: "spin", turn: solo ? (inRound(next)[0] ?? turn) : turn, turnNo: next.turnNo + 1, passes, sector: null, math: null, streak: 0 };
 }
 
 function miss(state: PoleState, rules: PoleRules): PoleState {
@@ -450,7 +515,7 @@ function afterGuess(state: PoleState, rules: PoleRules, seat: number, rng: { int
   if (rules.chests.enabled && streak >= rules.chests.streak) {
     return say({ ...next, phase: "chests", chestGood: rng.int(0, rules.chests.count - 1), chestCount: rules.chests.count, turnNo: next.turnNo + 1 }, "Шкатулки");
   }
-  return { ...next, phase: "spin", turnNo: next.turnNo + 1, spin: null };
+  return { ...next, phase: "spin", turnNo: next.turnNo + 1 };
 }
 
 function applyPoints(state: PoleState, rules: PoleRules, sector: Sector, letter: string, rng: { int(min: number, max: number): number; pick<T>(items: readonly T[]): T; shuffle<T>(items: readonly T[]): T[] }): PoleState | ReturnType<typeof actionError> {
@@ -460,17 +525,19 @@ function applyPoints(state: PoleState, rules: PoleRules, sector: Sector, letter:
   const repeated = state.called.includes(key);
   const hits = state.tiles.filter((tile) => !tile.open && canonChar(tile.ch, yo) === key).length;
   if (repeated || hits === 0) {
-    let next = say({ ...state, called: repeated ? state.called : [...state.called, key], streak: 0 }, repeated ? "Эта буква уже была" : "Такой буквы нет", state.turn);
+    const shown = key.toLocaleUpperCase("ru-RU");
+    let next = say({ ...state, called: repeated ? state.called : [...state.called, key], streak: 0 }, repeated ? `Буква ${shown} уже была` : `Буквы ${shown} нет`, state.turn);
     if (repeated && rules.scoring.repeat === "half") {
       next = patch(next, state.turn, (player) => ({ ...player, total: Math.floor(player.total / 2), round: Math.floor(player.round / 2) }));
     } else if (!repeated && sector.type === "points" && rules.scoring.miss === "penalty") {
-      next = patch(next, state.turn, (player) => ({ ...player, round: Math.max(0, player.round - sector.value) }));
+      next = patch(next, state.turn, (player) => deduct(player, sector.value));
     } else if (!repeated && sector.type === "multiplier" && sector.miss === "half") {
       next = patch(next, state.turn, (player) => (sector.base === "round" ? { ...player, round: Math.floor(player.round / 2) } : { ...player, total: Math.floor(player.total / 2) }));
     }
     return handTurn(next, rules, rng, !repeated);
   }
   let next = { ...state, tiles: openLetter(state.tiles, letter, yo), called: [...state.called, key] };
+  const before = (next.players[state.turn]?.round ?? 0) + (next.players[state.turn]?.total ?? 0);
   if (sector.type === "points") next = patch(next, state.turn, (player) => gain(player, sector.value * hits));
   if (sector.type === "multiplier") {
     next = patch(next, state.turn, (player) => {
@@ -480,55 +547,77 @@ function applyPoints(state: PoleState, rules: PoleRules, sector: Sector, letter:
       return sector.base === "round" ? { ...player, round: updated } : { ...player, total: updated, round: 0 };
     });
   }
-  return say(afterGuess(next, rules, state.turn, rng), `Буква ${key.toLocaleUpperCase("ru-RU")} есть`, state.turn);
+  const after = (next.players[state.turn]?.round ?? 0) + (next.players[state.turn]?.total ?? 0);
+  const shown = key.toLocaleUpperCase("ru-RU");
+  const count = hits > 1 ? ` ×${hits}` : "";
+  next = say(next, after > before ? `Буква ${shown}${count}: +${(after - before).toLocaleString("ru-RU")}` : `Буква ${shown}${count} есть`, state.turn);
+  return afterGuess(next, rules, state.turn, rng);
 }
 
 function land(state: PoleState, rules: PoleRules, index: number, rng: { int(min: number, max: number): number; pick<T>(items: readonly T[]): T; shuffle<T>(items: readonly T[]): T[] }, now: number): PoleState {
+  const out = landSector(state, rules, index, rng, now);
+  // The spin animation belongs to the turn it produced: that turn's clock waits for it.
+  return out.spin && out.spin.startedAt === now ? { ...out, spin: { ...out.spin, turnNo: out.turnNo } } : out;
+}
+
+function landSector(state: PoleState, rules: PoleRules, index: number, rng: { int(min: number, max: number): number; pick<T>(items: readonly T[]): T; shuffle<T>(items: readonly T[]): T[] }, now: number): PoleState {
   const sector = rules.wheel[index];
   if (!sector) return state;
-  const spin: SpinInfo = { sector: index, durationMs: 4000 + rng.int(0, 3000), startedAt: now, skipped: false };
-  let next: PoleState = say({ ...state, spin, sector: index, spins: state.spins + 1, passes: 0 }, `Сектор: ${sectorLabel(sector)}`, state.turn);
-  const then = sector.then ?? defaultThen(sector.type);
-  if (sector.type === "bankrupt") {
-    next = patch(next, state.turn, (player) => {
-      if (sector.loss === "all") return { ...player, total: 0, round: 0 };
-      if (sector.loss === "share") {
-        const left = Math.floor((player.total + player.round) * (1 - sector.share));
-        return { ...player, total: left, round: 0 };
-      }
-      return { ...player, round: 0 };
-    });
-    return handTurn(say(next, "Банкрот", state.turn), rules, rng, false);
+  const seat = state.turn;
+  const spin: SpinInfo = { sector: index, durationMs: 4000 + rng.int(0, 3000), startedAt: now, skipped: false, turnNo: state.turnNo };
+  let next: PoleState = say({ ...state, spin, sector: index, spins: state.spins + 1, passes: 0, math: null }, `Сектор: ${sectorLabel(sector)}`, seat);
+  switch (sector.type) {
+    case "bankrupt":
+      next = patch(next, seat, (player) => {
+        if (sector.loss === "all") return { ...player, total: 0, round: 0 };
+        if (sector.loss === "share") return { ...player, total: Math.floor((player.total + player.round) * (1 - sector.share)), round: 0 };
+        return { ...player, round: 0 };
+      });
+      next = say(next, sector.loss === "round" ? "Банкрот: очки раунда сгорели" : "Банкрот", seat);
+      break;
+    case "zero":
+      next = patch(next, seat, (player) => deduct(player, sector.penalty));
+      next = say(next, sector.penalty > 0 ? `Ноль: −${sector.penalty}` : "Ноль: ход переходит", seat);
+      break;
+    case "chance":
+      next = say(patch(next, seat, (player) => gain(player, sector.amount)), `Шанс: +${sector.amount}`, seat);
+      break;
+    case "hint": {
+      const hidden = next.tiles.filter((tile) => !tile.open && alphabetSet(rules.alphabet).has(canonChar(tile.ch, rules.alphabet.yoAsYe)));
+      const tile = hidden.length > 0 ? rng.pick(hidden) : null;
+      const note = tile ? canonChar(tile.ch, rules.alphabet.yoAsYe).toLocaleUpperCase("ru-RU") : "";
+      next = patch(next, seat, (player) => ({ ...player, note }));
+      next = say(next, note ? `В слове есть буква ${note}` : "Подсказывать уже нечего", seat, true);
+      break;
+    }
+    case "plus":
+      return { ...next, phase: "plus", turnNo: next.turnNo + 1 };
+    case "prize":
+      return say({ ...next, phase: "prize", turnNo: next.turnNo + 1 }, "Деньги или чёрный ящик?");
+    case "roulette":
+      return say({ ...next, phase: "roulette", turnNo: next.turnNo + 1 }, "Сколько патронов зарядить?");
+    case "math": {
+      const problem = makeMath(sector, rng);
+      // The example shows up when the wheel stops: its clock starts then.
+      return say({ ...next, phase: "math", math: { ...problem, startedAt: now + spin.durationMs, seconds: sector.seconds }, turnNo: next.turnNo + 1 }, "Пример на время");
+    }
+    case "steal":
+    case "swap":
+      if (opponents(next, seat).length > 0) return { ...next, phase: sector.type, turnNo: next.turnNo + 1 };
+      next = say(next, "Выбрать некого", seat);
+      break;
+    default:
+      break;
   }
-  if (sector.type === "zero") {
-    next = patch(next, state.turn, (player) => ({ ...player, round: Math.max(0, player.round - sector.penalty) }));
-    return handTurn(say(next, "Ноль", state.turn), rules, rng, false);
-  }
-  if (sector.type === "chance") {
-    next = patch(next, state.turn, (player) => gain(player, sector.amount));
-    return { ...say(next, `Шанс: +${sector.amount}`, state.turn), phase: "spin", turnNo: next.turnNo + 1 };
-  }
-  if (sector.type === "hint") {
-    const hidden = next.tiles.filter((tile) => !tile.open && alphabetSet(rules.alphabet).has(canonChar(tile.ch, rules.alphabet.yoAsYe)));
-    const tile = hidden.length > 0 ? rng.pick(hidden) : null;
-    const note = tile ? canonChar(tile.ch, rules.alphabet.yoAsYe).toLocaleUpperCase("ru-RU") : "";
-    next = patch(next, state.turn, (player) => ({ ...player, note }));
-    return { ...say(next, note ? `В слове есть буква ${note}` : "Подсказывать уже нечего", state.turn, true), phase: "spin", turnNo: next.turnNo + 1 };
-  }
-  if (then === "pass") return handTurn(next, rules, rng, false);
-  if (then === "guess" && (sector.type === "points" || sector.type === "multiplier")) return { ...next, phase: "guess", turnNo: next.turnNo + 1 };
-  if (sector.type === "plus") return { ...next, phase: "plus", turnNo: next.turnNo + 1 };
-  if (sector.type === "prize") return say({ ...next, phase: "prize", turnNo: next.turnNo + 1 }, "Деньги или чёрный ящик?");
-  if (sector.type === "roulette") return say({ ...next, phase: "roulette", turnNo: next.turnNo + 1 }, "Сколько патронов зарядить?");
-  if (sector.type === "math") {
-    const problem = makeMath(sector, rng);
-    return say({ ...next, phase: "math", math: { ...problem, startedAt: now, seconds: sector.seconds }, turnNo: next.turnNo + 1 }, `Пример: ${problem.text}`);
-  }
-  if (sector.type === "steal" || sector.type === "swap") {
-    if (opponents(next, state.turn).length === 0) return { ...next, phase: "spin", turnNo: next.turnNo + 1 };
-    return { ...next, phase: sector.type, turnNo: next.turnNo + 1 };
-  }
-  return { ...next, phase: "spin", turnNo: next.turnNo + 1 };
+  return afterSector(next, rules, sector, rng);
+}
+
+/** What happens once the sector has done its thing: the sector's `then`, or the usual for its type. */
+function afterSector(state: PoleState, rules: PoleRules, sector: Sector | null, rng: { pick<T>(items: readonly T[]): T; int(min: number, max: number): number; shuffle<T>(items: readonly T[]): T[] }): PoleState {
+  const then = sector?.then ?? (sector ? defaultThen(sector.type) : "again");
+  if (then === "pass") return handTurn(state, rules, rng, false);
+  if (then === "guess") return { ...state, phase: "guess", turnNo: state.turnNo + 1 };
+  return { ...state, phase: "spin", turnNo: state.turnNo + 1 };
 }
 
 function makeMath(sector: Extract<Sector, { type: "math" }>, rng: { int(min: number, max: number): number; pick<T>(items: readonly T[]): T }): { text: string; value: number } {
@@ -552,10 +641,10 @@ function mustSolve(state: PoleState, rules: PoleRules): boolean {
 function lettersOf(action: string[], allowance: number, rules: PoleRules): string[] | null {
   const out: string[] = [];
   for (const raw of action) {
+    if (out.length >= allowance) break;
     const key = canonChar(raw, rules.alphabet.yoAsYe);
     if (!alphabetSet(rules.alphabet).has(key) || out.includes(key)) continue;
     out.push(key);
-    if (out.length >= allowance) break;
   }
   const limit = rules.super.modifiers.vowelLimit;
   if (limit > 0 && out.filter((letter) => isVowel(letter, rules.alphabet.yoAsYe)).length > limit) return null;
@@ -572,22 +661,26 @@ function toAnswer(state: PoleState, seat: number): PoleState {
   return { ...state, phase: "answer", turn: seat, turnNo: state.turnNo + 1 };
 }
 
-function closeLetters(state: PoleState, rules: PoleRules): PoleState {
+function closeLetters(state: PoleState, rules: PoleRules, now: number): PoleState {
   if (state.finalists.length >= 2) {
     const ready = state.finalists.every((seat) => state.chosen[seat]);
     if (!ready) return state;
-    return rules.super.sabotage.enabled ? { ...state, phase: "sk-sabotage", turnNo: state.turnNo + 1 } : startRace(state, rules, 0);
+    return rules.super.sabotage.enabled ? { ...state, phase: "sk-sabotage", turnNo: state.turnNo + 1 } : startRace(state, rules, now);
   }
   const seat = state.finalists[0] ?? state.turn;
   return toAnswer(revealChosen(state, seat, state.chosen[seat] ?? []), seat);
 }
 
-function startRace(state: PoleState, _rules: PoleRules, now: number): PoleState {
-  return say({ ...state, phase: "race", sabotageOpen: true, raceEndsAt: now, turnNo: state.turnNo + 1 }, "Схватка началась");
+function startRace(state: PoleState, rules: PoleRules, now: number): PoleState {
+  return say({ ...state, phase: "race", sabotageOpen: true, raceEndsAt: now > 0 ? now + rules.super.raceSeconds * 1000 : 0, turnNo: state.turnNo + 1 }, "Схватка началась");
 }
 
 function resolveSabotage(state: PoleState, rules: PoleRules, rng: { pick<T>(items: readonly T[]): T; shuffle<T>(items: readonly T[]): T[] }, now: number): PoleState {
-  let next = { ...state, sabotageOpen: true };
+  let next: PoleState = { ...state, sabotageOpen: true };
+  for (const seat of state.finalists) {
+    const item = state.sabotage[seat];
+    if (item && item.kind !== "none") next = patch(next, seat, (player) => ({ ...player, total: Math.max(0, player.total - rules.super.sabotage.cost) }));
+  }
   const attacks: { from: number; kind: "freeze" | "fog" | "peek"; target: number }[] = [];
   state.finalists.forEach((seat) => {
     const item = state.sabotage[seat];
@@ -641,16 +734,21 @@ function failSuper(state: PoleState, rules: PoleRules, seat: number): PoleState 
 }
 
 function winSuper(state: PoleState, rules: PoleRules, seat: number, bonusHits: number): PoleState {
-  const mult = state.prizeMultiplier > 1 ? state.prizeMultiplier : rules.super.stake.winMultiplier;
+  const mult = state.wheelSpun ? state.prizeMultiplier : rules.super.stake.winMultiplier;
   const bonus = bonusHits * rules.super.prices.other;
-  return finishMatch(say(patch(state, seat, (player) => ({ ...player, total: Math.round(player.total * mult) + bonus })), "Суперигра взята", seat));
+  return finishMatch(say(patch(state, seat, (player) => ({ ...player, total: Math.round(player.total * mult) + bonus })), bonusHits > 0 ? `Суперигра взята, бонусных слов: ${bonusHits}` : "Суперигра взята", seat));
 }
 
 function spinOrPass(state: PoleState, rules: PoleRules, rng: { pick<T>(items: readonly T[]): T; int(min: number, max: number): number; shuffle<T>(items: readonly T[]): T[] }): PoleState {
-  const sector = sectorOf(state, rules);
-  const then = sector?.then ?? "again";
-  if (then === "pass") return handTurn(state, rules, rng, false);
-  return { ...state, phase: "spin", turnNo: state.turnNo + 1, spin: null };
+  return afterSector(state, rules, sectorOf(state, rules), rng);
+}
+
+function openChest(state: PoleState, rules: PoleRules, seat: number, index: number): PoleState {
+  const hit = index === state.chestGood;
+  const next = patch(say(state, hit ? `В шкатулке ${rules.chests.prize}!` : "Шкатулка пустая", seat), seat, (player) =>
+    hit ? { ...player, round: player.round + rules.chests.prize } : deduct(player, rules.chests.penalty),
+  );
+  return { ...next, phase: "spin", chestGood: null, turnNo: next.turnNo + 1, streak: 0 };
 }
 
 export const russkoePole = defineGame({
@@ -667,13 +765,18 @@ export const russkoePole = defineGame({
   checkVisual,
   presentRules,
   simulationBudget: () => ({ maxTotalActions: 800, maxDurationMs: 1000 }),
+  // legalActions carry the answers so that random runs can finish; a silent player must never play them.
+  timeoutPolicy: "skip",
   turnBudgetSeconds: (state: PoleState) => {
     if (state.result) return 0;
-    if (state.phase === "math") return state.math?.seconds ?? state.clock.turn;
     if (state.phase === "letters" || state.phase === "sk-letters" || state.phase === "sk-sabotage" || state.phase === "wheel" || state.phase === "offer") return state.clock.letters;
     if (state.phase === "answer") return state.clock.answer;
     if (state.phase === "race") return state.clock.race;
-    return state.clock.turn;
+    // The wheel animation is part of the turn it produced.
+    const wait = state.spin && !state.spin.skipped && state.spin.turnNo === state.turnNo ? Math.ceil(state.spin.durationMs / 1000) : 0;
+    if (state.phase === "math") return (state.math?.seconds ?? state.clock.turn) + wait;
+    if (state.clock.turn <= 0) return 0;
+    return state.clock.turn + wait;
   },
 
   setup: ({ rules, seats, rng, firstSeat }): PoleState => {
@@ -734,6 +837,11 @@ export const russkoePole = defineGame({
       events: [],
       eventSeq: 0,
       result: null,
+      reveal: null,
+      used: [],
+      oneByOne: rules.super.letters.oneByOne,
+      attemptsLeft: rules.super.attempts,
+      letterCap: 1,
     };
     return say(withWord(blank, rules, 0, firstSeat, rng), "Партия началась");
   },
@@ -783,12 +891,17 @@ export const russkoePole = defineGame({
     if (state.phase === "offer") return [{ type: "super", accept: true }, { type: "super", accept: false }];
     if (state.phase === "wheel") return [{ type: "spin" }];
     if (state.phase === "letters" || state.phase === "sk-letters") {
-      const sample = state.alphabet.slice(0, Math.max(1, state.lettersLeft[seat] ?? 1)).map((letter) => letter);
-      const actions: PoleAction[] = [{ type: "letters", letters: sample.length > 0 ? [sample[0]!] : [] }];
-      if (rules.super.modifiers.buyLetter && (state.players[seat]?.total ?? 0) >= rules.super.modifiers.buyLetterCost) actions.push({ type: "buy-letter" });
+      const before = state.chosen[seat] ?? [];
+      const fresh = state.alphabet.find((letter) => !before.includes(letter));
+      const actions: PoleAction[] =
+        state.phase === "letters" && state.oneByOne
+          ? [...((state.lettersLeft[seat] ?? 0) > 0 && fresh ? [{ type: "letters" as const, letters: [fresh] }] : []), { type: "letters", letters: [] }]
+          : [{ type: "letters", letters: fresh ? [fresh] : [] }];
+      const roomForMore = (state.lettersLeft[seat] ?? 0) + (state.chosen[seat]?.length ?? 0) < state.letterCap;
+      if (rules.super.modifiers.buyLetter && roomForMore && (state.players[seat]?.total ?? 0) >= rules.super.modifiers.buyLetterCost) actions.push({ type: "buy-letter" });
       return actions;
     }
-    if (state.phase === "answer") return [{ type: "solve", text: state.words[0]?.answer ?? state.answer }];
+    if (state.phase === "answer") return [{ type: "answer", answers: state.words.length > 0 ? state.words.map((word) => word.answer) : [state.answer] }];
     if (state.phase === "sk-sabotage") {
       const target = state.finalists.find((item) => item !== seat) ?? seat;
       const actions: PoleAction[] = [{ type: "sabotage", kind: "none" }];
@@ -807,7 +920,8 @@ export const russkoePole = defineGame({
     if (state.result) return actionError("round_over", "Партия окончена");
     if (action.type === "skip-spin") {
       if (!state.spin || state.spin.skipped) return actionError("no_spin", "Барабан сейчас не крутится");
-      return { ...state, spin: { ...state.spin, skipped: true } };
+      const math = state.math && state.math.startedAt > ctx.now ? { ...state.math, startedAt: ctx.now } : state.math;
+      return { ...state, spin: { ...state.spin, skipped: true }, math };
     }
     if (state.phase === "spin" && action.type === "spin") {
       if (state.spins >= state.maxSpins) return endWord(say(state, "Вращения кончились"), null, rules, rng);
@@ -820,7 +934,7 @@ export const russkoePole = defineGame({
         const wrong = rules.scoring.wrongWord;
         let next = say(state, "Слово названо неверно", seat);
         if (wrong === "eliminate") next = patch(next, seat, (player) => ({ ...player, outRound: true }));
-        if (wrong === "penalty") next = patch(next, seat, (player) => ({ ...player, round: Math.max(0, player.round - rules.scoring.wrongWordPenalty) }));
+        if (wrong === "penalty") next = patch(next, seat, (player) => deduct(player, rules.scoring.wrongWordPenalty));
         if (wrong === "lose-match") {
           next = patch(next, seat, (player) => ({ ...player, out: true, total: 0, round: 0 }));
           if (alive(next).length <= 1) return finishMatch(next);
@@ -829,14 +943,19 @@ export const russkoePole = defineGame({
         return handTurn(next, rules, rng, false);
       }
       const sector = sectorOf(state, rules);
-      if (!sector || (sector.type !== "points" && sector.type !== "multiplier")) return actionError("no_sector", "Сначала крутите барабан");
+      if (!sector) return actionError("no_sector", "Сначала крутите барабан");
       return applyPoints(state, rules, sector, action.letter, rng);
     }
     if (state.phase === "plus" && action.type === "plus") {
       const tile = state.tiles[action.index];
       if (!tile || tile.open) return actionError("bad_cell", "Эту клетку уже видно");
-      const next = { ...state, tiles: openLetter(state.tiles, tile.ch, state.yoAsYe) };
-      return afterGuess(say(next, "Плюс открыл букву", seat), rules, seat, rng);
+      const key = canonChar(tile.ch, state.yoAsYe);
+      const next = { ...state, tiles: openLetter(state.tiles, tile.ch, state.yoAsYe), called: state.called.includes(key) ? state.called : [...state.called, key] };
+      const opened = say(next, `Плюс открыл букву ${key.toLocaleUpperCase("ru-RU")}`, seat);
+      // An explicit `then` of the sector wins; otherwise Plus counts as a correct letter.
+      const sector = sectorOf(state, rules);
+      if (sector?.then && !done(opened)) return afterSector(opened, rules, sector, rng);
+      return afterGuess(opened, rules, seat, rng);
     }
     if (state.phase === "prize" && action.type === "prize") {
       const sector = sectorOf(state, rules);
@@ -855,8 +974,9 @@ export const russkoePole = defineGame({
       const player = state.players[seat];
       if (!player || player.total + player.round < cost) return actionError("poor", "На детектор не хватает очков");
       const letters = alphabetSet(rules.alphabet);
+      if (!state.tiles.some((tile) => !tile.open && !letters.has(canonChar(tile.ch, state.yoAsYe)))) return spinOrPass(say(state, "Знаков в слове нет, детектор не нужен", seat), rules, rng);
       const tiles = state.tiles.map((tile) => (letters.has(canonChar(tile.ch, state.yoAsYe)) ? tile : { ...tile, open: true }));
-      const paid = patch({ ...state, tiles }, seat, (item) => ({ ...item, total: Math.max(0, item.total - cost) }));
+      const paid = patch({ ...state, tiles }, seat, (item) => deduct(item, cost));
       return spinOrPass(say(paid, "Детектор открыл знаки", seat), rules, rng);
     }
     if (state.phase === "roulette" && action.type === "roulette") {
@@ -883,11 +1003,14 @@ export const russkoePole = defineGame({
       const problem = state.math;
       if (sector?.type !== "math" || !problem) return actionError("no_sector", "Сейчас не пример");
       if (Math.round(action.value) !== problem.value) {
-        return spinOrPass(patch(say(state, "Пример не сошёлся", seat), seat, (player) => ({ ...player, round: Math.max(0, player.round - sector.penalty) })), rules, rng);
+        return spinOrPass(patch(say(state, `Пример не сошёлся: было ${problem.value}`, seat), seat, (player) => deduct(player, sector.penalty)), rules, rng);
       }
-      const left = Math.max(0, 1 - (ctx.now - problem.startedAt) / (problem.seconds * 1000));
+      // The clock starts when the wheel stops: an answer given earlier (read off the
+      // socket during the spin) gets the sector's maximum, never more.
+      const left = Math.min(1, Math.max(0, 1 - (ctx.now - problem.startedAt) / (problem.seconds * 1000)));
       const mult = 1 + (sector.maxMultiplier - 1) * left;
-      return spinOrPass(patch(say(state, "Пример решён", seat), seat, (player) => ({ ...player, round: Math.round((player.round > 0 ? player.round : 100) * mult) })), rules, rng);
+      const solved = patch(state, seat, (player) => ({ ...player, round: Math.round((player.round > 0 ? player.round : 100) * mult) }));
+      return spinOrPass(say(solved, `Пример решён: ×${mult.toFixed(1).replace(".", ",")}`, seat), rules, rng);
     }
     if ((state.phase === "steal" || state.phase === "swap") && action.type === "target") {
       if (!opponents(state, seat).includes(action.seat)) return actionError("bad_target", "Этого игрока сейчас нельзя выбрать");
@@ -908,12 +1031,7 @@ export const russkoePole = defineGame({
     }
     if (state.phase === "chests" && action.type === "chest") {
       if (action.index >= state.chestCount) return actionError("bad_chest", "Нет такой шкатулки");
-      const hit = action.index === state.chestGood;
-      const next = patch(say(state, hit ? "В шкатулке приз" : "Шкатулка пустая", seat), seat, (player) => ({
-        ...player,
-        round: hit ? player.round + rules.chests.prize : Math.max(0, player.round - rules.chests.penalty),
-      }));
-      return { ...next, phase: "spin", chestGood: null, turnNo: next.turnNo + 1, streak: 0 };
+      return openChest(state, rules, seat, action.index);
     }
     if (state.phase === "offer" && action.type === "super") {
       if (!action.accept) return finishMatch(say(state, "От суперигры отказались", seat));
@@ -928,23 +1046,43 @@ export const russkoePole = defineGame({
       if (!rules.super.modifiers.buyLetter) return actionError("no_shop", "Покупка букв выключена");
       const player = state.players[seat];
       if (!player || player.total < rules.super.modifiers.buyLetterCost) return actionError("poor", "На букву не хватает очков");
+      if ((state.lettersLeft[seat] ?? 0) + (state.chosen[seat]?.length ?? 0) >= state.letterCap) return actionError("cap", "Больше букв этот кроссворд не позволяет");
       const left = state.lettersLeft.map((count, index) => (index === seat ? count + 1 : count));
       return patch({ ...state, lettersLeft: left }, seat, (item) => ({ ...item, total: item.total - rules.super.modifiers.buyLetterCost }));
     }
     if ((state.phase === "letters" || state.phase === "sk-letters") && action.type === "letters") {
+      if (state.phase === "letters" && state.oneByOne) {
+        if (action.letters.length === 0) return toAnswer(state, seat);
+        const before = state.chosen[seat] ?? [];
+        const one = lettersOf(action.letters.filter((letter) => !before.includes(canonChar(letter, state.yoAsYe))), Math.min(1, state.lettersLeft[seat] ?? 0), rules);
+        if (!one || one.length === 0) return actionError("bad_letter", "Назовите новую букву");
+        const all = lettersOf([...before, ...one], before.length + 1, rules);
+        if (!all) return actionError("too_many_vowels", "Гласных больше, чем разрешено");
+        const left = state.lettersLeft.map((count, index) => (index === seat ? count - 1 : count));
+        const opened = say(revealChosen({ ...state, lettersLeft: left }, seat, all), `Буква ${one[0]?.toLocaleUpperCase("ru-RU")}`, seat);
+        return (left[seat] ?? 0) <= 0 ? toAnswer(opened, seat) : opened;
+      }
       const picked = lettersOf(action.letters, state.lettersLeft[seat] ?? 0, rules);
       if (!picked) return actionError("too_many_vowels", "Гласных больше, чем разрешено");
       const chosen = state.chosen.map((list, index) => (index === seat ? picked : list));
       const next = { ...state, chosen };
-      if (state.phase === "letters") return closeLetters(next, rules);
-      return state.finalists.every((item) => chosen[item]) ? closeLetters(next, rules) : next;
+      if (state.phase === "letters") return closeLetters(next, rules, ctx.now);
+      return state.finalists.every((item) => chosen[item]) ? closeLetters(next, rules, ctx.now) : next;
     }
-    if (state.phase === "answer" && action.type === "solve") {
+    if (state.phase === "answer" && (action.type === "answer" || action.type === "solve")) {
       const main = state.words[0];
       if (!main) return failSuper(state, rules, seat);
-      const parts = action.text.split(/[,|\n]/).map((part) => part.trim()).filter(Boolean);
-      if (!parts.some((part) => sameAnswer(part, main.answer, state.yoAsYe))) return failSuper(state, rules, seat);
-      const bonus = state.words.slice(1).filter((word) => parts.some((part) => sameAnswer(part, word.answer, state.yoAsYe))).length;
+      // One answer per word and in its place: listing variants does not buy extra attempts.
+      const parts = action.type === "answer" ? action.answers.map((part) => part.trim()) : action.text.split(/[,|\n]/).map((part) => part.trim());
+      if (!parts[0]) return actionError("empty", "Назовите главное слово");
+      if (!sameAnswer(parts[0], main.answer, state.yoAsYe)) {
+        if (state.attemptsLeft > 1) return say({ ...state, attemptsLeft: state.attemptsLeft - 1 }, "Мимо. Ещё попытка", seat);
+        return failSuper(state, rules, seat);
+      }
+      const bonus = state.words.slice(1).filter((word, index) => {
+        const part = parts[index + 1];
+        return Boolean(part) && sameAnswer(part as string, word.answer, state.yoAsYe);
+      }).length;
       return winSuper(state, rules, seat, bonus);
     }
     if (state.phase === "sk-sabotage" && action.type === "sabotage") {
@@ -953,9 +1091,8 @@ export const russkoePole = defineGame({
       }
       const player = state.players[seat];
       if (action.kind !== "none" && player && player.total < rules.super.sabotage.cost) return actionError("poor", "На пакость не хватает очков");
-      let next = patch(state, seat, (item) => ({ ...item, total: action.kind === "none" ? item.total : item.total - rules.super.sabotage.cost }));
       const sabotage = state.sabotage.map((item, index) => (index === seat ? { kind: action.kind, target: action.target ?? seat } : item));
-      next = { ...next, sabotage };
+      const next: PoleState = { ...state, sabotage };
       if (state.finalists.every((item) => sabotage[item])) return resolveSabotage(next, rules, rng, ctx.now);
       return next;
     }
@@ -977,20 +1114,26 @@ export const russkoePole = defineGame({
     if (state.phase === "math") {
       const sector = sectorOf(state, rules);
       const penalty = sector?.type === "math" ? sector.penalty : 0;
-      return spinOrPass(patch(say(state, "Время примера вышло", state.turn), state.turn, (player) => ({ ...player, round: Math.max(0, player.round - penalty) })), rules, ctx.rng);
+      return spinOrPass(patch(say(state, "Время примера вышло", state.turn), state.turn, (player) => deduct(player, penalty)), rules, ctx.rng);
     }
     if (state.phase === "offer") return finishMatch(say(state, "Суперигру пропустили", state.turn));
     if (state.phase === "answer") return failSuper(state, rules, state.finalists[0] ?? state.turn);
     if (state.phase === "race") return finishMatch(say(state, "Время Схватки вышло"));
     if (state.phase === "sk-letters" || state.phase === "letters") {
       const chosen = state.chosen.map((list, index) => (state.finalists.includes(index) && list === null ? [] : list));
-      return closeLetters({ ...state, chosen }, rules);
+      if (state.phase === "letters" && state.oneByOne) return toAnswer(state, state.finalists[0] ?? state.turn);
+      return closeLetters({ ...state, chosen }, rules, ctx.now);
     }
+    if (state.phase === "chests") return openChest(say(state, "Время вышло, шкатулку выбрал ведущий", state.turn), rules, state.turn, ctx.rng.int(0, Math.max(0, state.chestCount - 1)));
     if (state.phase === "sk-sabotage") {
       const sabotage = state.sabotage.map((item, index) => (state.finalists.includes(index) && item === null ? { kind: "none" as const, target: index } : item));
       return resolveSabotage({ ...state, sabotage }, rules, ctx.rng, ctx.now);
     }
-    if (state.phase === "wheel") return enterLetters({ ...state, wheelSpun: true }, rules, ctx.rng);
+    if (state.phase === "wheel") {
+      // The wheel spins itself: the prize is still a draw, not a silent ×1.
+      const value = ctx.rng.pick(rules.super.modifiers.wheel);
+      return enterLetters(say({ ...state, prizeMultiplier: value, wheelSpun: true }, `Суперприз ×${value}`, state.turn), rules, ctx.rng);
+    }
     return handTurn(say(state, "Время вышло", state.turn), rules, ctx.rng, false);
   },
 
@@ -1049,6 +1192,10 @@ export const russkoePole = defineGame({
       raceEndsAt: state.raceEndsAt,
       events: state.events.filter((event) => !event.secret || event.seat === seat).map(({ id, text, seat: who }) => ({ id, text, seat: who })),
       result: state.result,
+      reveal: state.reveal,
+      oneByOne: state.oneByOne,
+      attemptsLeft: state.attemptsLeft,
+      chosenCounts: state.phase === "sk-letters" ? state.players.map((_, index) => (state.finalists.includes(index) ? (state.chosen[index]?.length ?? null) : null)) : [],
     };
   },
 

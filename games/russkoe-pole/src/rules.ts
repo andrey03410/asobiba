@@ -184,6 +184,7 @@ export const rulesSchema = z
           .prefault({})
           .meta({ description: "Цены слов в Схватке. Барабан суперприза умножает их" }),
         answerSeconds: z.int().min(5).max(600).default(60),
+        attempts: z.int().min(1).max(3).default(1).meta({ description: "Сколько попыток назвать слова в соло-суперигре" }),
         lettersSeconds: z.int().min(5).max(300).default(45),
         raceSeconds: z.int().min(10).max(600).default(90),
         wrongPauseSeconds: z.int().min(0).max(60).default(10),
@@ -258,6 +259,32 @@ export function checkRules(rules: PoleRules): ConfigIssue[] {
   const issues: ConfigIssue[] = [];
   if (rules.players.min > rules.players.max) {
     issues.push({ path: "players", code: "bad_range", message: "Минимум игроков больше максимума", hint: "Поставьте min не больше max" });
+  }
+  if (rules.scoring.loseAtZero && rules.scoring.startingScore <= 0) {
+    issues.push({
+      path: "scoring.loseAtZero",
+      code: "instant_out",
+      message: "Проигрыш при нуле без стартовых очков выбьет всех на первом ходу",
+      hint: "Задайте scoring.startingScore больше нуля, например 1000, или выключите loseAtZero",
+    });
+  }
+  if (rules.words.source === "bank" && rules.words.custom.length > 0) {
+    issues.push({
+      path: "words.source",
+      code: "custom_ignored",
+      message: "Свои слова есть, но берутся слова из банка",
+      hint: "Поставьте words.source = custom или mix, иначе свои задания не попадут в игру",
+      severity: "warning",
+    });
+  }
+  if (rules.super.enabled && rules.super.source === "bank" && rules.super.puzzles.length > 0) {
+    issues.push({
+      path: "super.source",
+      code: "custom_ignored",
+      message: "Свои кроссворды есть, но суперигра берёт кроссворд из банка",
+      hint: "Поставьте super.source = custom",
+      severity: "warning",
+    });
   }
   const letters = alphabetSet(rules.alphabet);
   if (letters.size < 2) {

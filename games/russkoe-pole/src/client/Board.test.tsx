@@ -33,7 +33,7 @@ const view: PoleView = {
   alphabet: ["а", "б"],
   showCalled: true,
   players: [{ total: 0, round: 0, lives: 0, out: false, outRound: false, words: 0, pausedUntil: 0, note: "" }],
-  spin: { sector: 0, durationMs: 4000, startedAt: 0, skipped: true },
+  spin: { sector: 0, durationMs: 4000, startedAt: 0, skipped: true, turnNo: 1 },
   sector: 0,
   math: null,
   chests: null,
@@ -46,6 +46,10 @@ const view: PoleView = {
   raceEndsAt: 0,
   events: [{ id: 1, text: "Сектор: 500", seat: 0 }],
   result: null,
+  reveal: null,
+  oneByOne: false,
+  attemptsLeft: 1,
+  chosenCounts: [],
 };
 const match = {
   phase: "playing",
