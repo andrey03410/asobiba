@@ -18,7 +18,7 @@
 - [`tsconfig.json`](../../tsconfig.json) — один проект на все пакеты (`moduleResolution: Bundler`, `verbatimModuleSyntax`).
 - [`vitest.config.ts`](../../vitest.config.ts) и [`scripts/test-setup.ts`](../../scripts/test-setup.ts) — тестовая база и файлы.
 - [`scripts/`](../../scripts/) — `invite.ts`, `seed-verify.ts`, `verify-mcp.mjs`, `verify-game.mjs`.
-- [`.claude/launch.json`](../../.claude/launch.json) — `asobiba-dev` (весь `npm run dev`, порт 5173) и `asobiba-server` (только сервер, 8787).
+- [`.claude/launch.json`](../../.claude/launch.json) — `asobiba-dev` (весь `npm run dev`, порт 5173) и `asobiba-server` (только сервер, 8787). Обе запускаются через `env PORT=8787 …`: `preview_start` подставляет в окружение `PORT` своего порта (5173), и без этого сервер пытался бы занять порт Vite (`EADDRINUSE`).
 
 ## Переменные `.env`
 
