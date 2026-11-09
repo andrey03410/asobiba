@@ -102,6 +102,19 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   /** Optional computation limit across all rounds of one random simulation. */
   simulationBudget?(rules: R): { maxTotalActions: number; maxDurationMs?: number };
 
+  /**
+   * Seconds allowed for the current turn. `0` clears the deadline.
+   * When omitted, the engine uses `timer.turnSeconds` from the config.
+   * The timeout policy (`timer.onTimeout`) stays on the config.
+   */
+  turnBudgetSeconds?(state: S): number;
+
+  /**
+   * Rules safe to show every lobby member. The stored document and the match
+   * keep the original. Games use this to hide secret answers.
+   */
+  presentRules?(rules: R): R;
+
   setup(ctx: SetupContext<R>): S;
   /** Seats allowed to act now. Empty for realtime games where everybody may act. */
   currentSeats(state: S): Seat[];

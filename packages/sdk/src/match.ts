@@ -270,8 +270,14 @@ export class Match {
     return this.game.currentSeats(this.state).join(",");
   }
 
+  private budgetSeconds(): number {
+    const custom = this.game.turnBudgetSeconds?.(this.state);
+    if (typeof custom === "number" && Number.isFinite(custom)) return Math.max(0, custom);
+    return this.config.timer.turnSeconds;
+  }
+
   private resetTurnTimer(at: number, force: boolean) {
-    const seconds = this.config.timer.turnSeconds;
+    const seconds = this.budgetSeconds();
     if (this.game.kind !== "turn" || seconds <= 0 || this.phase !== "playing") {
       this.turnDeadline = null;
       return;

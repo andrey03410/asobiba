@@ -81,6 +81,23 @@ describe("Match: turn game", () => {
     expect(lose.view(null).lastRound?.reason).toBe("timeout");
   });
 
+  it("uses the game's own turn budget when the game provides one", () => {
+    const paced = defineGame({
+      ...(raceGame as AnyGame),
+      id: "race-paced",
+      turnBudgetSeconds: (s: { moves: number }) => (s.moves === 0 ? 4 : 9),
+    } as AnyGame);
+    const cat = createCatalog([paced]);
+    const res = validateConfig(cat, { sdk: 1, game: "race-paced", gameVersion: 1, timer: { turnSeconds: 30, onTimeout: "skip" } });
+    if (!res.ok) throw new Error(JSON.stringify(res.issues));
+    const m = Match.start({ game: paced, config: res.config, seats: 2, seed: 1, startedAt: T0 });
+    expect(m.nextWakeAt()).toBe(T0 + 4000);
+    expect(m.dispatch(0, { add: 1 }, T0 + 1)).toEqual({ ok: true });
+    expect(m.nextWakeAt()).toBe(T0 + 1 + 9000);
+    m.advance(T0 + 1 + 9000);
+    expect(m.view(null).currentSeats).toEqual([0]);
+  });
+
   it("restores exactly the same state from the record", () => {
     const cfg = config("race", { rules: { target: 7 }, series: { rounds: 5, stopWhenDecided: false }, timer: { turnSeconds: 3, onTimeout: "random" } });
     const m = Match.start({ game: raceGame, config: cfg, seats: 2, seed: 99, startedAt: T0 });

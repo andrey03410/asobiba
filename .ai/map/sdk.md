@@ -22,11 +22,11 @@
 
 - **Документ конфига** `{ sdk: 1, game, gameVersion, title, rules, series, timer, visual }`. Все объекты строгие (`z.strictObject`): лишнее поле — ошибка `unrecognized_keys` с подсказкой. Вложенные объекты с умолчаниями используют `.prefault({})`, иначе Zod 4 не применит умолчания полей.
 - **Проверка** `validateConfig`: игра и версии (`unknown_game`, `sdk_version`, `game_version` с подсказкой перечитать возможности) → разбор схемой → `checkRules` и `checkVisual` игры (пути относительно раздела, SDK добавляет префикс) → у игр реального времени таймер хода запрещён. Предупреждения (`severity: "warning"`) не блокируют. Владение картинками проверяет сервер.
-- **Игра** — чистые функции над обычным JSON: `setup`, `currentSeats`, `turnId?`, `legalActions`, `applyAction` (возвращает новое состояние или `actionError`), `passTurn?`, `tick?`, `roundResult`, `view(state, seat|null)`. Вся случайность — из `ctx.rng`.
+- **Игра** — чистые функции над обычным JSON: `setup`, `currentSeats`, `turnId?`, `legalActions`, `applyAction` (возвращает новое состояние или `actionError`), `passTurn?`, `tick?`, `roundResult`, `view(state, seat|null)`. Вся случайность — из `ctx.rng`. Необязательный `presentRules` возвращает копию правил без секретов: её показывает лобби, партия идёт по документу из базы.
 - **Движок `Match`**:
   - `Match.start({ game, config, seats, seed, startedAt })`, `dispatch(seat, action, at)`, `advance(now)`, `nextWakeAt()`, `view(seat)`, `record()`, `Match.restore({ game, config, record, now })`;
   - серия: раунды, `firstPlayer` (`rotate`/`loser`/`winner`/`same`), `stopWhenDecided`; между раундами пауза `INTERMISSION_MS` = 3 с, в паузе действия отклоняются;
-  - таймер хода: дедлайн сбрасывается, когда меняется `turnId` (или набор ходящих мест); политики `skip` (`passTurn`), `random` (доигрывает ход случайными действиями), `lose` (раунд проигран);
+  - таймер хода: дедлайн сбрасывается, когда меняется `turnId` (или набор ходящих мест); политики `skip` (`passTurn`), `random` (доигрывает ход случайными действиями), `lose` (раунд проигран). Если у игры есть `turnBudgetSeconds(state)`, дедлайн берётся оттуда (`0` — без часов), а политика по-прежнему из `timer.onTimeout`;
   - реальное время: фиксированный шаг `1000 / tickRate` от начала раунда, действия применяются сразу, тики — в `advance`;
   - журнал хранит только действия людей с временем. Таймауты, паузы и тики выводятся из времени, поэтому `restore` по журналу даёт то же состояние, что и у живой партии.
   - итог серии: `winners` — места с наибольшим числом побед в раундах, `draw` = победителей не ровно один.
@@ -70,3 +70,4 @@ skippedRounds — не запущенные. Исчерпание бюджета
 ## История
 
 - [задача 01](../features/01-rebuild/README.md) — первая версия SDK
+- [задача 04](../features/04-russkoe-pole/README.md) — часы фазы и `presentRules`
