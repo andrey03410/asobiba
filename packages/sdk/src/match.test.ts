@@ -81,6 +81,14 @@ describe("Match: turn game", () => {
     expect(lose.view(null).lastRound?.reason).toBe("timeout");
   });
 
+  it("lets the game override the timeout policy of the config", () => {
+    const own = defineGame({ ...(raceGame as AnyGame), id: "race-own-timeout", timeoutPolicy: "skip" } as AnyGame);
+    const m = Match.start({ game: own, config: config("race", { timer: { turnSeconds: 5, onTimeout: "random" } }), seats: 2, seed: 1, startedAt: T0 });
+    m.advance(T0 + 5000);
+    expect(m.view(null).currentSeats).toEqual([1]);
+    expect(m.view(null).game).toMatchObject({ total: 0 });
+  });
+
   it("uses the game's own turn budget when the game provides one", () => {
     const paced = defineGame({
       ...(raceGame as AnyGame),

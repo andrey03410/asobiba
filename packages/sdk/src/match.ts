@@ -230,7 +230,7 @@ export class Match {
       this.turnDeadline = null;
       return;
     }
-    const policy = this.config.timer.onTimeout;
+    const policy = this.game.timeoutPolicy ?? this.config.timer.onTimeout;
     if (policy === "lose") {
       const others = Array.from({ length: this.seats }, (_, i) => i).filter((s) => s !== seat);
       this.endRound({ winners: others, losers: [seat], draw: false, reason: "timeout", summary: "время на ход вышло" }, at);
