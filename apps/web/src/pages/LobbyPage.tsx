@@ -1,4 +1,5 @@
 import { rulesText, type JinchiRules } from "@asobiba/game-jinchi";
+import { rulesText as poleRulesText, type PoleRules } from "@asobiba/game-russkoe-pole";
 import type { LobbyDto, LobbyMemberDto } from "@asobiba/api";
 import type { Seat } from "@asobiba/sdk";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -275,6 +276,12 @@ export function LobbyPage() {
             )}
           </section>
 
+          {lobby.gameId === "russkoe-pole" && (
+            <details className="card config-details">
+              <summary>Правила Русского поля</summary>
+              <ul className="lobby-rules">{poleRulesText(lobby.config.rules as PoleRules).map((rule, i) => <li key={i}>{rule}</li>)}</ul>
+            </details>
+          )}
           {lobby.gameId === 'jinchi' && <details className="card config-details">
             <summary>Правила Jinchi</summary>
             <ul className="lobby-rules">{rulesText(lobby.config.rules as JinchiRules).map((rule, i) => <li key={i}>{rule}</li>)}</ul>

@@ -104,6 +104,13 @@ export class LobbyService {
     return { game, ...game.seats(config.rules) };
   }
 
+  /** Lobby pages and sockets show this copy. The match keeps the stored document. */
+  private shownConfig(config: ConfigDocument): ConfigDocument {
+    const game = this.deps.catalog.get(config.game);
+    if (!game?.presentRules) return config;
+    return { ...config, rules: game.presentRules(config.rules) };
+  }
+
   private dto(row: LobbyRow, room: Room | undefined): LobbyDto {
     const config = row.config as unknown as ConfigDocument;
     const { game, min, max } = this.seatsOf(config);
@@ -127,7 +134,7 @@ export class LobbyService {
           joinedAt: m.joinedAt.toISOString(),
         };
       }),
-      config,
+      config: this.shownConfig(config),
       url: `${this.deps.env.publicUrl}/lobby/${row.id}`,
       createdAt: row.createdAt.toISOString(),
     };

@@ -2,16 +2,25 @@ import type { BoardProps, GameClient, SeatIconProps } from "@asobiba/sdk";
 import { createCatalog } from "@asobiba/sdk";
 import { jinchi } from "@asobiba/game-jinchi";
 import { jinchiClient } from "@asobiba/game-jinchi/client";
+import { RUSSKOE_POLE_BANK } from "@asobiba/game-russkoe-pole/bank";
+import { russkoePole, useWordBank } from "@asobiba/game-russkoe-pole";
+import { russkoePoleClient } from "@asobiba/game-russkoe-pole/client";
 import { ticTacToe } from "@asobiba/game-tic-tac-toe";
 import { ticTacToeClient } from "@asobiba/game-tic-tac-toe/client";
 import type { ComponentType } from "react";
 
+useWordBank(RUSSKOE_POLE_BANK);
+
 /** Every game the site offers. Adding a game = adding it here and to apps/web/src/games.ts. */
-export const catalog = createCatalog([ticTacToe, jinchi]);
+export const catalog = createCatalog([ticTacToe, jinchi, russkoePole]);
 
 export type ReactGameClient = GameClient<ComponentType<BoardProps>, ComponentType<SeatIconProps>>;
 
-const clients = new Map<string, ReactGameClient>([[ticTacToeClient.gameId, ticTacToeClient], [jinchiClient.gameId, jinchiClient]]);
+const clients = new Map<string, ReactGameClient>([
+  [ticTacToeClient.gameId, ticTacToeClient],
+  [jinchiClient.gameId, jinchiClient],
+  [russkoePoleClient.gameId, russkoePoleClient],
+]);
 
 export function gameClient(gameId: string): ReactGameClient | undefined {
   return clients.get(gameId);
