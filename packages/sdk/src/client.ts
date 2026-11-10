@@ -22,6 +22,32 @@ export interface BoardProps {
   clockOffset?: number;
   /** Remaining turn time, for clients that supply a countdown directly. */
   turnRemainingMs?: number | null;
+  /**
+   * The board is on the match stage: the lobby is hidden and the board's container
+   * fills the screen below the stage bar. The root must stretch to 100% width and
+   * height and lay itself out for both landscape and portrait.
+   */
+  stage?: boolean;
+  /**
+   * Fullscreen of the whole stage, owned by the site. A board with its own
+   * fullscreen button calls `toggle` instead of requesting fullscreen itself.
+   */
+  fullscreen?: StageFullscreen;
+  /**
+   * The board is playing an animation whose outcome is already in `match`
+   * (a wheel still spinning). While held, the stage keeps its turn badge and
+   * result card as they were, so the HUD does not reveal the outcome early.
+   * Call with `false` when the animation is over and on unmount.
+   */
+  onHold?: (hold: boolean) => void;
+}
+
+export interface StageFullscreen {
+  /** The stage is in browser fullscreen right now. */
+  active: boolean;
+  /** The browser supports element fullscreen (iPhone Safari does not). */
+  available: boolean;
+  toggle(): void;
 }
 
 export interface SeatIconProps {

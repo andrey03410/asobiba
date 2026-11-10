@@ -1,4 +1,5 @@
 import { rulesText, type JinchiRules } from "@asobiba/game-jinchi";
+import { rulesText as poleRulesText, type PoleRules } from "@asobiba/game-russkoe-pole";
 import type { LobbyDto, LobbyMemberDto } from "@asobiba/api";
 import type { Seat } from "@asobiba/sdk";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -9,6 +10,7 @@ import { ConfigPreview } from "../components/ConfigPreview";
 import { CopyButton } from "../components/CopyButton";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { MatchHud } from "../components/MatchHud";
+import { MatchStage } from "../components/MatchStage";
 import { StatusBadge } from "../components/StatusBadge";
 import { gameClient, type WebGameClient } from "../games";
 import { useToast } from "../toast";
@@ -90,6 +92,8 @@ export function LobbyPage() {
   const [lobby, setLobby] = useState<LobbyDto | null>(null);
   const [loadError, setLoadError] = useState<{ status: number; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // The stage hides the lobby while a match runs; after it ends, people go back on their own.
+  const [leftStage, setLeftStage] = useState(false);
 
   useTitle(lobby?.name ?? "Лобби");
 
@@ -110,6 +114,11 @@ export function LobbyPage() {
   useEffect(() => {
     if (socket.lobby) setLobby(socket.lobby);
   }, [socket.lobby]);
+
+  const lobbyStatus = lobby?.status;
+  useEffect(() => {
+    if (lobbyStatus === "playing") setLeftStage(false);
+  }, [lobbyStatus]);
 
   const run = async (action: () => Promise<{ lobby: LobbyDto }>, done?: string) => {
     setBusy(true);
@@ -164,6 +173,112 @@ export function LobbyPage() {
     if (!socket.sendAction(action)) toast("Нет связи с сервером — ход не отправлен", "error");
   };
 
+  const side = (
+    <>
+      <section className="card">
+        <MemberList lobby={lobby} client={client} meId={user.id} />
+        <div className="lobby-actions">
+          {lobby.status !== "closed" && !me && (
+            <>
+              {open && players < lobby.seats && (
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => api.joinLobby(lobby.id, "player"), "Вы в игре")}>
+                  Играть
+                </button>
+              )}
+              <button type="button" className="btn" disabled={busy} onClick={() => run(() => api.joinLobby(lobby.id, "spectator"))}>
+                Смотреть
+              </button>
+            </>
+          )}
+          {me?.role === "spectator" && open && players < lobby.seats && (
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => api.joinLobby(lobby.id, "player"), "Вы в игре")}>
+              Стать игроком
+            </button>
+          )}
+          {isHost && open && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || !canStart}
+              title={canStart ? undefined : `Нужно ещё ${missing} ${plural(missing, ["игрок", "игрока", "игроков"])}`}
+              onClick={() => run(() => api.startLobby(lobby.id))}
+            >
+              {lobby.status === "finished" ? "Сыграть ещё" : "Начать"}
+            </button>
+          )}
+          {me && !isHost && lobby.status !== "closed" && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy || (me.role === "player" && lobby.status === "playing")}
+              title={me.role === "player" && lobby.status === "playing" ? "Из идущей партии выйти нельзя" : undefined}
+              onClick={() => run(() => api.leaveLobby(lobby.id), "Вы вышли из лобби")}
+            >
+              Выйти из лобби
+            </button>
+          )}
+          {isHost && lobby.status !== "closed" && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm("Закрыть лобби? Партия прервётся, а лобби пропадёт из списка.")) void run(() => api.closeLobby(lobby.id), "Лобби закрыто");
+              }}
+            >
+              Закрыть лобби
+            </button>
+          )}
+        </div>
+        {isHost && open && !canStart && missing > 0 && (
+          <p className="muted small">
+            Начать можно, когда наберётся {lobby.minPlayers} {plural(lobby.minPlayers, ["игрок", "игрока", "игроков"])}.
+          </p>
+        )}
+      </section>
+
+      {lobby.gameId === "russkoe-pole" && (
+        <details className="card config-details">
+          <summary>Правила Русского поля</summary>
+          <ul className="lobby-rules">{poleRulesText(lobby.config.rules as PoleRules).map((rule, i) => <li key={i}>{rule}</li>)}</ul>
+        </details>
+      )}
+      {lobby.gameId === 'jinchi' && <details className="card config-details">
+        <summary>Правила Jinchi</summary>
+        <ul className="lobby-rules">{rulesText(lobby.config.rules as JinchiRules).map((rule, i) => <li key={i}>{rule}</li>)}</ul>
+      </details>}
+      <details className="card config-details">
+        <summary>Конфиг игры</summary>
+        <pre className="config-json">{JSON.stringify(lobby.config, null, 2)}</pre>
+      </details>
+    </>
+  );
+
+  if (match && client && lobby.status !== "closed" && !(lobby.status === "finished" && leftStage) && (lobby.status === "playing" || lobby.status === "finished")) {
+    return (
+      <MatchStage
+        lobby={lobby}
+        match={match}
+        config={lobby.config}
+        client={client}
+        mySeat={mySeat}
+        seatName={seatName}
+        clockOffset={socket.clockOffset}
+        online={socket.status === "open"}
+        onAction={mySeat !== null ? onAction : undefined}
+        onPlayAgain={isHost && lobby.status === "finished" ? () => void run(() => api.startLobby(lobby.id)) : undefined}
+        onLeave={() => setLeftStage(true)}
+        busy={busy}
+        drawer={
+          <div className="stage-drawer-body">
+            <CopyButton text={link} label="Скопировать ссылку" className="btn" toast="Ссылка на лобби скопирована — отправьте её друзьям" />
+            {side}
+          </div>
+        }
+      />
+    );
+  }
+
   return (
     <div className="page page-wide">
       <div className="page-head">
@@ -212,78 +327,7 @@ export function LobbyPage() {
           )}
         </section>
 
-        <aside className="lobby-side">
-          <section className="card">
-            <MemberList lobby={lobby} client={client} meId={user.id} />
-            <div className="lobby-actions">
-              {lobby.status !== "closed" && !me && (
-                <>
-                  {open && players < lobby.seats && (
-                    <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => api.joinLobby(lobby.id, "player"), "Вы в игре")}>
-                      Играть
-                    </button>
-                  )}
-                  <button type="button" className="btn" disabled={busy} onClick={() => run(() => api.joinLobby(lobby.id, "spectator"))}>
-                    Смотреть
-                  </button>
-                </>
-              )}
-              {me?.role === "spectator" && open && players < lobby.seats && (
-                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => api.joinLobby(lobby.id, "player"), "Вы в игре")}>
-                  Стать игроком
-                </button>
-              )}
-              {isHost && open && (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={busy || !canStart}
-                  title={canStart ? undefined : `Нужно ещё ${missing} ${plural(missing, ["игрок", "игрока", "игроков"])}`}
-                  onClick={() => run(() => api.startLobby(lobby.id))}
-                >
-                  {lobby.status === "finished" ? "Сыграть ещё" : "Начать"}
-                </button>
-              )}
-              {me && !isHost && lobby.status !== "closed" && (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={busy || (me.role === "player" && lobby.status === "playing")}
-                  title={me.role === "player" && lobby.status === "playing" ? "Из идущей партии выйти нельзя" : undefined}
-                  onClick={() => run(() => api.leaveLobby(lobby.id), "Вы вышли из лобби")}
-                >
-                  Выйти из лобби
-                </button>
-              )}
-              {isHost && lobby.status !== "closed" && (
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  disabled={busy}
-                  onClick={() => {
-                    if (window.confirm("Закрыть лобби? Партия прервётся, а лобби пропадёт из списка.")) void run(() => api.closeLobby(lobby.id), "Лобби закрыто");
-                  }}
-                >
-                  Закрыть лобби
-                </button>
-              )}
-            </div>
-            {isHost && open && !canStart && missing > 0 && (
-              <p className="muted small">
-                Начать можно, когда наберётся {lobby.minPlayers} {plural(lobby.minPlayers, ["игрок", "игрока", "игроков"])}.
-              </p>
-            )}
-          </section>
-
-          {lobby.gameId === 'jinchi' && <details className="card config-details">
-            <summary>Правила Jinchi</summary>
-            <ul className="lobby-rules">{rulesText(lobby.config.rules as JinchiRules).map((rule, i) => <li key={i}>{rule}</li>)}</ul>
-          </details>}
-          <details className="card config-details">
-            <summary>Конфиг игры</summary>
-            <pre className="config-json">{JSON.stringify(lobby.config, null, 2)}</pre>
-          </details>
-        </aside>
+        <aside className="lobby-side">{side}</aside>
       </div>
     </div>
   );

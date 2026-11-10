@@ -3,8 +3,10 @@
   "configurations": [
     {
       "name": "asobiba-dev",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "env",
       "runtimeArgs": [
+        "PORT=8787",
+        "npm",
         "run",
         "dev"
       ],
@@ -12,8 +14,10 @@
     },
     {
       "name": "asobiba-server",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "env",
       "runtimeArgs": [
+        "PORT=8787",
+        "npm",
         "run",
         "dev:server"
       ],

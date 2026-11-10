@@ -84,7 +84,7 @@ export function JinchiBoard(props: Props): ReactElement {
   return <InteractiveBoard {...props} />;
 }
 
-function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRemainingMs, clockOffset = 0 }: Props): ReactElement {
+function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRemainingMs, clockOffset = 0, stage, fullscreen }: Props): ReactElement {
   const view = match.game as JinchiView;
   const visual = config.visual as JinchiVisual;
   const colors = visual.colors ?? DEFAULT_COLORS;
@@ -164,12 +164,12 @@ function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRema
     </div>
   </div>;
 
-  return <section className="jinchi-board" onPointerDownCapture={event => { const isTouch = event.pointerType === 'touch'; touchRef.current = isTouch; setTouch(isTouch); }} onContextMenu={event => { if ((event.target as Element).closest('.jinchi-map') && ready) { event.preventDefault(); rotate(); } }} onKeyDown={event => {
+  return <section className={`jinchi-board${stage ? ' is-stage' : ''}`} onPointerDownCapture={event => { const isTouch = event.pointerType === 'touch'; touchRef.current = isTouch; setTouch(isTouch); }} onContextMenu={event => { if ((event.target as Element).closest('.jinchi-map') && ready) { event.preventDefault(); rotate(); } }} onKeyDown={event => {
     if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key.toLowerCase() === 'r' && ready) { event.preventDefault(); rotate(); }
     if (event.key.toLowerCase() === 'h') { event.preventDefault(); setHints(old => !old); }
   }}>
-    <MapViewport width={view.width} height={view.height} cells={view.cells} colors={colors} wallColor={visual.wallColor} background={visual.background} grid={visual.grid} focusCells={ownCells} lastCells={view.lastMove ? [...view.lastMove.indices, ...view.lastMove.captured] : []} toolbar={hud} onCellHover={(x, y) => { if (ready && !touchRef.current) setGhost({ x, y }); }} onCellClick={(x, y) => { if (!ready) return; setGhost({ x, y }); setError(''); if (!touchRef.current) place({ x, y }); }}>
+    <MapViewport width={view.width} height={view.height} cells={view.cells} colors={colors} wallColor={visual.wallColor} background={visual.background} grid={visual.grid} focusCells={ownCells} lastCells={view.lastMove ? [...view.lastMove.indices, ...view.lastMove.captured] : []} toolbar={hud} fill={Boolean(stage)} externalFullscreen={fullscreen} onCellHover={(x, y) => { if (ready && !touchRef.current) setGhost({ x, y }); }} onCellClick={(x, y) => { if (!ready) return; setGhost({ x, y }); setError(''); if (!touchRef.current) place({ x, y }); }}>
       <BaseLabels bases={view.bases} width={view.width} colors={colors} />
       {hintPath && <path className="jinchi-hints" d={hintPath} fill="none" stroke="#b4fbd2" strokeWidth=".19" strokeLinecap="round" pointerEvents="none" />}
       <LastMove view={view} visual={visual} round={match.round} />

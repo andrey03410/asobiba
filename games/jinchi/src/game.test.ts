@@ -321,7 +321,9 @@ describe("Jinchi config and performance", () => {
       expect(p).toBeDefined();
       const doc = presetDocument(jinchi, p);
       expect(validateConfig(catalog, doc).ok).toBe(true);
-      const report = simulate(jinchi, doc, { rounds: 2, maxActions: 3000, seed: 47 });
+      // A frozen clock: this test checks that the preset finishes, the speed is checked above.
+      // On a loaded machine the real 1000 ms budget cut mainland short.
+      const report = simulate(jinchi, doc, { rounds: 2, maxActions: 3000, seed: 47, nowMs: () => 0 });
       expect(report.finished, JSON.stringify(report)).toBe(2);
       expect(report.issues.filter((i) => ["stuck", "never-ends", "illegal-legal-action"].includes(i.code))).toEqual([]);
     });

@@ -1,4 +1,5 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type ToastKind = "info" | "success" | "error";
 
@@ -29,19 +30,31 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(() => show, [show]);
 
+  // Only the fullscreen element is painted in fullscreen: toasts move into it.
+  const [host, setHost] = useState<Element | null>(null);
+  useEffect(() => {
+    const sync = () => setHost(document.fullscreenElement);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+
+  const list = (
+    <div className="toasts" role="status" aria-live="polite">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast toast-${t.kind}`}>
+          <span>{t.text}</span>
+          <button type="button" className="toast-close" aria-label="Закрыть" onClick={() => dismiss(t.id)}>
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast toast-${t.kind}`}>
-            <span>{t.text}</span>
-            <button type="button" className="toast-close" aria-label="Закрыть" onClick={() => dismiss(t.id)}>
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
+      {host ? createPortal(list, host) : list}
     </ToastContext.Provider>
   );
 }
