@@ -2,11 +2,11 @@
 id: 04
 title: Русское поле — слова и барабан
 track: product
-stage: review
+stage: merged
 branch: feat/04-russkoe-pole
 pr: https://github.com/andrey03410/asobiba/pull/4
 started: 2026-11-09
-merged:
+merged: 2026-11-10
 ---
 
 # 04. Русское поле
@@ -24,10 +24,11 @@ merged:
 - [x] Техника — [tech.md](tech.md)
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
-- [ ] Проверка владельцем
-- [ ] Влито
+- [x] Проверка владельцем — «Да, вливай», 2026-11-10
+- [x] Влито — [PR #4](https://github.com/andrey03410/asobiba/pull/4)
 
 Автономный режим: реализация и приёмка без влития в `main`. Слова разрешения — в [brief.md](brief.md).
+Влито после явного ответа владельца «Да, вливай».
 
 ## Хвосты
 
