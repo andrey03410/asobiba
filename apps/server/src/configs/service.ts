@@ -7,6 +7,7 @@ import { conflict, invalidConfig, notFound } from "../http-errors";
 import { newId } from "../ids";
 
 export const MAX_CONFIGS_PER_USER = 200;
+export const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 
 export type UserValidation = { ok: true; config: ConfigDocument; issues: ConfigIssue[] } | { ok: false; config: null; issues: ConfigIssue[] };
 
@@ -21,6 +22,19 @@ export function configDto(row: GameConfig): ConfigDto {
   };
 }
 
+function documentSizeIssues(input: unknown): ConfigIssue[] {
+  try {
+    const json = JSON.stringify(input);
+    if (json !== undefined && Buffer.byteLength(json, "utf8") > MAX_CONFIG_BYTES) return [{
+      path: "", code: "config_limit", message: "Полный JSON конфига больше 2 МиБ",
+      hint: "Уменьшите тексты и число вопросов; файлы передавайте ссылками на пул", severity: "error",
+    }];
+    return [];
+  } catch {
+    return [{ path: "", code: "invalid_json", message: "Конфиг должен быть сериализуемым JSON", severity: "error" }];
+  }
+}
+
 export class ConfigService {
   constructor(
     private readonly db: Db,
@@ -28,13 +42,43 @@ export class ConfigService {
     private readonly assets: AssetService,
   ) {}
 
-  /** SDK validation plus the user's ownership of every referenced image. */
+  /** Bound complete JSON, then check schemas, asset ownership/quotas and Quizor slot MIME. */
   async validate(userId: string, input: unknown): Promise<UserValidation> {
+    const size = documentSizeIssues(input);
+    if (size.length > 0) return { ok: false, config: null, issues: size };
     const res = validateConfig(this.catalog, input);
     if (!res.ok) return { ok: false, config: null, issues: res.issues };
-    const ownership = await this.assets.ownershipIssues(userId, collectAssetRefs(res.config));
-    if (ownership.length > 0) return { ok: false, config: null, issues: [...res.issues, ...ownership] };
+    const normalizedSize = documentSizeIssues(res.config);
+    if (normalizedSize.length > 0) return { ok: false, config: null, issues: normalizedSize };
+    const refs = collectAssetRefs(res.config);
+    const ownership = await this.assets.ownershipIssues(userId, refs);
+    const mime = res.config.game === "quizor" ? await this.quizorMimeIssues(userId, res.config, refs) : [];
+    if (ownership.length > 0 || mime.length > 0) return { ok: false, config: null, issues: [...res.issues, ...ownership, ...mime] };
     return { ok: true, config: res.config, issues: res.issues };
+  }
+
+  private async quizorMimeIssues(userId: string, config: ConfigDocument, refs: readonly { assetId: string }[]): Promise<ConfigIssue[]> {
+    if (refs.length === 0) return [];
+    const rows = await this.db.asset.findMany({ where: { ownerId: userId, id: { in: [...new Set(refs.map(r => r.assetId))] } }, select: { id: true, mime: true } });
+    const mimes = new Map(rows.map(row => [row.id, row.mime]));
+    const issues: ConfigIssue[] = [];
+    const walk = (value: unknown, path: string): void => {
+      if (Array.isArray(value)) { value.forEach((item, index) => walk(item, `${path}[${index}]`)); return; }
+      if (!value || typeof value !== "object") return;
+      const node = value as Record<string, unknown>;
+      if (typeof node.asset === "string") {
+        const mime = mimes.get(node.asset);
+        // All visual slots, point fields and option/item assets default to images.
+        const expected = path.startsWith("visual") ? "image/" : node.type === "video" ? "video/" : node.type === "audio" || node.media === "audio" ? "audio/" : "image/";
+        if (mime && !mime.startsWith(expected)) issues.push({ path: `${path}.asset`, code: "asset_mime",
+          message: `Слот ожидает ${expected}*, а файл имеет тип ${mime}`,
+          hint: "Выберите файл нужного типа из asset_list; для звукового варианта укажите media: audio", severity: "error" });
+      }
+      for (const [key, child] of Object.entries(node)) walk(child, `${path}.${key}`);
+    };
+    walk(config.rules, "rules");
+    walk(config.visual, "visual");
+    return issues;
   }
 
   async requireValid(userId: string, input: unknown): Promise<ConfigDocument> {

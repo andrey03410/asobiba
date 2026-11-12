@@ -123,11 +123,20 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
         continue;
       }
       const seat: Seat | undefined = game.currentSeats(state)[0];
+      const legal = seat === undefined ? [] : game.legalActions(state, seat, ctx);
+      if (legal.length === 0 && game.wake && game.nextWakeAt) {
+        const at = game.nextWakeAt(state);
+        if (typeof at === "number" && Number.isFinite(at)) {
+          ctx.now = Math.max(ctx.now, at);
+          state = game.wake(state, ctx);
+          actions++;
+          continue;
+        }
+      }
       if (seat === undefined) {
         stuck++;
         break;
       }
-      const legal = game.legalActions(state, seat, ctx);
       if (durationExpired()) continue;
       if (legal.length === 0) {
         if (!game.passTurn) {

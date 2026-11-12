@@ -194,3 +194,50 @@ describe("Match: safety nets from review", () => {
     expect(replay.view(null).game).toEqual(live.view(null).game);
   });
 });
+
+describe("Match: trusted controls and game clocks", () => {
+  const controlled = defineGame({
+    ...raceGame,
+    turnBudgetSeconds: () => 0,
+    legalActions: () => [],
+    setup: (ctx: { now: number }) => ({ total: 0, due: ctx.now + 100, secret: "answer", winner: null }),
+    currentSeats: () => [],
+    roundResult: (s: { total: number }) => s.total >= 3 ? { winners: [0], losers: [1], draw: false, reason: "done" } : null,
+    applyControl: (s: any, action: any, ctx: any) => {
+      const roll = ctx.rng.next();
+      if (ctx.role !== "presenter" || action.type !== "advance") return actionError("forbidden_control", "Нет прав");
+      return { ...s, total: s.total + 1, roll };
+    },
+    nextWakeAt: (s: any) => s.due,
+    wake: (s: any) => ({ ...s, total: s.total + 1, due: null }),
+    view: (s: any) => ({ total: s.total }),
+    presenterView: (s: any) => ({ total: s.total, secret: s.secret, ...(s.roll === undefined ? {} : { roll: s.roll }) }),
+  } as AnyGame);
+
+  it("waits for custom clocks, exposes secrets only to a trusted presenter and replays controls", () => {
+    const cfg = config("race");
+    const m = Match.start({ game: controlled, config: cfg, seats: 2, seed: 8, startedAt: T0 });
+    expect(m.currentPhase).toBe("playing");
+    expect(m.nextWakeAt()).toBe(T0 + 100);
+    expect(m.view(null).game).toEqual({ total: 0 });
+    expect(m.view(null, "host").game).toEqual({ total: 0 });
+    expect(m.view(null, "presenter").game).toEqual({ total: 0, secret: "answer" });
+    expect(m.dispatchControl("host", { type: "advance", role: "presenter" }, T0 + 1)).toMatchObject({ ok: false, error: { code: "forbidden_control" } });
+    expect(m.dispatchControl("presenter", { type: "advance" }, T0 + 2)).toEqual({ ok: true });
+    expect(m.record().log).toMatchObject([{ at: T0 + 2, seat: -1, controlRole: "presenter", action: { type: "advance" } }]);
+    expect(m.advance(T0 + 100)).toBe(true);
+    expect(m.view(null).game).toEqual({ total: 2 });
+    const restored = Match.restore({ game: controlled, config: cfg, record: m.record(), now: T0 + 100 });
+    expect(restored.view(null, "presenter")).toEqual(m.view(null, "presenter"));
+    expect(restored.record()).toEqual(m.record());
+  });
+
+  it("does not consume random numbers for rejected controls", () => {
+    const cfg = config("race");
+    const live = Match.start({ game: controlled, config: cfg, seats: 2, seed: 8, startedAt: T0 });
+    live.dispatchControl("host", { type: "advance" }, T0 + 1);
+    live.dispatchControl("presenter", { type: "advance" }, T0 + 2);
+    const replay = Match.restore({ game: controlled, config: cfg, record: live.record(), now: T0 + 2 });
+    expect(replay.view(null, "presenter")).toEqual(live.view(null, "presenter"));
+  });
+});

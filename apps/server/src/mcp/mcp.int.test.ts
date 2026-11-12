@@ -106,6 +106,54 @@ describe("MCP over Streamable HTTP", () => {
     } finally { await client.close(); }
   });
 
+  it("exposes authoring probes without allowing game moves", async () => {
+    const ann = await signUp(t, "ann");
+    const { secret } = await t.services.auth.createToken(ann.user.id, "Authoring");
+    const client = await connect(secret);
+    try {
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain("config_probe");
+      const response = await call(client, "config_probe", { config: { sdk: 1, game: "tic-tac-toe", gameVersion: 1 }, questionId: "q", answers: [{ answer: "A" }] });
+      expect(response.isError).toBe(true);
+      expect(response.json.error.code).toBe("unsupported_probe");
+      const tools = await client.listTools();
+      expect(tools.tools.some(tool => /action|control|move/.test(tool.name))).toBe(false);
+    } finally { await client.close(); }
+  });
+
+  it("grades Quizor examples and resolves inherited settings through real MCP", async () => {
+    const ann = await signUp(t, "ann");
+    const { secret } = await t.services.auth.createToken(ann.user.id, "Quizor author");
+    const client = await connect(secret);
+    const config = {
+      sdk: 1, game: "quizor", gameVersion: 1,
+      rules: {
+        defaults: { value: 80 },
+        rounds: [{ id: "r", settings: { value: 120 }, questions: [{
+          id: "q", prompt: "Столица?", settings: { value: 200 },
+          fields: [{ id: "a", type: "text", settings: { value: 300 }, answers: [{ text: "Москва" }] }],
+        }] }],
+      },
+    };
+    try {
+      const resolved = await call(client, "config_resolve", { config, questionId: "q" });
+      expect(resolved.isError, JSON.stringify(resolved.json)).toBe(false);
+      expect(resolved.json).toMatchObject({ settings: { value: 200 }, provenance: { value: "question:q" }, fields: [{ settings: { value: 300 }, provenance: { value: "field:a" } }] });
+      const grades = await call(client, "config_probe", { config, questionId: "q", answers: [{ a: "Москва" }, { a: "Париж" }] });
+      expect(grades.isError).toBe(false);
+      expect(grades.json.grades).toMatchObject([{ grade: "correct", points: 300, fields: [{ fieldId: "a", correct: true, explanation: expect.any(String) }] }, { grade: "miss", points: 0 }]);
+      const missing = await call(client, "config_resolve", { config, questionId: "missing" });
+      expect(missing.isError).toBe(true);
+      expect(missing.json.error.code).toBe("not_found");
+      const preview = await call(client, "config_preview", { config, target: { kind: "question", id: "q" } });
+      expect(preview.isError).toBe(false);
+      expect(preview.json).toMatchObject({ partial: false, target: { kind: "question", id: "q" }, width: 768 });
+      expect(preview.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
+      const badPreview = await call(client, "config_preview", { config, target: { kind: "question", id: "missing" } });
+      expect(badPreview.isError).toBe(true);
+      expect(badPreview.json.error.code).toBe("target_not_found");
+    } finally { await client.close(); }
+  });
+
   it("keeps users apart", async () => {
     const ann = await signUp(t, "ann");
     const bob = await signUp(t, "bob");

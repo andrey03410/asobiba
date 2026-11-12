@@ -5,6 +5,9 @@ import type { Rng } from "./rng";
 /** Seat index: 0 … seats-1. Seat order is the order players joined the lobby. */
 export type Seat = number;
 
+/** Assigned by trusted transport, never inferred from an action payload. */
+export type ControlRole = "host" | "presenter" | "system";
+
 export interface RoundResult {
   winners: Seat[];
   losers: Seat[];
@@ -129,6 +132,11 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   turnId?(state: S): string | number;
   legalActions(state: S, seat: Seat, ctx: GameContext<R>): A[];
   applyAction(state: S, seat: Seat, action: A, ctx: GameContext<R>): S | ActionError;
+  /** Trusted orchestration outside player seats. Controls validate their own payload. */
+  applyControl?(state: S, action: unknown, ctx: GameContext<R> & { role: ControlRole }): S | ActionError;
+  /** Nearest game-owned server deadline, independent of the ordinary turn timer. */
+  nextWakeAt?(state: S): number | null;
+  wake?(state: S, ctx: GameContext<R>): S;
   /** Hands the turn to the next seat (timer policy `skip`). */
   passTurn?(state: S, seat: Seat, ctx: GameContext<R>): S;
   /** Realtime only: one fixed simulation step. */
@@ -136,6 +144,8 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   roundResult(state: S): RoundResult | null;
   /** What a seat (or a spectator, `null`) may see. */
   view(state: S, seat: Seat | null): PV;
+  /** Secrets for the separately authorized presenter; hosts do not receive this view. */
+  presenterView?(state: S): PV;
 
   /** Markdown guide for agents: how details combine, what is fun, limits. */
   guide: string;

@@ -1,10 +1,11 @@
+import { answersSchema, probeQuestion, resolveQuestion, type QuizorRules } from "@asobiba/game-quizor";
 import type { UserDto } from "@asobiba/api";
 import { describeGame, listGames, simulate } from "@asobiba/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Services } from "../app";
-import { HttpError, notFound } from "../http-errors";
+import { badRequest, HttpError, notFound } from "../http-errors";
 import { renderPreview } from "../preview/render";
 import { MCP_INSTRUCTIONS } from "./instructions";
 
@@ -90,29 +91,63 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
   );
 
   server.registerTool(
+    "config_resolve",
+    {
+      title: "Настройки вопроса",
+      description: "Quizor: итоговые настройки вопроса и полей с источником каждого значения (игра → квиз → раунд → вопрос → поле). Только авторинг своего конфига.",
+      inputSchema: { config: configArg, questionId: z.string().min(1).max(100) },
+      annotations: { readOnlyHint: true },
+    },
+    ({ config, questionId }) => run(async () => {
+      const res = await validated(config);
+      if (res.config.game !== "quizor") throw badRequest("unsupported_probe", "Настройки вопроса доступны для Quizor");
+      try { return json(resolveQuestion(res.config.rules as QuizorRules, questionId)); }
+      catch { throw notFound(`Вопрос ${questionId} не найден`); }
+    }),
+  );
+
+  server.registerTool(
+    "config_probe",
+    {
+      title: "Пробник приёмки ответов",
+      description: "Quizor: проверяет примеры ответов до игры, возвращает оценки, очки и объяснения для каждого поля. answers — массив объектов {idПоля: значение}; для оценки «кто ближе» весь массив считается одной группой ответивших. Не выполняет действий в партии.",
+      inputSchema: { config: configArg, questionId: z.string().min(1).max(100), answers: z.array(answersSchema).min(1).max(200) },
+      annotations: { readOnlyHint: true },
+    },
+    ({ config, questionId, answers }) => run(async () => {
+      const res = await validated(config);
+      if (res.config.game !== "quizor") throw badRequest("unsupported_probe", "Пробник ответов доступен для Quizor");
+      try { resolveQuestion(res.config.rules as QuizorRules, questionId); }
+      catch { throw notFound(`Вопрос ${questionId} не найден`); }
+      return json({ grades: probeQuestion(res.config.rules as QuizorRules, questionId, answers) });
+    }),
+  );
+
+  server.registerTool(
     "config_preview",
     {
       title: "Превью картинкой",
-      description: "PNG поля без анимаций: start — стартовая позиция, end — пример случайной партии. На большой карте вычисления ограничены: partial=true означает промежуточную позицию, phase показывает состояние.",
+      description: "PNG поля без анимаций. Для Quizor target {kind: question|round|intro, id} выбирает вопрос, табло или заставку. start — стартовая позиция, end — пример случайной партии. На большой карте вычисления ограничены: partial=true означает промежуточную позицию, phase показывает состояние.",
       inputSchema: {
         config: configArg,
         moment: z.enum(["start", "end"]).optional().describe("По умолчанию end"),
         seed: z.int().min(0).max(1_000_000).optional().describe("Другое зерно — другая случайная партия"),
+        target: z.object({ kind: z.enum(["question", "round", "intro"]), id: z.string().min(1).max(100) }).optional().describe("Quizor: конкретный вопрос, табло раунда или заставка (id раунда)"),
       },
       annotations: { readOnlyHint: true },
     },
-    ({ config, moment, seed }) =>
+    ({ config, moment, seed, target }) =>
       run(async () => {
         const res = await validated(config);
-        const preview = await renderPreview(s.assets, res.config, moment ?? "end", seed ?? 1);
+        const preview = await renderPreview(s.assets, res.config, moment ?? "end", seed ?? 1, target);
         const last = preview.match.lastRound;
-        const partial = (moment ?? "end") === "end" && preview.match.phase === "playing" && !last;
+        const partial = !target && (moment ?? "end") === "end" && preview.match.phase === "playing" && !last;
         return {
           content: [
             { type: "image", data: preview.png.toString("base64"), mimeType: "image/png" },
             {
               type: "text",
-              text: JSON.stringify({ width: preview.width, height: preview.height, moment: moment ?? "end", phase: preview.match.phase, partial, round: last ? last.summary ?? last.reason : partial ? "Промежуточная позиция: партия ещё идёт" : "стартовая позиция" }),
+              text: JSON.stringify({ width: preview.width, height: preview.height, moment: moment ?? "end", phase: preview.match.phase, partial, ...(target ? { target } : {}), round: target ? `${target.kind}: ${target.id}` : last ? last.summary ?? last.reason : partial ? "Промежуточная позиция: партия ещё идёт" : "стартовая позиция" }),
             },
           ],
         };
@@ -147,7 +182,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
 
   server.registerTool(
     "asset_list",
-    { title: "Мои картинки", description: "Картинки личного пула: id (ast_…), имя, размеры.", inputSchema: {}, annotations: { readOnlyHint: true } },
+    { title: "Мои файлы", description: "Картинки, звук и видео личного пула: id (ast_…), имя, MIME-тип, размер.", inputSchema: {}, annotations: { readOnlyHint: true } },
     () => run(async () => json({ assets: await s.assets.list(user.id) })),
   );
 
@@ -165,8 +200,8 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
   server.registerTool(
     "asset_import_url",
     {
-      title: "Картинка по ссылке",
-      description: "Скачивает PNG, JPEG, GIF или WebP по прямой ссылке (до 2 МБ, до 2048 px) в пул.",
+      title: "Файл по ссылке",
+      description: "Скачивает картинку (до 2 МБ, до 2048 px), звук или видео (до 1 ГиБ) по прямой ссылке в личный пул. Для видео и звука поддерживаются MP3, WAV, OGG, MP4/M4A и WebM; кодеки должны поддерживаться браузером.",
       inputSchema: { url: z.string().url(), name: z.string().max(80).optional() },
     },
     ({ url, name }) => run(async () => json({ asset: await s.assets.importUrl(user.id, url, name) })),
@@ -182,7 +217,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     ({ name }) =>
       run(async () => {
         const res = await s.assets.beginUpload(user.id, name);
-        return json({ ...res, method: "PUT", example: `curl --upload-file ./picture.png '${res.uploadUrl}'` });
+        return json({ ...res, method: "PUT", example: `curl --upload-file ./media.mp4 '${res.uploadUrl}'` });
       }),
   );
 

@@ -39,7 +39,7 @@ beforeEach(async () => {
 });
 
 describe("assets", () => {
-  it("uploads a PNG, serves it to logged-in users and deletes it", async () => {
+  it("uploads a PNG, serves it to its owner and lobby visitors, and deletes it", async () => {
     const a = await signUp(t, "ann");
     const res = await t.app.inject({ method: "POST", url: "/api/assets?name=dot.png", headers: { cookie: a.cookie, "content-type": "image/png" }, payload: PNG_1x1 });
     expect(res.statusCode).toBe(201);
@@ -48,6 +48,10 @@ describe("assets", () => {
     expect(asset.id).toMatch(/^ast_/);
 
     const b = await signUp(t, "bob");
+    expect((await t.app.inject({ url: asset.url, headers: { cookie: b.cookie } })).statusCode).toBe(403);
+    const config = presetDocument(ticTacToe, ticTacToe.presets[0]);
+    const lobby = await t.services.lobbies.create(a.user, { name: "Images", config: { ...config, visual: { theme: "classic", pieces: [{ asset: asset.id }] } } });
+    await t.services.lobbies.visit(b.user, lobby.id);
     const file = await t.app.inject({ url: asset.url, headers: { cookie: b.cookie } });
     expect(file.statusCode).toBe(200);
     expect(file.headers["content-type"]).toBe("image/png");

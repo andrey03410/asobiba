@@ -222,3 +222,19 @@ describe("simulation deadline before action execution", () => {
     expect(issueCodes(report)).toEqual(["budget-exceeded"]);
   });
 });
+
+describe("simulation game clocks", () => {
+  it("advances waiting phases at their deadline before declaring a game stuck", () => {
+    const waiting = defineGame({
+      ...raceGame,
+      currentSeats: () => [],
+      legalActions: () => [],
+      nextWakeAt: (s: { total: number }) => s.total < 3 ? (s.total + 1) * 100 : null,
+      wake: (s: any, ctx: any) => ({ ...s, total: s.total + 1, lastNow: ctx.now }),
+      roundResult: (s: { total: number }) => s.total === 3 ? { winners: [0], losers: [1], draw: false, reason: "clock" } : null,
+    });
+    const report = simulate(waiting, cfg("race"), { rounds: 3 });
+    expect(report).toMatchObject({ finished: 3, unfinished: 0, maxActions: 3 });
+    expect(report.issues).toEqual([]);
+  });
+});

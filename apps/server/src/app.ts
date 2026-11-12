@@ -6,7 +6,6 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
-import { MAX_IMAGE_BYTES } from "./assets/images";
 import { AssetService } from "./assets/service";
 import { AuthService } from "./auth/service";
 import { ConfigService } from "./configs/service";
@@ -59,7 +58,7 @@ export async function buildApp(options: AppOptions): Promise<{ app: FastifyInsta
   const app = Fastify({
     logger: level ? { level, serializers: { req: (req) => ({ method: req.method, url: redactUrl(req.url), remoteAddress: req.ip }) } } : false,
     trustProxy: true,
-    bodyLimit: 1024 * 1024,
+    bodyLimit: 2 * 1024 * 1024,
   });
 
   const auth = new AuthService(db, now);
@@ -70,12 +69,6 @@ export async function buildApp(options: AppOptions): Promise<{ app: FastifyInsta
 
   await app.register(fastifyCookie);
   await app.register(fastifyWebsocket, { options: { maxPayload: 64 * 1024 } });
-
-  // Raw image bodies for uploads (any type, including none — curl --upload-file sends none)
-  const rawBody = { parseAs: "buffer" as const, bodyLimit: MAX_IMAGE_BYTES + 64 * 1024 };
-  app.addContentTypeParser(/^image\/.+/, rawBody, (_req, body, done) => done(null, body));
-  app.addContentTypeParser("application/octet-stream", rawBody, (_req, body, done) => done(null, body));
-  app.addContentTypeParser("*", rawBody, (_req, body, done) => done(null, body));
 
   app.decorateRequest("user", null);
   app.addHook("onRequest", async (req) => {

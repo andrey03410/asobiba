@@ -148,7 +148,7 @@ export interface AssetDto {
  * GET /api/assets → { assets }
  * POST /api/assets?name=<name> with the raw image as body (Content-Type image/*) → 201 { asset }
  * DELETE /api/assets/:id → 204
- * GET /files/assets/:id → the image (any logged-in user)
+ * GET /files/assets/:id → own file or a file already visible in an owned/visited lobby
  */
 export interface AssetsResponse {
   assets: AssetDto[];
@@ -160,7 +160,7 @@ export type LobbyStatus = "waiting" | "playing" | "finished" | "closed";
 export interface LobbyMemberDto {
   userId: string;
   login: string;
-  role: "player" | "spectator";
+  role: "player" | "spectator" | "presenter";
   /** Seat in the current/last match; null before the first start or for spectators. */
   seat: Seat | null;
   joinedAt: string;
@@ -202,6 +202,7 @@ export interface LobbySummaryDto {
  * POST /api/lobbies { name, configId } | { name, config } → 201 { lobby } (the host joins as a player)
  * GET /api/lobbies/:id → { lobby }
  * POST /api/lobbies/:id/join { role: "player" | "spectator" } → { lobby }
+ * POST /api/lobbies/:id/presenter { userId: string | null } → { lobby } host only, outside a match
  * POST /api/lobbies/:id/leave → { lobby }
  * POST /api/lobbies/:id/start → { lobby }   host only; also starts a new match after "finished"
  * POST /api/lobbies/:id/close → { lobby }   host only
@@ -223,11 +224,12 @@ export type ClientMessage =
   | { type: "subscribe"; lobbyId: string }
   | { type: "unsubscribe"; lobbyId: string }
   | { type: "action"; lobbyId: string; action: unknown }
+  | { type: "control"; lobbyId: string; action: unknown }
   | { type: "ping" };
 
 export type ServerMessage =
   | { type: "lobby"; lobby: LobbyDto }
   /** The viewer's view of the current match. `seat` is the viewer's seat or null. */
-  | { type: "match"; lobbyId: string; match: MatchView | null; seat: Seat | null; serverTime: number }
+  | { type: "match"; lobbyId: string; match: MatchView | null; seat: Seat | null; controlRole?: "host" | "presenter"; serverTime: number }
   | { type: "error"; code: string; message: string }
   | { type: "pong"; serverTime: number };

@@ -18,6 +18,8 @@ export interface LobbySocket {
   clockOffset: number;
   /** Sends a game action; false when the socket is not open. */
   sendAction: (action: unknown) => boolean;
+  sendControl: (action: unknown) => boolean;
+  controlRole?: "host" | "presenter";
 }
 
 const PING_EVERY_MS = 20_000;
@@ -32,7 +34,11 @@ function parse(data: unknown): ServerMessage | null {
   if (typeof data !== "string") return null;
   try {
     const msg = JSON.parse(data) as ServerMessage;
-    return typeof msg === "object" && msg !== null && typeof msg.type === "string" ? msg : null;
+    return typeof msg === "object" &&
+      msg !== null &&
+      typeof msg.type === "string"
+      ? msg
+      : null;
   } catch {
     return null;
   }
@@ -42,13 +48,19 @@ function parse(data: unknown): ServerMessage | null {
  * Live lobby over `/ws`: subscribes to one lobby, keeps the latest lobby and
  * match view, reconnects with exponential backoff and tracks the server clock.
  */
-export function useLobbySocket(lobbyId: string, onError?: (code: string, message: string) => void): LobbySocket {
+export function useLobbySocket(
+  lobbyId: string,
+  onError?: (code: string, message: string) => void,
+): LobbySocket {
   const { user, refresh } = useAuth();
   const [status, setStatus] = useState<SocketStatus>("connecting");
   const [lobby, setLobby] = useState<LobbyDto | null>(null);
   const [match, setMatch] = useState<MatchView | null>(null);
   const [seat, setSeat] = useState<Seat | null>(null);
   const [clockOffset, setClockOffset] = useState(0);
+  const [controlRole, setControlRole] = useState<
+    "host" | "presenter" | undefined
+  >();
   const socketRef = useRef<WebSocket | null>(null);
   const onErrorRef = useRef(onError);
   useEffect(() => {
@@ -65,9 +77,11 @@ export function useLobbySocket(lobbyId: string, onError?: (code: string, message
     setLobby(null);
     setMatch(null);
     setSeat(null);
+    setControlRole(undefined);
 
     const send = (socket: WebSocket, msg: ClientMessage) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
+      if (socket.readyState === WebSocket.OPEN)
+        socket.send(JSON.stringify(msg));
     };
 
     const ping = (socket: WebSocket) => {
@@ -80,10 +94,13 @@ export function useLobbySocket(lobbyId: string, onError?: (code: string, message
       setStatus("reconnecting");
       const base = Math.min(MAX_BACKOFF_MS, 500 * 2 ** attempt);
       attempt += 1;
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = undefined;
-        connect();
-      }, base * (0.8 + Math.random() * 0.4));
+      reconnectTimer = window.setTimeout(
+        () => {
+          reconnectTimer = undefined;
+          connect();
+        },
+        base * (0.8 + Math.random() * 0.4),
+      );
     };
 
     const connect = () => {
@@ -118,11 +135,13 @@ export function useLobbySocket(lobbyId: string, onError?: (code: string, message
             setClockOffset(msg.serverTime - Date.now());
             setMatch(msg.match);
             setSeat(msg.seat);
+            setControlRole(msg.controlRole);
             break;
           case "pong": {
             const now = Date.now();
             // Assume the server stamped the reply halfway through the round trip.
-            if (pingSentAt > 0 && now - pingSentAt < 5000) setClockOffset(msg.serverTime - (pingSentAt + now) / 2);
+            if (pingSentAt > 0 && now - pingSentAt < 5000)
+              setClockOffset(msg.serverTime - (pingSentAt + now) / 2);
             break;
           }
           case "error":
@@ -135,7 +154,10 @@ export function useLobbySocket(lobbyId: string, onError?: (code: string, message
         window.clearInterval(pingTimer);
         if (socketRef.current === socket) socketRef.current = null;
         if (event.code === 4401) {
-          setMatch(null); setSeat(null); setLobby(null);
+          setMatch(null);
+          setSeat(null);
+          setLobby(null);
+          setControlRole(undefined);
           void refresh().then(scheduleReconnect);
         } else scheduleReconnect();
       };
@@ -186,5 +208,30 @@ export function useLobbySocket(lobbyId: string, onError?: (code: string, message
     [lobbyId],
   );
 
-  return { status, lobby, match, seat, clockOffset, sendAction };
+  const sendControl = useCallback(
+    (action: unknown) => {
+      const socket = socketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+      socket.send(
+        JSON.stringify({
+          type: "control",
+          lobbyId,
+          action,
+        } satisfies ClientMessage),
+      );
+      return true;
+    },
+    [lobbyId],
+  );
+
+  return {
+    status,
+    lobby,
+    match,
+    seat,
+    clockOffset,
+    sendAction,
+    sendControl,
+    controlRole,
+  };
 }

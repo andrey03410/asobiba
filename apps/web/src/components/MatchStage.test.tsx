@@ -6,7 +6,7 @@ import type { WebGameClient } from "../games";
 import { MatchStage } from "./MatchStage";
 
 const client = {
-  Board: (props: BoardProps) => <div className="test-board" data-stage={String(props.stage)} data-fullscreen={String(Boolean(props.fullscreen))} data-hold={String(typeof props.onHold)} />,
+  Board: (props: BoardProps) => <div className="test-board" data-stage={String(props.stage)} data-fullscreen={String(Boolean(props.fullscreen))} data-hold={String(typeof props.onHold)} data-control={String(typeof props.onControl)} data-control-role={props.controlRole} />,
   SeatIcon: () => null,
   css: "",
 } as unknown as WebGameClient;
@@ -51,6 +51,12 @@ function render(match: MatchView) {
 }
 
 describe("MatchStage", () => {
+  it("passes the trusted control channel to a presenter without giving them a player seat", () => {
+    const html = renderToStaticMarkup(<MatchStage lobby={lobby} match={view({})} config={config} client={client} mySeat={null} seatName={() => "Аня"} clockOffset={0} online onControl={() => {}} controlRole="presenter" onLeave={() => {}} busy={false} drawer={null} />);
+    expect(html).toContain('data-control="function"');
+    expect(html).toContain('data-control-role="presenter"');
+    expect(html).toContain("ведущий");
+  });
   it("gives the whole stage to the board and names the turn", () => {
     const html = render(view({}));
     expect(html).toContain("Ваш ход");
