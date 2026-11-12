@@ -2,9 +2,9 @@
 id: 06
 title: Quizor — конструктор квизов
 track: product
-stage: build
+stage: review
 branch: feat/06-quizor
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/6
 started: 2026-11-12
 merged:
 ---
@@ -21,7 +21,8 @@ merged:
 
 **Автономный режим:** разрешён владельцем 2026-11-12 до merge и push в main.
 Реализация по [plan.md](plan.md), QG 418/418 и оба независимых ревью завершены.
-Следующий шаг — PR и автономное вливание в main.
+[PR #6](https://github.com/andrey03410/asobiba/pull/6) создан. Результат принят
+автономно по зелёному QG и двум свежим независимым ревью; следующий шаг — merge в main.
 
 ## Стадии
 
@@ -30,7 +31,7 @@ merged:
 - [x] Техника — [tech.md](tech.md), решения агента в автономном режиме
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
-- [ ] Проверка владельцем
+- [x] Проверка владельцем — автономное принятие по разрешению из brief.md, QG и свежим ревью
 - [ ] Влито
 
 ## Хвосты
