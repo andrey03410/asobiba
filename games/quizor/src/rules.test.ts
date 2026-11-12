@@ -2,6 +2,62 @@ import { describe, expect, it } from "vitest";
 import { checkRules, resolveQuestion, rulesSchema } from "./rules";
 
 describe("Quizor authoring", () => {
+  it.each([
+    {
+      id: "a",
+      type: "choice",
+      options: [
+        { id: "x", text: "Нет", grade: "miss" },
+        { id: "x", text: "Да", grade: "correct" },
+      ],
+    },
+    {
+      id: "a",
+      type: "multi",
+      options: [
+        { id: "x", text: "Нет", correct: false },
+        { id: "x", text: "Да", correct: true },
+      ],
+    },
+    {
+      id: "a",
+      type: "order",
+      items: [
+        { id: "x", text: "А" },
+        { id: "x", text: "Б" },
+      ],
+      correct: ["x", "x"],
+    },
+    {
+      id: "a",
+      type: "match",
+      left: [{ id: "x", text: "А" }],
+      right: [
+        { id: "y", text: "Б" },
+        { id: "y", text: "В" },
+      ],
+      correct: { x: "y" },
+    },
+    {
+      id: "a",
+      type: "match",
+      left: [
+        { id: "x", text: "А" },
+        { id: "x", text: "Б" },
+      ],
+      right: [{ id: "y", text: "В" }],
+      correct: { x: "y" },
+    },
+  ])("rejects duplicate ids in %j", (field) => {
+    const rules = rulesSchema.parse({
+      rounds: [
+        { id: "r", questions: [{ id: "q", prompt: "Выбор", fields: [field] }] },
+      ],
+    });
+    expect(checkRules(rules)).toContainEqual(
+      expect.objectContaining({ code: "duplicate_item", severity: "error" }),
+    );
+  });
   it("warns when the correct-answer target exceeds the finite question pool", () => {
     const q = (id: string) => ({
       id,

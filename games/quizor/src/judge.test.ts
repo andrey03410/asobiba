@@ -13,6 +13,19 @@ const rulesFor = (field: unknown, settings = {}) =>
     ],
   });
 describe("Quizor judges", () => {
+  it.each([100, { min: 90, max: 110 }])(
+    "explains an implicit numeric target %j as a successful match",
+    (target) => {
+      const result = probeQuestion(
+        rulesFor({ id: "a", type: "number", target }),
+        "q",
+        [{ a: 100 }],
+      )[0];
+      expect(result).toMatchObject({ correct: true, points: 100 });
+      expect(result.fields[0].explanation).toMatch(/эталон|диапазон/);
+      expect(result.fields[0].explanation).not.toMatch(/не подошла/);
+    },
+  );
   it("defaults an explicitly wrong text variant to a negative grade", () => {
     const rules = rulesFor({
       id: "a",

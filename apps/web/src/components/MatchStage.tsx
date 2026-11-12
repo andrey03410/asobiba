@@ -198,7 +198,7 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
       <main className="stage-body">
         <ErrorBoundary resetKey={match}>
           <div className={`stage-board${mySeat === null ? " is-spectator" : ""}`}>
-            <client.Board match={match} config={config} seat={mySeat} assetUrl={assetUrl} onAction={onAction} onControl={onControl} controlRole={controlRole} playerNames={playerNames} clockOffset={clockOffset} stage fullscreen={fullscreen} onHold={onHold} />
+            <client.Board match={match} config={config} seat={mySeat} assetUrl={assetUrl} onAction={onAction} onControl={onControl} controlRole={controlRole} connected={online} playerNames={playerNames} clockOffset={clockOffset} stage fullscreen={fullscreen} onHold={onHold} />
           </div>
         </ErrorBoundary>
 

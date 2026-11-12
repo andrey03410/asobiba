@@ -6,13 +6,37 @@ import type { WebGameClient } from "../games";
 import { MatchStage } from "./MatchStage";
 
 const client = {
-  Board: (props: BoardProps) => <div className="test-board" data-stage={String(props.stage)} data-fullscreen={String(Boolean(props.fullscreen))} data-hold={String(typeof props.onHold)} data-control={String(typeof props.onControl)} data-control-role={props.controlRole} />,
+  Board: (props: BoardProps) => (
+    <div
+      className="test-board"
+      data-stage={String(props.stage)}
+      data-fullscreen={String(Boolean(props.fullscreen))}
+      data-hold={String(typeof props.onHold)}
+      data-control={String(typeof props.onControl)}
+      data-control-role={props.controlRole}
+      data-connected={String(props.connected)}
+    />
+  ),
   SeatIcon: () => null,
   css: "",
 } as unknown as WebGameClient;
 
-const lobby = { id: "lob_test", name: "Проверка сцены", gameId: "test", gameTitle: "Тестовая игра" } as unknown as LobbyDto;
-const config = { sdk: 1, game: "test", gameVersion: 1, title: "Проверка", rules: {}, visual: {}, series: { rounds: 1 }, timer: { turnSeconds: 0, onTimeout: "skip" } } as unknown as ConfigDocument;
+const lobby = {
+  id: "lob_test",
+  name: "Проверка сцены",
+  gameId: "test",
+  gameTitle: "Тестовая игра",
+} as unknown as LobbyDto;
+const config = {
+  sdk: 1,
+  game: "test",
+  gameVersion: 1,
+  title: "Проверка",
+  rules: {},
+  visual: {},
+  series: { rounds: 1 },
+  timer: { turnSeconds: 0, onTimeout: "skip" },
+} as unknown as ConfigDocument;
 
 function view(patch: Partial<MatchView>): MatchView {
   return {
@@ -51,8 +75,42 @@ function render(match: MatchView) {
 }
 
 describe("MatchStage", () => {
+  it("tells the board when transport is disconnected so drafts can be resynchronized", () => {
+    const html = renderToStaticMarkup(
+      <MatchStage
+        lobby={lobby}
+        match={view({})}
+        config={config}
+        client={client}
+        mySeat={0}
+        seatName={() => "Аня"}
+        clockOffset={0}
+        online={false}
+        onLeave={() => {}}
+        busy={false}
+        drawer={null}
+      />,
+    );
+    expect(html).toContain('data-connected="false"');
+  });
   it("passes the trusted control channel to a presenter without giving them a player seat", () => {
-    const html = renderToStaticMarkup(<MatchStage lobby={lobby} match={view({})} config={config} client={client} mySeat={null} seatName={() => "Аня"} clockOffset={0} online onControl={() => {}} controlRole="presenter" onLeave={() => {}} busy={false} drawer={null} />);
+    const html = renderToStaticMarkup(
+      <MatchStage
+        lobby={lobby}
+        match={view({})}
+        config={config}
+        client={client}
+        mySeat={null}
+        seatName={() => "Аня"}
+        clockOffset={0}
+        online
+        onControl={() => {}}
+        controlRole="presenter"
+        onLeave={() => {}}
+        busy={false}
+        drawer={null}
+      />,
+    );
     expect(html).toContain('data-control="function"');
     expect(html).toContain('data-control-role="presenter"');
     expect(html).toContain("ведущий");
@@ -72,7 +130,13 @@ describe("MatchStage", () => {
       view({
         phase: "finished",
         currentSeats: [],
-        lastRound: { winners: [], losers: [0, 1], draw: false, reason: "out", summary: "выбыли все" },
+        lastRound: {
+          winners: [],
+          losers: [0, 1],
+          draw: false,
+          reason: "out",
+          summary: "выбыли все",
+        },
         result: { winners: [], draw: true, scores: [0, 0] },
       }),
     );
@@ -82,12 +146,24 @@ describe("MatchStage", () => {
       view({
         phase: "finished",
         currentSeats: [],
-        lastRound: { winners: [], losers: [], draw: true, reason: "board-full" },
+        lastRound: {
+          winners: [],
+          losers: [],
+          draw: true,
+          reason: "board-full",
+        },
         result: { winners: [], draw: true, scores: [0, 0] },
       }),
     );
     expect(draw).toContain("Ничья");
-    const won = render(view({ phase: "finished", currentSeats: [], lastRound: { winners: [1], losers: [0], draw: false, reason: "line" }, result: { winners: [1], draw: false, scores: [0, 1] } }));
+    const won = render(
+      view({
+        phase: "finished",
+        currentSeats: [],
+        lastRound: { winners: [1], losers: [0], draw: false, reason: "line" },
+        result: { winners: [1], draw: false, scores: [0, 1] },
+      }),
+    );
     expect(won).toContain("Победа: Боря");
   });
 });

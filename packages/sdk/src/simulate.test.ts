@@ -19,6 +19,12 @@ function cfg(game: string) {
 }
 
 describe("simulate", () => {
+  it("finds a playable actor after an authorized seat with no simulation moves", () => {
+    const concurrent = defineGame({ ...raceGame, currentSeats: (s) => [1 - s.turn, s.turn], legalActions: (s, seat, ctx) => seat === s.turn ? raceGame.legalActions(s, seat, ctx) : [] });
+    const report = simulate(concurrent, cfg("race"), { rounds: 2 });
+    expect(report.finished).toBe(2);
+    expect(report.issues).toEqual([]);
+  });
   it("plays every round of a healthy game to the end", () => {
     const report = simulate(raceGame, cfg("race"), { rounds: 40 });
     expect(report.finished).toBe(40);

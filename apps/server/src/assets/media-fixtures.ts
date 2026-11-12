@@ -8,6 +8,16 @@ export function wav(): Buffer {
   return body;
 }
 
+/** Real mono PCM, 8 kHz, 16 bit; silence keeps generated playback fixtures tiny. */
+export function wavSeconds(seconds: number): Buffer {
+  const dataBytes = Math.round(seconds * 16000);
+  const body = Buffer.alloc(44 + dataBytes);
+  wav().copy(body, 0, 0, 44);
+  body.writeUInt32LE(body.length - 8, 4);
+  body.writeUInt32LE(dataBytes, 40);
+  return body;
+}
+
 export function mp3(): Buffer {
   const frame = Buffer.alloc(417); frame.set([0xff, 0xfb, 0x90, 0]);
   return Buffer.concat([frame, frame]);

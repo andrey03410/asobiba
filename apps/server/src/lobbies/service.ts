@@ -27,6 +27,7 @@ interface Room {
   timer: NodeJS.Timeout | null;
   hostId: string;
   presenterId: string | null;
+  playerIds: Set<string>;
   presence: Set<number> | null;
   presenterOnline: boolean | null;
 }
@@ -86,14 +87,30 @@ export class LobbyService {
   private async room(lobbyId: string): Promise<Room> {
     const existing = this.rooms.get(lobbyId);
     if (existing) return existing;
-    const lobby = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { id: true, hostId: true, members: { where: { role: "presenter" }, select: { userId: true } } } });
+    const lobby = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { id: true, hostId: true, status: true, config: true, members: { select: { userId: true, role: true } } } });
     if (!lobby) throw notFound("Лобби не найдено");
     const last = await this.deps.db.match.findFirst({ where: { lobbyId }, orderBy: { startedAt: "desc" } });
     const raced = this.rooms.get(lobbyId);
     if (raced) return raced;
+    let match: Match | null = null;
+    if (lobby.status === "finished" && last?.status === "finished") {
+      const config = lobby.config as unknown as ConfigDocument;
+      const game = this.deps.catalog.get(config.game);
+      if (game?.kind === "turn") {
+        try {
+          const seats = last.seatUsers as string[];
+          const record: MatchRecord = { seed: last.seed, startedAt: last.startedAt.getTime(), seats: seats.length, log: last.log as unknown as MatchLogEntry[] };
+          const restored = Match.restore({ game, config, record, now: last.finishedAt?.getTime() ?? this.deps.now() });
+          if (restored.currentPhase !== "finished") throw new Error("Saved finished match did not finish during replay");
+          match = restored;
+        } catch (error) {
+          this.deps.log.warn({ err: error, lobbyId }, "finished match restore failed");
+        }
+      }
+    }
     const room: Room = {
       lobbyId,
-      match: null,
+      match,
       matchId: last?.id ?? null,
       seatUsers: (last?.seatUsers as string[] | undefined) ?? [],
       seatNames: (last?.seatNames as string[] | undefined) ?? [],
@@ -101,7 +118,8 @@ export class LobbyService {
       subscribers: new Set(),
       timer: null,
       hostId: lobby.hostId,
-      presenterId: lobby.members[0]?.userId ?? null,
+      presenterId: lobby.members.find(member => member.role === "presenter")?.userId ?? null,
+      playerIds: new Set(lobby.members.filter(member => member.role === "player").map(member => member.userId)),
       presence: null,
       presenterOnline: null,
     };
@@ -188,20 +206,9 @@ export class LobbyService {
       const safeConfig = this.shownConfig(config);
       if (collectAssetRefs(safeConfig).some(ref => ref.assetId === assetId)) return true;
       if (config.game !== "quizor") continue;
-      const room = this.rooms.get(row.id);
-      let match = room?.match;
-      let seats = room?.seatUsers ?? [];
-      if (!match) {
-        const saved = await this.deps.db.match.findFirst({ where: { lobbyId: row.id, status: "finished" }, orderBy: { startedAt: "desc" } });
-        const game = this.deps.catalog.get(config.game);
-        if (saved && game?.kind === "turn") {
-          seats = saved.seatUsers as string[];
-          try { match = Match.restore({ game, config, record: { seed: saved.seed, startedAt: saved.startedAt.getTime(), seats: seats.length, log: saved.log as unknown as MatchLogEntry[] }, now: this.deps.now() }); }
-          catch { continue; }
-        }
-      }
+      const room = await this.room(row.id);
       // Presenter secrets are deliberately excluded: a known future file stays closed.
-      const view = match?.view(seats.indexOf(userId) >= 0 ? seats.indexOf(userId) : null);
+      const view = room.match?.view(this.viewerSeat(room, userId));
       if (view && quizorMediaRefs(view.game).some(ref => ref.assetId === assetId)) return true;
     }
     return false;
@@ -380,7 +387,7 @@ export class LobbyService {
         }),
         this.deps.db.lobby.update({ where: { id: lobbyId }, data: { status: "playing" } }),
       ]);
-      Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false, hostId: row.hostId, presenterId: row.members.find(m => m.role === "presenter")?.userId ?? null, presence: null, presenterOnline: null });
+      Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false, hostId: row.hostId, presenterId: row.members.find(m => m.role === "presenter")?.userId ?? null, playerIds: new Set(players), presence: null, presenterOnline: null });
       await this.syncPresence(room);
       await this.afterMatchChange(room);
       const dto = await this.publishLobby(room);
@@ -491,6 +498,7 @@ export class LobbyService {
       room.subscribers.add(sub);
       room.hostId = row.hostId;
       room.presenterId = row.members.find(m => m.role === "presenter")?.userId ?? null;
+      room.playerIds = new Set(row.members.filter(member => member.role === "player").map(member => member.userId));
       await this.syncPresence(room);
       sub.send({ type: "lobby", lobby: this.dto(await this.loadRow(lobbyId), room) });
       this.sendMatch(room, sub);
@@ -512,14 +520,19 @@ export class LobbyService {
     const row = await this.loadRow(room.lobbyId);
     room.hostId = row.hostId;
     room.presenterId = row.members.find(m => m.role === "presenter")?.userId ?? null;
+    room.playerIds = new Set(row.members.filter(member => member.role === "player").map(member => member.userId));
     const dto = this.dto(row, room);
     for (const sub of room.subscribers) sub.send({ type: "lobby", lobby: dto });
     return dto;
   }
 
+  private viewerSeat(room: Room, userId: string): number | null {
+    const seat = room.seatUsers.indexOf(userId);
+    return room.match && room.playerIds.has(userId) && seat >= 0 ? seat : null;
+  }
+
   private sendMatch(room: Room, sub: Subscriber) {
-    const seatIndex = room.seatUsers.indexOf(sub.userId);
-    const seat = room.match && seatIndex >= 0 ? seatIndex : null;
+    const seat = this.viewerSeat(room, sub.userId);
     const controlRole = room.presenterId === sub.userId ? "presenter" : room.hostId === sub.userId ? "host" : undefined;
     sub.send({ type: "match", lobbyId: room.lobbyId, match: room.match ? room.match.view(seat, controlRole) : null, seat, controlRole, serverTime: this.deps.now() });
   }

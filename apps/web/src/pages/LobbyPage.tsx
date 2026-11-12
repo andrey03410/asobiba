@@ -545,6 +545,7 @@ export function LobbyPage() {
                     onAction={mySeat !== null ? onAction : undefined}
                     onControl={socket.controlRole ? onControl : undefined}
                     controlRole={socket.controlRole}
+                    connected={socket.status === "open"}
                     playerNames={Array.from({ length: match.seats }, (_, i) =>
                       seatName(i),
                     )}

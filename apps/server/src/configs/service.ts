@@ -54,7 +54,39 @@ export class ConfigService {
     const ownership = await this.assets.ownershipIssues(userId, refs);
     const mime = res.config.game === "quizor" ? await this.quizorMimeIssues(userId, res.config, refs) : [];
     if (ownership.length > 0 || mime.length > 0) return { ok: false, config: null, issues: [...res.issues, ...ownership, ...mime] };
+    if (res.config.game === "quizor") {
+      const duration = await this.normalizeMediaDurations(userId, res.config.rules);
+      if (duration.length > 0) return { ok: false, config: null, issues: [...res.issues, ...duration] };
+      // Enrichment is part of the frozen document and also spends its JSON budget.
+      const enrichedSize = documentSizeIssues(res.config);
+      if (enrichedSize.length > 0) return { ok: false, config: null, issues: enrichedSize };
+    }
     return { ok: true, config: res.config, issues: res.issues };
+  }
+
+  private async normalizeMediaDurations(userId: string, rules: unknown): Promise<ConfigIssue[]> {
+    const issues: ConfigIssue[] = [];
+    const walk = async (value: unknown, path: string): Promise<void> => {
+      if (Array.isArray(value)) { for (const [index, item] of value.entries()) await walk(item, `${path}[${index}]`); return; }
+      if (!value || typeof value !== "object") return;
+      const node = value as Record<string, unknown>;
+      if ((node.type === "audio" || node.type === "video") && typeof node.asset === "string" && node.durationSeconds === undefined && node.to === undefined) {
+        const duration = await this.assets.durationSeconds(userId, node.asset);
+        const from = typeof node.from === "number" ? node.from : 0;
+        const speed = typeof node.speed === "number" ? node.speed : 1;
+        const repeat = typeof node.repeat === "number" ? node.repeat : 1;
+        const total = duration === null ? NaN : ((duration - from) / speed) * repeat;
+        if (!Number.isFinite(total) || total <= 0 || total > 86400) issues.push({
+          path: `${path}.durationSeconds`, code: "media_duration",
+          message: duration === null ? "Не удалось достоверно прочитать длительность медиа" : "Фрагмент медиа пуст или его показ превышает 24 часа",
+          hint: "Задайте durationSeconds или корректную границу to явно; при необходимости уменьшите from/repeat или увеличьте speed", severity: "error",
+        });
+        else node.durationSeconds = total;
+      }
+      for (const [key, child] of Object.entries(node)) await walk(child, `${path}.${key}`);
+    };
+    await walk(rules, "rules");
+    return issues;
   }
 
   private async quizorMimeIssues(userId: string, config: ConfigDocument, refs: readonly { assetId: string }[]): Promise<ConfigIssue[]> {

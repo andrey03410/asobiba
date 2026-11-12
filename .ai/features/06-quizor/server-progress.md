@@ -62,3 +62,39 @@
 Ранее, в 15:38, tsc был зелёным; общий финальный QG остаётся у root.
 
 Карточки `.ai/map/sdk.md`, `server.md`, `mcp.md` обновлены. Коммитов не делалось.
+
+## Исправление R-I05 по свежему ревью (2026-11-12)
+
+На HEAD `14e2bad` подтверждена потеря разбора завершённого Quizor после перезапуска.
+Добавлен настоящий HTTP/WebSocket integration test `lobbies/finished-lobby.int.test.ts`
+с двумя вариантами `showAnswers` (true/false). В партии три игрока и отдельный ведущий;
+после завершения второй игрок уходит, ведущий снимается, приложение закрывается и
+строится заново. Проверяются GET, matchSummary и реальные WS-подписки.
+
+TDD:
+
+1. Правильный RED: оба сценария получили `matchSummary: null` после rebuild.
+2. Ленивое восстановление finished Match из замороженного lobby.config и MatchRecord
+   вернуло историю, но выявило второй RED: ушедший Bob получил `seat: 1` вместо null.
+3. GREEN: `room()` восстанавливает последний finished turn Match до сохранённого
+   finishedAt и кеширует его без таймеров/перезаписи БД. Текущие playerIds отделены от
+   исторических seatUsers/seatNames. Общий viewerSeat для WS и ACL требует текущую
+   роль player и совпадение userId со снимком; зритель/ушедший получает null.
+4. У оставшейся Carol сохраняется историческое место 2, хотя текущий roster сдвинулся.
+   Bob после возвращения зрителем также получает null. При showAnswers:false Carol
+   видит только свой ответ, остальные зрители — ни одного; снятый ведущий не получает
+   presenterNotes. Весь MatchView Carol совпадает с видом до restart.
+5. Полная строка Match после GET/WS совпадает с сохранённой: result, finishedAt, log,
+   seatUsers/seatNames не переписаны. `restoreAll` не повторно проводит finished-партию.
+
+Проверки на отдельной DB `storage/verification/06-quizor/server-test/test.db`:
+
+- `npx vitest run --config storage/verification/06-quizor/server.config.ts` — **27/27**, 4 файла,
+  16:36 UTC (старые lobby 9, прежние Quizor lobby 10, MCP 6, новые finished 2).
+- После дополнительной проверки возвращения ушедшего зрителем: тот же cfg с фильтром
+  `apps/server/src/lobbies/finished-lobby.int.test.ts` — **2/2**, 16:37 UTC.
+- `npx tsc --noEmit` — **exit 0**, 16:34 UTC после последних правок service.ts.
+
+Изменены только service.ts, новый finished-lobby.int.test.ts, эта запись и map/server.md.
+Коммитов нет. Общую тройку и живую браузерную перепроверку после всей волны исправлений
+проводит root; этот целевой прогон их не заменяет.

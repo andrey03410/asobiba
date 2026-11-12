@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { parseFile } from "music-metadata";
 import type { AssetDto } from "@asobiba/api";
 import type { ConfigIssue } from "@asobiba/sdk";
 import type { Asset } from "../generated/prisma/client";
@@ -52,6 +53,7 @@ function safeDecode(segment: string): string {
 export class AssetService {
   private readonly thumbs = new Map<string, string>();
   private readonly saves = new Map<string, Promise<void>>();
+  private readonly durations = new Map<string, Promise<number | null>>();
   constructor(
     private readonly db: Db,
     private readonly env: Env,
@@ -144,6 +146,7 @@ export class AssetService {
     const asset = await this.db.asset.findFirst({ where: { id, ownerId } });
     if (!asset) throw notFound("Картинка не найдена");
     await this.db.asset.delete({ where: { id } });
+    this.durations.delete(`${ownerId}:${id}`);
     await rm(this.abs(asset.path), { force: true });
   }
 
@@ -151,6 +154,27 @@ export class AssetService {
   async file(id: string): Promise<{ path: string; mime: string; ownerId: string; bytes: number } | null> {
     const asset = await this.db.asset.findUnique({ where: { id } });
     return asset ? { path: this.abs(asset.path), mime: asset.mime, ownerId: asset.ownerId, bytes: asset.bytes } : null;
+  }
+
+  /** Immutable files make duration safe to cache. Scope the cache by owner so it cannot reveal another pool. */
+  async durationSeconds(ownerId: string, id: string): Promise<number | null> {
+    const key = `${ownerId}:${id}`;
+    let pending = this.durations.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const asset = await this.db.asset.findFirst({ where: { id, ownerId } });
+        if (!asset || !/^(audio|video)\//.test(asset.mime)) return null;
+        try {
+          // parseFile uses file access/streams; never read a movie into a Buffer to get its duration.
+          const metadata = await parseFile(this.abs(asset.path), { duration: true, skipCovers: true });
+          const seconds = metadata.format.duration;
+          return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+        } catch { return null; }
+      })();
+      this.durations.set(key, pending);
+      if (this.durations.size > 1000) this.durations.delete(this.durations.keys().next().value as string);
+    }
+    return pending;
   }
 
   /**

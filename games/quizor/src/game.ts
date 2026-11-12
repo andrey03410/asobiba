@@ -51,8 +51,16 @@ export const actionSchema = z.discriminatedUnion("type", [
     type: z.literal("select"),
     questionId: z.string().max(100),
   }),
-  z.strictObject({ type: z.literal("answer"), answers: answersSchema }),
-  z.strictObject({ type: z.literal("draft"), answers: answersSchema }),
+  z.strictObject({
+    type: z.literal("answer"),
+    answers: answersSchema,
+    questionId: z.string().max(100).optional(),
+  }),
+  z.strictObject({
+    type: z.literal("draft"),
+    answers: answersSchema,
+    questionId: z.string().max(100).optional(),
+  }),
   z.strictObject({
     type: z.literal("buzz"),
     reactionMs: z.number().min(0).max(86400000),
@@ -219,6 +227,7 @@ export interface PublicPlayer {
   delta: number | null;
 }
 export interface Submission {
+  reviewed?: boolean;
   answers: Answers;
   submittedAt: number;
   value: number;
@@ -337,6 +346,11 @@ export interface QuizorView {
   selfReference?: string;
 }
 export interface QuizorState {
+  judgingSeat: number | null;
+  judgingAutoFilled: number[];
+  judgingQuestionDeadline: number | null;
+  judgingBlockDeadline: number | null;
+  personalClosed: number[];
   firstSeat: number;
   recipientTurn: number;
   personalOpenedAt: Record<string, number>;
@@ -521,7 +535,7 @@ function reference(q: ResolvedQuestion): string {
   return (
     q.question.answer ??
     q.fields
-      .map(({ field }) =>
+      .map(({ field, settings: fieldSettings }) =>
         field.type === "text"
           ? field.answers.map((a) => a.text).join(" / ")
           : field.type === "number"
@@ -534,7 +548,7 @@ function reference(q: ResolvedQuestion): string {
                 ? field.options
                     .filter(
                       (o) =>
-                        q.settings.grades.find((g) => g.id === o.grade)
+                        fieldSettings.grades.find((g) => g.id === o.grade)
                           ?.correct,
                     )
                     .map((o) => o.text)
@@ -784,6 +798,10 @@ function beginQuestion(s: QuizorState, id: string, ctx: Ctx) {
   s.votes = {};
   s.bestVotes = {};
   s.pending = [];
+  s.judgingSeat = null;
+  s.judgingAutoFilled = [];
+  s.judgingQuestionDeadline = null;
+  s.judgingBlockDeadline = null;
   s.bids = {};
   s.passed = [];
   s.bidTurn = null;
@@ -797,6 +815,7 @@ function beginQuestion(s: QuizorState, id: string, ctx: Ctx) {
   s.ready = [];
   s.personalBlocks = {};
   s.personalOpenedAt = {};
+  s.personalClosed = [];
   s.personalDeadlines = {};
   s.personalBlockStartedAt = {};
   s.blockDeadline = null;
@@ -1015,7 +1034,7 @@ function endRound(s: QuizorState, ctx: Ctx) {
   const hidden = s.history.filter(
     (h) => h.roundId === s.roundId && !h.disclosed,
   );
-  if (hidden.length) {
+  if (hidden.length || settings(s).scoreVisibility === "round") {
     for (const h of hidden) h.disclosed = true;
     s.phase = "round-reveal";
     s.active = null;
@@ -1036,13 +1055,13 @@ function endRound(s: QuizorState, ctx: Ctx) {
   if (s.round + 1 < s.rules.rounds.length) startRound(s, s.round + 1, ctx);
   else startFinal(s, ctx);
 }
-function finish(s: QuizorState, ctx: Ctx) {
+function finish(s: QuizorState, ctx: Ctx, tiedSeats?: number[]) {
   let contenders = s.forcedWinner === null ? alive(s) : [s.forcedWinner];
   if (!contenders.length) contenders = s.players.map((_, i) => i);
   const best = Math.max(...contenders.map((i) => s.players[i].score));
   const winners =
     s.forcedWinner === null
-      ? contenders.filter((i) => s.players[i].score === best)
+      ? (tiedSeats ?? contenders.filter((i) => s.players[i].score === best))
       : [s.forcedWinner];
   if (winners.length > 1 && s.tieIndex < s.rules.tiebreak.length) {
     s.finalStarted = true;
@@ -1104,7 +1123,7 @@ function afterReveal(s: QuizorState, ctx: Ctx) {
       return;
     }
     if (correct.length) s.finalSeats = correct.map((c) => c.seat);
-    finish(s, ctx);
+    finish(s, ctx, s.finalSeats);
     return;
   }
   if (s.finalStarted) {
@@ -1249,8 +1268,13 @@ function replaceGrade(
   );
   return true;
 }
-function closeQuestion(s: QuizorState, ctx: Ctx) {
+function closeQuestion(s: QuizorState, ctx: Ctx, deferScoring = false) {
   if (!s.active) return;
+  s.judgingSeat =
+    s.answering !== null && s.submissions[s.answering] ? s.answering : null;
+  s.judgingAutoFilled = s.eligible.filter((seat) => !s.submissions[seat]);
+  s.judgingQuestionDeadline = s.questionDeadline;
+  s.judgingBlockDeadline = s.blockDeadline;
   s.phase = "judging";
   s.personalDeadlines = {};
   s.questionDeadline = null;
@@ -1259,18 +1283,21 @@ function closeQuestion(s: QuizorState, ctx: Ctx) {
   s.buzzDeadline = null;
   s.answering = null;
   const cfg = settings(s);
-  const peers = Object.values(s.submissions).map((a) => a.answers);
   for (const seat of s.eligible) {
     if (!s.submissions[seat]) {
       const draft = cfg.autoSubmit ? s.drafts[seat] : undefined;
       s.submissions[seat] = {
         answers: draft ?? {},
         submittedAt: s.now,
-        value: cost(s),
+        value: cost(s, seat),
         grade: null,
       };
     }
+  }
+  const peers = Object.values(s.submissions).map((a) => a.answers);
+  for (const seat of s.eligible) {
     const sub = s.submissions[seat];
+    if (sub.reviewed) continue;
     const q = structuredClone(s.active);
     q.settings.value = sub.value;
     for (const f of q.fields)
@@ -1307,7 +1334,52 @@ function closeQuestion(s: QuizorState, ctx: Ctx) {
   if (s.pending.length) {
     if (s.pending.some((p) => p.judge === "presenter")) s.deadline = null;
     else setDeadline(s, cfg.timers.buzzSeconds || 30);
-  } else finishScores(s, ctx);
+  } else if (!deferScoring) finishScores(s, ctx);
+}
+function resumeJudgedBuzz(s: QuizorState): boolean {
+  const seat = s.judgingSeat;
+  if (seat === null) return false;
+  const sub = s.submissions[seat];
+  s.judgingSeat = null;
+  if (!sub?.grade) return false;
+  sub.reviewed = true;
+  const cfg = settings(s);
+  const retry = s.attemptCounts[seat] + 1 < cfg.attempts;
+  if (
+    cfg.mode !== "buzz" ||
+    !cfg.interception ||
+    sub.grade.correct ||
+    (s.judgingQuestionDeadline !== null &&
+      s.now >= s.judgingQuestionDeadline) ||
+    (!retry && !connected(s, s.judgingAutoFilled).length)
+  )
+    return false;
+  for (const target of s.judgingAutoFilled) delete s.submissions[target];
+  s.attemptCounts[seat]++;
+  s.attemptAnswers[seat] ??= [];
+  s.attemptAnswers[seat].push(structuredClone(sub.answers));
+  if (retry) {
+    s.retryPenalty[seat] +=
+      sub.grade.points === 0 ? -sub.value : sub.grade.points;
+    delete s.submissions[seat];
+  }
+  s.phase =
+    s.active && s.blockIndex < s.active.question.blocks.length
+      ? "show"
+      : "answer";
+  s.questionDeadline = s.judgingQuestionDeadline;
+  s.deadline = s.questionDeadline;
+  s.blockDeadline =
+    s.phase === "show" && s.judgingBlockDeadline !== null
+      ? Math.max(s.now + 1, s.judgingBlockDeadline)
+      : null;
+  s.answering = null;
+  s.buzzes = [];
+  s.buzzDeadline = null;
+  s.pending = [];
+  s.judgingAutoFilled = [];
+  event(s, "Кнопка открыта для перехвата");
+  return true;
 }
 function finishScores(s: QuizorState, ctx: Ctx) {
   if (
@@ -1315,6 +1387,7 @@ function finishScores(s: QuizorState, ctx: Ctx) {
     s.history.some((h) => h.questionId === s.active!.question.id)
   )
     return;
+  if (resumeJudgedBuzz(s)) return;
   const cfg = settings(s);
   const answers = Object.entries(s.submissions)
     .filter(([, sub]) => sub.grade)
@@ -1368,7 +1441,10 @@ function finishScores(s: QuizorState, ctx: Ctx) {
             Math.max(
               0,
               1 -
-                (sub.submittedAt - (s.answerOpenedAt ?? sub.submittedAt)) /
+                (sub.submittedAt -
+                  (cfg.pacing === "self"
+                    ? (s.personalOpenedAt[answer.seat] ?? sub.submittedAt)
+                    : (s.answerOpenedAt ?? sub.submittedAt))) /
                   duration,
             ),
         );
@@ -1398,11 +1474,19 @@ function finishScores(s: QuizorState, ctx: Ctx) {
         if (!a.correct && !s.roundOut.includes(a.seat)) s.roundOut.push(a.seat);
       if (alive(s).length <= round.survivors) s.remaining = [];
     }
-    const winner = s.roundCorrect.findIndex(
-      (n) => round.winsToEnd > 0 && n >= round.winsToEnd,
+    const winners = s.roundCorrect.flatMap((n, i) =>
+      round.winsToEnd > 0 && n >= round.winsToEnd ? [i] : [],
     );
-    if (winner >= 0) {
-      s.players[winner].score += round.winnerBonus;
+    if (winners.length) {
+      for (const winner of winners) {
+        s.players[winner].score += round.winnerBonus;
+        const answer = answers.find((a) => a.seat === winner);
+        if (answer) {
+          answer.points += round.winnerBonus;
+          if (s.submissions[winner].grade)
+            s.submissions[winner].grade!.points = answer.points;
+        }
+      }
       s.remaining = [];
     }
   }
@@ -1457,6 +1541,7 @@ function finishScores(s: QuizorState, ctx: Ctx) {
 }
 function canAnswer(s: QuizorState, seat: number): boolean {
   if (
+    s.personalClosed.includes(seat) ||
     s.paused ||
     (s.phase !== "answer" && s.phase !== "show") ||
     (settings(s).pacing === "self"
@@ -1502,7 +1587,9 @@ function resolveAppeal(s: QuizorState) {
   s.appeal = null;
 }
 function settleAuction(s: QuizorState, ctx: Ctx) {
-  const candidates = Object.keys(s.bids).map(Number);
+  const candidates = Object.keys(s.bids)
+    .map(Number)
+    .filter((seat) => !s.passed.includes(seat));
   const winner = candidates.sort(
     (a, b) => s.bids[b] - s.bids[a] || s.players[a].score - s.players[b].score,
   )[0];
@@ -1521,11 +1608,14 @@ function settleAuction(s: QuizorState, ctx: Ctx) {
   beginContent(s);
 }
 function minimumBid(s: QuizorState) {
+  if (s.active?.question.special?.type === "wager-all") return 0;
   return s.finalStarted
     ? s.rules.final.minimumWager
     : (s.active?.question.special?.minimum ?? cost(s));
 }
 function maxBid(s: QuizorState, seat: number) {
+  if (s.active?.question.special?.type === "wager-all")
+    return Math.max(0, s.players[seat].score);
   const min = minimumBid(s);
   if (s.finalStarted) return Math.max(min, s.players[seat].score);
   const prices = s.rules.rounds[s.round]?.values ?? [];
@@ -1535,6 +1625,11 @@ function maxBid(s: QuizorState, seat: number) {
 }
 function setup(ctx: SetupContext<QuizorRules>): QuizorState {
   const s: QuizorState = {
+    judgingSeat: null,
+    judgingAutoFilled: [],
+    judgingQuestionDeadline: null,
+    judgingBlockDeadline: null,
+    personalClosed: [],
     firstSeat: ctx.firstSeat,
     recipientTurn: ctx.firstSeat,
     personalOpenedAt: {},
@@ -1685,12 +1780,15 @@ function wake(state: QuizorState, ctx: Ctx): QuizorState {
             grade: null,
           };
         delete s.personalDeadlines[seat];
+        s.personalClosed.push(Number(seat));
       }
   }
   if (
     (s.phase === "answer" || s.phase === "show") &&
     allAnswered(s) &&
-    !settings(s).editable
+    (!settings(s).editable ||
+      (settings(s).pacing === "self" &&
+        !Object.keys(s.personalDeadlines).length))
   ) {
     closeQuestion(s, ctx);
     return s;
@@ -1842,6 +1940,15 @@ function applyAction(
   if (!parsed.success)
     return actionError("invalid_action", "Неизвестное действие Quizor");
   const action = parsed.data;
+  if (
+    (action.type === "draft" || action.type === "answer") &&
+    action.questionId !== undefined &&
+    action.questionId !== state.active?.question.id
+  )
+    return actionError(
+      "stale_question",
+      "Ответ относится к предыдущему вопросу",
+    );
   if (!Number.isInteger(seat) || seat < 0 || seat >= state.seats)
     return actionError("seat", "Место не участвует в партии");
   if (
@@ -2025,7 +2132,7 @@ function applyAction(
       value: cost(s, seat),
       grade: null,
     };
-    delete s.personalDeadlines[seat];
+    if (!cfg.editable) delete s.personalDeadlines[seat];
     s.drafts[seat] = action.answers;
     if (cfg.mode === "buzz") {
       const q = structuredClone(s.active!);
@@ -2059,7 +2166,13 @@ function applyAction(
         s.deadline = s.questionDeadline;
         if (s.eligible.every((i) => !!s.submissions[i])) closeQuestion(s, ctx);
       }
-    } else if (allAnswered(s) && !cfg.editable) {
+    } else if (
+      allAnswered(s) &&
+      (!cfg.editable ||
+        (cfg.pacing === "self"
+          ? !Object.keys(s.personalDeadlines).length
+          : s.questionDeadline === null))
+    ) {
       const q = s.active!;
       const candidate = judgeQuestion(
         q,
@@ -2097,6 +2210,11 @@ function applyAction(
         return fail();
       s.passed.push(seat);
       const bidders = s.eligible.filter((i) => !s.passed.includes(i));
+      if (s.active.question.special.auction === "sealed") {
+        if (connected(s, bidders).every((i) => s.bids[i] !== undefined))
+          settleAuction(s, ctx);
+        return s;
+      }
       if (bidders.length <= 1 || bidders.every((i) => i === s.highBidder))
         settleAuction(s, ctx);
       else {
@@ -2159,9 +2277,7 @@ function applyAction(
         (action.allIn && action.amount !== max) ||
         (spec.auction === "open" &&
           s.highBidder !== null &&
-          (s.allIn
-            ? !action.allIn || action.amount <= high
-            : !action.allIn && action.amount <= high))
+          (action.amount <= high || (s.allIn && !action.allIn)))
       )
         return fail("Нужно повысить ставку или пасовать");
       s.bids[seat] = action.amount;
@@ -2459,6 +2575,8 @@ function applyControl(
             );
       s.deadline = null;
       s.questionDeadline = null;
+      if (action.seconds === 0 && settings(s).editable && allAnswered(s))
+        closeQuestion(s, ctx);
       return s;
     }
     s.deadline =
@@ -2467,6 +2585,13 @@ function applyControl(
         : Math.max(s.now, (s.deadline ?? s.now) + action.seconds * 1000);
     if (s.phase === "answer" || s.phase === "show")
       s.questionDeadline = s.deadline;
+    if (
+      action.seconds === 0 &&
+      settings(s).editable &&
+      allAnswered(s) &&
+      (s.phase === "answer" || s.phase === "show")
+    )
+      closeQuestion(s, ctx);
     return s;
   }
   if (action.type === "skip") {
@@ -2489,8 +2614,10 @@ function applyControl(
       s.history.some((h) => h.questionId === s.active!.question.id)
     )
       return fail();
-    if (s.phase !== "judging") closeQuestion(s, ctx);
-    for (const seat of s.eligible) replaceGrade(s, seat, action.grade);
+    if (s.phase !== "judging") closeQuestion(s, ctx, true);
+    for (const seat of s.eligible)
+      if (!replaceGrade(s, seat, action.grade)) return fail();
+    s.judgingSeat = null;
     s.pending = [];
     finishScores(s, ctx);
     return s;
@@ -2600,6 +2727,7 @@ function legalHints(s: QuizorState, seat: number | null): string[] {
   if (
     s.submissions[seat] &&
     ["show", "answer"].includes(s.phase) &&
+    connected(s, s.eligible).some((i) => !s.submissions[i]) &&
     connected(s, s.eligible).filter((i) => !s.submissions[i]).length <= 2
   )
     legal.push("hurry");
@@ -2874,11 +3002,23 @@ function view(s: QuizorState, seat: number | null): QuizorView {
         : [],
     special,
     bids:
-      spec?.type === "auction" && spec.auction === "open"
-        ? { ...s.bids }
-        : revealing
+      s.finalStarted && s.phase === "reveal"
+        ? Object.fromEntries(
+            Object.entries(s.bids).filter(([seat]) =>
+              [...(current?.answers ?? [])]
+                .sort(
+                  (a, b) =>
+                    s.finalOrder.indexOf(a.seat) - s.finalOrder.indexOf(b.seat),
+                )
+                .slice(0, s.finalRevealIndex)
+                .some((a) => a.seat === Number(seat)),
+            ),
+          )
+        : spec?.type === "auction" && spec.auction === "open"
           ? { ...s.bids }
-          : {},
+          : revealing
+            ? { ...s.bids }
+            : {},
     ownBid: seat === null ? null : (s.bids[seat] ?? null),
     bidTurn: s.bidTurn,
     deadline: personal
@@ -2951,6 +3091,7 @@ function view(s: QuizorState, seat: number | null): QuizorView {
 }
 function presenterView(s: QuizorState): QuizorView {
   const out = view(s, null);
+  out.bids = { ...s.bids };
   out.presenterNotes =
     s.active?.fields.flatMap((f) => (f.field.notes ? [f.field.notes] : [])) ??
     [];
@@ -3039,7 +3180,7 @@ function legalActions(s: QuizorState, seat: number, _ctx: Ctx): QuizorAction[] {
       })),
     );
   if (hints.includes("next-block")) actions.push({ type: "next-block" });
-  if (hints.includes("answer") && s.active)
+  if (hints.includes("answer") && s.active && !s.submissions[seat])
     actions.push({
       type: "answer",
       answers: Object.fromEntries(
@@ -3068,7 +3209,7 @@ function legalActions(s: QuizorState, seat: number, _ctx: Ctx): QuizorAction[] {
         amount: s.active.question.special.values[0],
       });
     else {
-      const amount =
+      let amount =
         s.active?.question.special?.type === "auction" &&
         s.active.question.special.auction === "open"
           ? Math.max(
@@ -3079,7 +3220,20 @@ function legalActions(s: QuizorState, seat: number, _ctx: Ctx): QuizorAction[] {
               s.active?.question.special?.type === "auction"
             ? minimumBid(s)
             : 0;
-      if (amount <= maxBid(s, seat)) actions.push({ type: "bid", amount });
+      const allIn =
+        s.active?.question.special?.type === "auction" &&
+        s.active.question.special.auction === "open" &&
+        s.allIn;
+      if (allIn) amount = maxBid(s, seat);
+      if (
+        amount <= maxBid(s, seat) &&
+        (!allIn || amount > (s.highBidder === null ? 0 : s.bids[s.highBidder]))
+      )
+        actions.push({
+          type: "bid",
+          amount,
+          ...(allIn ? { allIn: true } : {}),
+        });
     }
   }
   if (hints.includes("pass") && s.phase === "special")
@@ -3134,15 +3288,7 @@ export const quizor = defineGame<
   checkVisual,
   setup,
   currentSeats: (s) =>
-    alive(s).filter(
-      (i) =>
-        legalActions(s, i, {
-          rules: s.rules,
-          seats: s.seats,
-          rng: null as never,
-          now: s.now,
-        }).length > 0,
-    ),
+    s.players.flatMap((_, i) => (legalHints(s, i).length ? [i] : [])),
   turnId: (s) =>
     `${s.phase}:${s.active?.question.id ?? s.roundId}:${s.blockIndex}:${s.answering ?? ""}`,
   turnBudgetSeconds: () => 0,

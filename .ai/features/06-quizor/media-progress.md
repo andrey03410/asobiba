@@ -104,3 +104,56 @@ Pure inspector tests запускались также без globalSetup чер
   — **65/65, 5 файлов**, 7.48 с. Повторный asset 900 МиБ не удваивает квоту; добавление
   другого файла 200 МиБ вызывает media_quota. Существующая схема игры также проверяется
   реальным Quizor, не тестовым дублем.
+
+## Исправления интеграционного ревью R-I02/R-I04
+
+R-I05 передан root отдельному server_integration; его lobby-файлы в этой итерации
+не менялись.
+
+### R-I02 — фон текущего раунда
+
+- RED: две проверки падали — whitelist не выдавал фон, HTTP игрока отвечал 403.
+- `quizorMediaRefs` теперь берёт ровно `roundVisual.background.asset` безопасного view.
+  Остальные поля roundVisual, произвольные ответы и будущие rules не сканируются.
+- GREEN: настоящий Quizor с двумя фонами и отдельными owner/player/spectator:
+  текущий фон получает 200 у игрока и зрителя, будущий — 403; превью запрашивает миниатюру
+  только текущего фона. Pure whitelist test отдельно проверяет отсутствие injected
+  answers/own/rules refs.
+
+### R-I04 — полная длина звука/видео
+
+- RED: три проверки показывали отсутствие нормализации и диагностики; метода
+  `AssetService.durationSeconds` не существовало.
+- Добавлена точная зависимость `music-metadata:12.4.0`. Чтение через parseFile с
+  duration:true/skipCovers:true, без чтения файла целиком в Buffer. Кэш до 1000 записей
+  с ключом ownerId+assetId; чужой аккаунт получает null, remove убирает запись.
+- После владения/квот/MIME `ConfigService.validate` обходит только rules и дополняет
+  audio/video без durationSeconds/to числом `(metadataDuration-from)/speed*repeat`.
+  Явные границы не меняются. Неизвестные метаданные, пустой фрагмент или превышение
+  допустимых схемой 24 часов — `media_duration` по `.durationSeconds`, hint предлагает
+  durationSeconds/to. После дополнения ещё раз проверяется полный JSON ≤2 МиБ.
+- Реальные данные: генерируемый PCM WAV 60 с; собственный синтетический H.264 MP4,
+  20 чёрных кадров 16×16 при 10 fps, ровно 2 с, fixture 1.5 КиБ. Исходник генератора
+  `storage/verification/06-quizor/make-blank-video.swift`; тестам кодировщик не нужен.
+  Внешний видеоконтент в тестовую fixture не копировался.
+- Проверены 60 с полного WAV и 75 с для `(60−10)/2×3`; 2 с видео сохраняются как в
+  GameConfig, так и в frozen Lobby config. Входной объект не меняется. Группы/intro/reveal
+  проходят тот же обход. В старом тесте только MIME-контейнера без временных метаданных
+  поставлено явное durationSeconds, как разрешил root.
+- Настоящий Streamable HTTP MCP: одноразовый upload 12.5-секундного WAV → config_validate
+  → config_save → lobby_create. На всех этапах нормализованное число равно 12.5.
+- Итоговый адресный прогон: `npx vitest run --config storage/verification/06-quizor/media-review-vitest.config.ts`
+  — **78/78, 8 файлов**, 11.98 с. Это assets, configs, media-refs, гости и настоящий MCP.
+  `npx tsc --noEmit --pretty false` и `git diff --check` проходят.
+- Одна промежуточная suite получила `table Match does not exist` при одновременном
+  пересоздании общей test DB другим процессом. Для итогового прогона выделена отдельная
+  БД `storage/verification/06-quizor/media-review/test.db`, миграции применены штатно;
+  соседние агенты и полный QG её не используют.
+
+Дополнительные файлы: assets/service.ts, assets/media-fixtures.ts,
+assets/fixtures/{blank-2s.mp4,README.md}, configs/service.ts,
+configs/{quizor.int.test.ts,review-regressions.int.test.ts},
+games/{media-refs.ts,media-refs.test.ts}, mcp/mcp.int.test.ts,
+apps/server/package.json, package-lock.json, .ai/map/assets.md и tech.md T09.
+Сигнатуры остальных методов не менялись; production-код и контракт заморожены для
+общего QG root. Общие test → build → tsc и повторное scoped review ведёт root.

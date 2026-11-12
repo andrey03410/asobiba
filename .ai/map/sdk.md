@@ -42,6 +42,9 @@
 а не поле action. Ведущий не занимает игровое место. `presenterView(state)` выбирается
 только при доверенном `Match.view(seat, "presenter")`; хозяин получает обычный view.
 `BoardProps.onControl`/`controlRole` — отдельный канал сайта.
+`BoardProps.connected` сообщает состояние транспорта: Quizor повторно синхронизирует
+локальный черновик после reconnect. Действия draft/answer содержат ожидаемый questionId,
+запоздалое сообщение не может записать ответ в следующий вопрос с тем же id поля.
 
 `nextWakeAt(state)`/`wake(state, ctx)` планируют игровые дедлайны независимо от таймера
 хода. `Match.advance` выбирает ближайшее событие, поэтому block/reveal/pause события

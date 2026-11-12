@@ -7,6 +7,8 @@ import type { MatchView } from "./match";
  * SDK has no UI dependency; game client packages type `Board` with React.
  */
 export interface BoardProps {
+  /** Transport state; boards may resynchronize local drafts after reconnect. */
+  connected?: boolean;
   match: MatchView;
   config: ConfigDocument;
   /** The viewer's seat, or null for spectators. */

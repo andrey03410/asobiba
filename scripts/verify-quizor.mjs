@@ -54,6 +54,72 @@ async function login(name) {
 }
 const a = await login("verify-a"),
   b = await login("verify-b");
+if (process.argv.includes("--presenter-peer")) {
+  const { lobbyId } = JSON.parse(
+    await readFile(resolve(out, "browser-presenter.json"), "utf8"),
+  );
+  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/ws`, {
+    headers: { cookie: b.cookie },
+  });
+  const sent = new Set();
+  const evidence = [];
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error("Presenter verification timeout"));
+    }, 180000);
+    ws.on("open", () =>
+      ws.send(JSON.stringify({ type: "subscribe", lobbyId })),
+    );
+    ws.on("error", reject);
+    ws.on("message", (raw) => {
+      const m = JSON.parse(raw);
+      if (m.type === "error") {
+        clearTimeout(timer);
+        ws.close();
+        reject(new Error(JSON.stringify(m)));
+        return;
+      }
+      if (m.type !== "match" || !m.match) return;
+      const g = m.match.game;
+      evidence.push({
+        phase: g.phase,
+        seat: m.seat,
+        serverTime: m.serverTime,
+        answering: g.answering,
+      });
+      if (m.match.phase === "finished") {
+        clearTimeout(timer);
+        ws.close();
+        resolve();
+        return;
+      }
+      const send = (action, key) => {
+        if (sent.has(key)) return;
+        sent.add(key);
+        ws.send(JSON.stringify({ type: "action", lobbyId, action }));
+      };
+      if (g.legal.includes("ready"))
+        send(
+          { type: "ready", questionId: g.questionId, phase: g.phase },
+          `${g.questionId}:${g.phase}:ready`,
+        );
+      if (g.legal.includes("buzz") && g.answerOpenedAt !== null)
+        send({ type: "buzz", reactionMs: 0 }, `${g.questionId}:buzz`);
+      if (g.canAnswer)
+        send(
+          { type: "answer", questionId: g.questionId, answers: { a: true } },
+          `${g.questionId}:answer`,
+        );
+    });
+  });
+  await writeFile(
+    resolve(out, "presenter-peer.json"),
+    JSON.stringify(evidence, null, 2),
+  );
+  console.log("Presenter peer finished with no errors");
+  process.exit(0);
+}
 const mcp = new Client({ name: "verify-quizor", version: "1" });
 await mcp.connect(
   new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
@@ -630,6 +696,26 @@ const formsConfig = {
   timer: { turnSeconds: 0 },
   visual: { theme: "paper" },
 };
+formsConfig.rules.rounds[0].questions.push({
+  id: "media-pairs",
+  prompt: "Сопоставьте картинку и звук",
+  fields: [
+    {
+      id: "pairs",
+      type: "match",
+      label: "Медиа",
+      left: [
+        { id: "picture", text: "Картинка" },
+        { id: "sound", text: "Звук" },
+      ],
+      right: [
+        { id: "r1", asset: image.id },
+        { id: "r2", asset: audio.id, media: "audio" },
+      ],
+      correct: { picture: "r1", sound: "r2" },
+    },
+  ],
+});
 const formsLobby = await a.request("POST", "/api/lobbies", {
   name: formsConfig.title,
   config: formsConfig,
@@ -647,4 +733,65 @@ await writeFile(
 );
 console.log(
   `Forms verification lobby: http://127.0.0.1:5173/lobby/${formsLobby.lobby.id}`,
+);
+const presenterConfig = {
+  sdk: 1,
+  game: "quizor",
+  gameVersion: 1,
+  title: "Quizor · пульт ведущего",
+  rules: {
+    presenter: "required",
+    players: { min: 1, max: 1 },
+    defaults: {
+      mode: "buzz",
+      judge: "presenter",
+      pacing: "presenter",
+      answerOpen: "presenter",
+      advance: "presenter",
+      timers: { preloadSeconds: 0 },
+    },
+    rounds: [
+      {
+        id: "lead",
+        title: "Вопрос с ведущим",
+        questions: [
+          {
+            id: "lead1",
+            prompt: "Назовите столицу Японии",
+            blocks: [{ type: "text", text: "Внимание на вопрос" }],
+            fields: [{ id: "a", type: "oral", reference: "Токио" }],
+          },
+        ],
+      },
+    ],
+  },
+  series: { rounds: 1 },
+  timer: { turnSeconds: 0 },
+  visual: { theme: "neon" },
+};
+const presenterLobby = (
+  await a.request("POST", "/api/lobbies", {
+    name: presenterConfig.title,
+    config: presenterConfig,
+  })
+).lobby;
+await a.request("POST", `/api/lobbies/${presenterLobby.id}/join`, {
+  role: "spectator",
+});
+await b.request("POST", `/api/lobbies/${presenterLobby.id}/join`, {
+  role: "player",
+});
+await writeFile(
+  resolve(out, "browser-presenter.json"),
+  JSON.stringify(
+    {
+      lobbyId: presenterLobby.id,
+      url: `http://127.0.0.1:5173/lobby/${presenterLobby.id}`,
+    },
+    null,
+    2,
+  ),
+);
+console.log(
+  `Presenter verification lobby: http://127.0.0.1:5173/lobby/${presenterLobby.id}`,
 );

@@ -372,7 +372,13 @@ export function judgeField(
       ...make(
         step?.grade ??
           (field.steps.length === 0 && distance === 0 ? "correct" : "miss"),
-        step ? "Подошла ступень проверки" : "Ни одна ступень не подошла",
+        step
+          ? "Подошла ступень проверки"
+          : field.steps.length === 0 && distance === 0
+            ? field.type === "number" && typeof field.target !== "number"
+              ? "Ответ в верном диапазоне"
+              : "Совпадение с эталоном"
+            : "Ни одна ступень не подошла",
       ),
       distance,
     };

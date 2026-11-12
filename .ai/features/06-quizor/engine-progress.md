@@ -92,3 +92,41 @@
 
 Финальная локальная проверка этой волны: `npx vitest run games/quizor` — 75/75,
 8 файлов, 5,37 с; `npx tsc --noEmit` — exit 0. Код повторно заморожен для root QG.
+
+## Исправления независимого ревью HEAD 14e2bad
+
+Замечания проверены исходными пробами reviewer, затем каждое исправление проведено
+через красную и зелёную регрессию. Основной новый файл
+`games/quizor/src/regressions.test.ts` использует настоящий Match/dispatch/control,
+а не обходит внешний шлюз прямым applyAction.
+
+| Finding | Исправление | Регрессия |
+|---|---|---|
+| E01 | currentSeats выводится из полных legalHints всех мест; симулятор перебирает допущенные места до непустого списка примерных действий | `authorizes hurry and appeal after submission through the Match gate`; `lets an eliminated player vote on another player's appeal`; SDK `finds a playable actor after an authorized seat with no simulation moves` |
+| E02 | award-all готовит оценки без преждевременного finishScores, меняет их и один раз фиксирует результат | `awards everyone before committing grades or scores` |
+| E03 | Все autoSubmit drafts сначала превращаются в окончательный снимок submissions, затем формируется peers и оценки | `ranks nearest against auto-submitted drafts from the same closing snapshot` |
+| E04 | Editable сохраняет личные окна до срока, завершённые окна отдельно отмечаются; без действующего таймера закрывает последний submit; stop после всех ответов тоже завершает окно | `keeps editable personal clocks until expiry and closes after all budgets expire`; две pacing-пары `closes untimed editable answers…` / `closes submitted editable answers…`; `simulates timed editable answers without resubmission starvation…` |
+| E05 | Претенденты тай-брейка передаются отдельно от общего счёта; отсутствие верного ведёт к следующему резерву, исчерпание — к общей победе оставшихся | `continues the tie-break stock after no correct answer with interception=%s` (false/true) |
+| E06 | Любая открытая ставка строго повышает сумму, ва-банк перебивается только большим ва-банком; legalActions предлагает допустимый allIn; спасовавшие исключены, sealed pass не создаёт очередности | `requires all-in to raise an open auction…`; `offers a valid larger all-in simulation action…`; `excludes a passed bidder when the sealed auction settles` |
+| E07 | После человеческой оценки неудачной попытки восстанавливаются оставшиеся претенденты и исходные часы; предыдущие ручные оценки сохраняются, штраф фиксируется один раз при раскрытии | `reopens buzzer interception after a %s judge rejects an oral answer` (presenter/vote) |
+| E08 | Для wager-all minimum=0, maximum=max(0,score), без исключения стоимости вопроса | `bounds wager-all by its nonnegative balance at score %s` (0/−5/30) |
+| E09 | Публичные bids финала ограничены раскрытыми местами, history.answers ограничен тем же индексом; ownBid остаётся личным, presenterView доверенно видит всё | `reveals only the bids of finalists whose answer has been disclosed` |
+| E10 | Линейный бонус self использует personalOpenedAt соответствующего места | `uses each player's self-paced answer opening for the linear speed bonus` (+133/+117) |
+| E11 | Нормализация длительности настоящего файла принадлежит серверному исполнителю/root; движок использует нормализованный durationSeconds | Серверная область, не заявляется принятой этим отчётом |
+| E12 | round-reveal создаётся для scoreVisibility=round независимо от режима раскрытия ответов | `opens a round score boundary even when every answer is revealed immediately` |
+| E13 | Эталон choice строится по grades своего ResolvedField | `uses field-specific grades to build a choice reference for self-check and history` |
+| Minor: explanation | Неявное точное числовое попадание/диапазон поясняются успешным совпадением | judge.test `explains an implicit numeric target %j as a successful match` |
+| Minor: ids | choice/multi/order/match получают error duplicate_item при повторе id внутри списка | rules.test `rejects duplicate ids in %j` (пять коллекций) |
+
+Дополнительно по прямым уточнениям root:
+
+- `draft` и `answer` принимают optional questionId. Старые вызовы совместимы;
+  stale_question отклоняет запоздалый payload от другого вопроса до мутации.
+  Тест: `rejects a delayed %s from a prior question with the same field id`.
+- При secret race одновременно достигшие K получают winnerBonus каждый; бонус
+  включён в вопросные points истории, чтобы не обходить отложенное раскрытие счёта.
+  Тест: `gives the race winner bonus to every seat reaching K in the same secret question`.
+
+Последний прогон после всех этих правок: `npx vitest run games/quizor packages/sdk` —
+163/163, 14 файлов, 7,97 с; `npx tsc --noEmit` — exit 0. Коммитов исполнитель не делал.
+Код заморожен для общего повторного QG и принятия fixes независимым ревьюером.

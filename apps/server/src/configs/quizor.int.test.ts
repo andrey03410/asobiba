@@ -62,7 +62,7 @@ describe("Quizor media validation", () => {
 
   it("accepts matching containers and counts repeated references once", async () => {
     const config = document();
-    config.rules.rounds[0].questions[0].blocks = [{ type: "audio", asset: audio }, { type: "video", asset: video }, { type: "image", asset: image }, { type: "audio", asset: audio }];
+    config.rules.rounds[0].questions[0].blocks = [{ type: "audio", asset: audio, durationSeconds: 1 }, { type: "video", asset: video, durationSeconds: 1 }, { type: "image", asset: image }, { type: "audio", asset: audio, durationSeconds: 1 }];
     config.visual.background = { asset: image };
     await t.db.asset.update({ where: { id: audio }, data: { bytes: 900 * 1024 * 1024 } });
     expect((await configs.validate(ownerId, config)).ok).toBe(true);

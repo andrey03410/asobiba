@@ -122,8 +122,14 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
         actions++;
         continue;
       }
-      const seat: Seat | undefined = game.currentSeats(state)[0];
-      const legal = seat === undefined ? [] : game.legalActions(state, seat, ctx);
+      const actors = game.currentSeats(state);
+      let seat: Seat | undefined = actors[0];
+      let legal = seat === undefined ? [] : game.legalActions(state, seat, ctx);
+      for (const actor of actors.slice(1)) {
+        if (legal.length > 0) break;
+        const candidate = game.legalActions(state, actor, ctx);
+        if (candidate.length > 0) { seat = actor; legal = candidate; }
+      }
       if (legal.length === 0 && game.wake && game.nextWakeAt) {
         const at = game.nextWakeAt(state);
         if (typeof at === "number" && Number.isFinite(at)) {

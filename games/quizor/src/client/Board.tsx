@@ -56,12 +56,14 @@ function QuestionAnswer({
   act,
   cached,
   onDraft,
+  connected,
 }: {
   view: QuizorView;
   assetUrl: BoardProps["assetUrl"];
   act: (action: unknown) => void;
   cached?: FormAnswers;
   onDraft(value: FormAnswers): void;
+  connected: boolean;
 }) {
   const [value, setValue] = useState<FormAnswers>(() => ({
     ...initialAnswers(view.fields),
@@ -70,6 +72,17 @@ function QuestionAnswer({
   }));
   const [sent, setSent] = useState(false);
   const draft = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialDraftSent = useRef(false);
+  useEffect(() => {
+    if (!connected) {
+      initialDraftSent.current = false;
+      return;
+    }
+    if (view.canAnswer && !initialDraftSent.current) {
+      initialDraftSent.current = true;
+      act({ type: "draft", questionId: view.questionId, answers: value });
+    }
+  }, [connected, view.canAnswer, view.questionId, act, value]);
   useEffect(() => {
     setSent(false);
   }, [view.ownAnswer]);
@@ -84,7 +97,7 @@ function QuestionAnswer({
     onDraft(next);
     if (draft.current) clearTimeout(draft.current);
     draft.current = setTimeout(() => {
-      act({ type: "draft", answers: next });
+      act({ type: "draft", questionId: view.questionId, answers: next });
       draft.current = null;
     }, 200);
   };
@@ -100,7 +113,7 @@ function QuestionAnswer({
         if (draft.current) clearTimeout(draft.current);
         draft.current = null;
         setSent(true);
-        act({ type: "answer", answers });
+        act({ type: "answer", questionId: view.questionId, answers });
         // A refused action is reported by the site; allow a retry after a lost acknowledgement.
         setTimeout(() => setSent(false), 1500);
       }}
@@ -868,6 +881,7 @@ export function QuizorBoard(props: BoardProps) {
                   assetUrl={assetUrl}
                   act={act}
                   cached={draftCache.current.get(view.questionId ?? "")}
+                  connected={props.connected !== false}
                   onDraft={(answers) =>
                     draftCache.current.set(view.questionId ?? "", answers)
                   }

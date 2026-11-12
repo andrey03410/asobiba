@@ -753,6 +753,27 @@ export function checkRules(rules: QuizorRules): ConfigIssue[] {
     )
       issue(p, "buzz_timer", "Для кнопки нужен таймер ответа после нажатия");
     for (const { field, settings } of resolved.fields) {
+      const groups =
+        field.type === "choice" || field.type === "multi"
+          ? [{ name: "options", items: field.options }]
+          : field.type === "order"
+            ? [{ name: "items", items: field.items }]
+            : field.type === "match"
+              ? [
+                  { name: "left", items: field.left },
+                  { name: "right", items: field.right },
+                ]
+              : [];
+      for (const group of groups)
+        if (
+          new Set(group.items.map((item) => item.id)).size !==
+          group.items.length
+        )
+          issue(
+            `${p}.${field.id}.${group.name}`,
+            "duplicate_item",
+            "Идентификаторы элементов должны быть уникальны внутри списка",
+          );
       if (settings.judge === "ai")
         issue(
           `${p}.${field.id}`,

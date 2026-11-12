@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestApp, resetDb, SIMPLE_SVG, signUp, type TestApp } from "../test/helpers";
 import { MCP_INSTRUCTIONS, TOOL_NAMES } from "./instructions";
+import { wavSeconds } from "../assets/media-fixtures";
 
 let t: TestApp;
 let base = "";
@@ -29,6 +30,31 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 }
 
 describe("MCP over Streamable HTTP", () => {
+  it("freezes a full uploaded WAV duration through the real agent recipe", async () => {
+    const owner = await signUp(t, "owner");
+    const { secret } = await t.services.auth.createToken(owner.user.id, "Media timing");
+    const client = await connect(secret);
+    try {
+      const ticket = await call(client, "asset_upload_begin", { name: "12.5 seconds" });
+      const response = await fetch(`${base}${new URL(ticket.json.uploadUrl).pathname}`, { method: "PUT", body: new Uint8Array(wavSeconds(12.5)) });
+      expect(response.status).toBe(201);
+      const { asset } = await response.json() as { asset: { id: string } };
+      const caps = await call(client, "game_capabilities", { gameId: "quizor" });
+      const config = caps.json.presetConfigs.find((p: { id: string }) => p.id === "classic").config;
+      config.rules.rounds[0].questions[0].blocks = [{ type: "audio", asset: asset.id }];
+      const valid = await call(client, "config_validate", { config });
+      expect(valid.json.ok).toBe(true);
+      expect(valid.json.config.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
+      const saved = await call(client, "config_save", { config });
+      expect(saved.isError).toBe(false);
+      expect(saved.json.config.document.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
+      const lobby = await call(client, "lobby_create", { name: "Timed audio", configId: saved.json.config.id });
+      expect(lobby.isError).toBe(false);
+      const frozen = await t.db.lobby.findUniqueOrThrow({ where: { id: lobby.json.lobby.id } });
+      expect((frozen.config as any).rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
+    } finally { await client.close(); }
+  });
+
   it("rejects requests without a valid token", async () => {
     const res = await fetch(`${base}/mcp`, {
       method: "POST",

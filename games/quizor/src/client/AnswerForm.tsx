@@ -97,16 +97,18 @@ export function answerInputError(
 function Option({
   item,
   assetUrl,
+  fallback,
 }: {
   item: FieldItem;
   assetUrl: (id: string) => string;
+  fallback?: string;
 }) {
   return (
     <>
       {item.asset && item.media !== "audio" && (
         <img src={assetUrl(item.asset)} alt="" />
       )}
-      {item.text ?? item.id}
+      {item.text || fallback || item.id}
       {(item.audio || (item.media === "audio" && item.asset)) && (
         <audio
           src={assetUrl(item.audio ?? item.asset!)}
@@ -312,13 +314,33 @@ export function AnswerForm({
             case "match":
               control = (
                 <div className="qz-matching">
-                  {(f.left ?? []).map((item) => (
+                  {(f.right ?? []).some((item) => item.asset || item.audio) && (
+                    <div
+                      className="qz-match-targets"
+                      aria-label={`${label}: варианты справа`}
+                    >
+                      {(f.right ?? []).map((item, index) => (
+                        <div key={item.id}>
+                          <Option
+                            item={item}
+                            assetUrl={assetUrl}
+                            fallback={`Вариант ${index + 1}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(f.left ?? []).map((item, index) => (
                     <label key={item.id}>
                       <span>
-                        <Option item={item} assetUrl={assetUrl} />
+                        <Option
+                          item={item}
+                          assetUrl={assetUrl}
+                          fallback={`Элемент ${index + 1}`}
+                        />
                       </span>
                       <select
-                        aria-label={`${label}: ${item.text ?? item.id}`}
+                        aria-label={`${label}: ${item.text || `Элемент ${index + 1}`}`}
                         value={
                           (value[f.id] as Record<string, string> | undefined)?.[
                             item.id
@@ -332,9 +354,9 @@ export function AnswerForm({
                         }
                       >
                         <option value="">Выберите соответствие</option>
-                        {(f.right ?? []).map((x) => (
+                        {(f.right ?? []).map((x, index) => (
                           <option key={x.id} value={x.id}>
-                            {x.text ?? x.id}
+                            {x.text || `Вариант ${index + 1}`}
                           </option>
                         ))}
                       </select>
