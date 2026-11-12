@@ -2706,7 +2706,11 @@ function publicField(field: Field): PublicField {
   if (field.type === "order") out.items = field.items.map((i) => ({ ...i }));
   if (field.type === "match") {
     out.left = field.left.map((i) => ({ ...i }));
-    out.right = field.right.map((i) => ({ ...i }));
+    // Keep media-only labels tied to identity before per-viewer shuffling.
+    out.right = field.right.map((item, index) => ({
+      ...item,
+      text: item.text || `Вариант ${index + 1}`,
+    }));
   }
   if (field.type === "list") out.maxItems = field.maxItems;
   if (field.type === "point") out.asset = field.asset;

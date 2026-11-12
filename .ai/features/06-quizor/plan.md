@@ -60,16 +60,16 @@
 
 ## Задача 5. QG и независимое ревью
 
-- [ ] `scripts/verify-quizor.mjs`, `.ai/features/06-quizor/verify.md`.
-- [ ] npm test → npm run build → npx tsc --noEmit после последних правок.
-- [ ] Настоящие MCP/PNG, WebSocket партии, HTTP-медиа, браузер desktop/mobile/fullscreen.
-- [ ] Свежий ревьюер полного диффа, исправления существенных замечаний, повторный QG.
+- [x] `scripts/verify-quizor.mjs`, `.ai/features/06-quizor/verify.md`.
+- [x] npm test → npm run build → npx tsc --noEmit после последних правок.
+- [x] Настоящие MCP/PNG, WebSocket партии, HTTP-медиа, браузер desktop/mobile/fullscreen.
+- [x] Свежий ревьюер полного диффа, исправления существенных замечаний, повторный QG.
 - [ ] Готово: цифры, пути к доказательствам и ручной чек-лист записаны; PR создан.
 
 ## Задача 6. Знания
 
 - [x] Обновить `.ai/map/{sdk,games,server,assets,mcp,web}.md` по фактическому коду.
-- [ ] Проверить ссылки, отметить план/README, записать решения и хвосты.
+- [x] Проверить ссылки, отметить план/README, записать решения и хвосты.
 - [ ] После зелёных QG/ревью: history, stage merged, merge PR и обновление origin/main.
 
 ## Фокус ревью

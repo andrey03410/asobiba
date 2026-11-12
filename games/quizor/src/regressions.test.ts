@@ -51,6 +51,34 @@ const dispatch = (
 };
 
 describe("Quizor reviewed regressions", () => {
+  it.each(["none", "shared", "individual"])(
+    "keeps self-check media matching labels consistent with %s option shuffling",
+    (shuffleOptions) => {
+      const m = match({
+        defaults: { judge: "self", shuffleOptions },
+        rounds: [{ id: "r", questions: [question("q", { fields: [{
+          id: "a", type: "match",
+          left: [{ id: "image", text: "Картинка" }],
+          right: [
+            { id: "x", asset: "ast_media000000" },
+            { id: "y", asset: "ast_audio000000", media: "audio" },
+          ],
+          correct: { image: "x" },
+        }] })] }],
+      });
+      reach(m, "answer");
+      const displayedLabels = [0, 1].map((seat) => {
+        const right = view(m, seat).fields[0].right!;
+        const index = right.findIndex((option) => option.id === "x");
+        return right[index].text || `Вариант ${index + 1}`;
+      });
+      for (const seat of [0, 1])
+        dispatch(m, seat, { type: "answer", answers: { a: { image: "x" } } });
+      for (const seat of [0, 1]) {
+        expect(view(m, seat).selfReference).toBe(`Картинка: ${displayedLabels[seat]}`);
+      }
+    },
+  );
   it.each([
     {
       field: {
