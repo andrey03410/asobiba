@@ -48,8 +48,22 @@ export function StaticBoard({ match, config, assetUrl }: BoardProps) {
           <stop stopColor={visual.surface} />
           <stop offset="1" stopColor={visual.background} />
         </linearGradient>
+        <clipPath id="qz-bg-clip">
+          <rect width="1200" height="720" rx="24" />
+        </clipPath>
       </defs>
       <rect width="1200" height="720" rx="24" fill="url(#qz-bg)" />
+      {visual.backgroundAsset && assetUrl(visual.backgroundAsset) && (
+        <g clipPath="url(#qz-bg-clip)">
+          <image
+            href={assetUrl(visual.backgroundAsset)}
+            width="1200"
+            height="720"
+            preserveAspectRatio="xMidYMid slice"
+          />
+          <rect width="1200" height="720" fill="url(#qz-bg)" opacity=".88" />
+        </g>
+      )}
       <circle cx="1080" cy="100" r="180" fill="#8e72ff" opacity=".07" />
       <text x="55" y="66" fill={visual.accent} fontSize="25" letterSpacing="5">
         QUIZOR

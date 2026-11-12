@@ -228,6 +228,7 @@ export interface PublicPlayer {
 }
 export interface Submission {
   reviewed?: boolean;
+  priorAttemptOnly?: boolean;
   answers: Answers;
   submittedAt: number;
   value: number;
@@ -346,6 +347,7 @@ export interface QuizorView {
   selfReference?: string;
 }
 export interface QuizorState {
+  rejectedAttempts: Record<string, Submission>;
   judgingSeat: number | null;
   judgingAutoFilled: number[];
   judgingQuestionDeadline: number | null;
@@ -551,22 +553,25 @@ function reference(q: ResolvedQuestion): string {
                         fieldSettings.grades.find((g) => g.id === o.grade)
                           ?.correct,
                     )
-                    .map((o) => o.text)
+                    .map((o) => o.text || o.id)
                     .join(", ")
                 : field.type === "multi"
                   ? field.options
                       .filter((o) => o.correct)
-                      .map((o) => o.text)
+                      .map((o) => o.text || o.id)
                       .join(", ")
                   : field.type === "order"
                     ? field.correct
-                        .map((id) => field.items.find((i) => i.id === id)?.text)
+                        .map(
+                          (id) =>
+                            field.items.find((i) => i.id === id)?.text || id,
+                        )
                         .join(" → ")
                     : field.type === "match"
                       ? field.left
                           .map(
                             (l) =>
-                              `${l.text}: ${field.right.find((r) => r.id === field.correct[l.id])?.text ?? ""}`,
+                              `${l.text || l.id}: ${field.right.find((r) => r.id === field.correct[l.id])?.text || `Вариант ${field.right.findIndex((r) => r.id === field.correct[l.id]) + 1}`}`,
                           )
                           .join("; ")
                       : field.type === "list"
@@ -794,6 +799,7 @@ function beginQuestion(s: QuizorState, id: string, ctx: Ctx) {
   s.attemptCounts = Array(s.seats).fill(0);
   s.retryPenalty = Array(s.seats).fill(0);
   s.attemptAnswers = {};
+  s.rejectedAttempts = {};
   s.optionOrders = {};
   s.votes = {};
   s.bestVotes = {};
@@ -1286,12 +1292,21 @@ function closeQuestion(s: QuizorState, ctx: Ctx, deferScoring = false) {
   for (const seat of s.eligible) {
     if (!s.submissions[seat]) {
       const draft = cfg.autoSubmit ? s.drafts[seat] : undefined;
-      s.submissions[seat] = {
-        answers: draft ?? {},
-        submittedAt: s.now,
-        value: cost(s, seat),
-        grade: null,
-      };
+      const prior = draft === undefined ? s.rejectedAttempts[seat] : undefined;
+      // A rejected try belongs to history; its points are already in retryPenalty.
+      s.submissions[seat] = prior?.grade
+        ? {
+            ...structuredClone(prior),
+            grade: { ...structuredClone(prior.grade), points: 0 },
+            reviewed: true,
+            priorAttemptOnly: true,
+          }
+        : {
+            answers: draft ?? {},
+            submittedAt: s.now,
+            value: cost(s, seat),
+            grade: null,
+          };
     }
   }
   const peers = Object.values(s.submissions).map((a) => a.answers);
@@ -1359,9 +1374,11 @@ function resumeJudgedBuzz(s: QuizorState): boolean {
   s.attemptAnswers[seat] ??= [];
   s.attemptAnswers[seat].push(structuredClone(sub.answers));
   if (retry) {
+    s.rejectedAttempts[seat] = structuredClone(sub);
     s.retryPenalty[seat] +=
       sub.grade.points === 0 ? -sub.value : sub.grade.points;
     delete s.submissions[seat];
+    delete s.drafts[seat];
   }
   s.phase =
     s.active && s.blockIndex < s.active.question.blocks.length
@@ -1378,6 +1395,8 @@ function resumeJudgedBuzz(s: QuizorState): boolean {
   s.buzzDeadline = null;
   s.pending = [];
   s.judgingAutoFilled = [];
+  s.votes = {};
+  s.bestVotes = {};
   event(s, "Кнопка открыта для перехвата");
   return true;
 }
@@ -1419,6 +1438,7 @@ function finishScores(s: QuizorState, ctx: Ctx) {
       points = Math.max(0, points);
     else if (
       cfg.mode === "buzz" &&
+      !sub.priorAttemptOnly &&
       !answer.correct &&
       answer.grade !== "silence" &&
       points === 0
@@ -1625,6 +1645,7 @@ function maxBid(s: QuizorState, seat: number) {
 }
 function setup(ctx: SetupContext<QuizorRules>): QuizorState {
   const s: QuizorState = {
+    rejectedAttempts: {},
     judgingSeat: null,
     judgingAutoFilled: [],
     judgingQuestionDeadline: null,
@@ -1734,6 +1755,8 @@ function shiftDeadlines(s: QuizorState, delta: number) {
   for (const key of [
     "deadline",
     "questionDeadline",
+    "judgingQuestionDeadline",
+    "judgingBlockDeadline",
     "blockDeadline",
     "roundDeadline",
     "buzzDeadline",
@@ -2156,9 +2179,11 @@ function applyAction(
         s.attemptAnswers[seat] ??= [];
         s.attemptAnswers[seat].push(structuredClone(action.answers));
         if (s.attemptCounts[seat] < cfg.attempts) {
+          s.rejectedAttempts[seat] = structuredClone(s.submissions[seat]);
           s.retryPenalty[seat] +=
             grade.points === 0 ? -s.submissions[seat].value : grade.points;
           delete s.submissions[seat];
+          delete s.drafts[seat];
         }
         s.answering = null;
         s.buzzes = [];

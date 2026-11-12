@@ -130,3 +130,29 @@
 Последний прогон после всех этих правок: `npx vitest run games/quizor packages/sdk` —
 163/163, 14 файлов, 7,97 с; `npx tsc --noEmit` — exit 0. Коммитов исполнитель не делал.
 Код заморожен для общего повторного QG и принятия fixes независимым ревьюером.
+
+## Follow-up E14–E16 после повторного ревью 7cb5fc2
+
+Изолированные пробы reviewer воспроизведены на текущем движке. Все исправления
+ограничены `game.ts` и тестами; SDK/сервер/клиент в этой волне не менялись.
+
+| Finding | Исправление | Регрессии в judged-buzz.test.ts |
+|---|---|---|
+| E14: pause во время judging | shiftDeadlines сдвигает сохранённые judgingQuestionDeadline и judgingBlockDeadline вместе с активными часами; после решения судьи возвращается оставшийся бюджет, включая отсчёт resume | `freezes the saved %s deadline while judging is paused` (question/block); положительные контроли `keeps the original %s deadline when judging is not paused` |
+| E15: голосование на retry | При завершении отвергнутой попытки и возврате кнопки очищаются votes/bestVotes предыдущей попытки | `collects fresh votes for the same player's second attempt`: сначала отказ, затем новый положительный голос принят, итог 0 = 100 − 100 |
+| E16: старый draft становится новой попыткой | Отклонённая попытка хранится отдельно в rejectedAttempts; при retry её draft удаляется. При итоговом раскрытии она возвращается только как уже проверенная история без новой базовой оценки — её штраф учтён в retryPenalty. То же исправлено в алгоритмической ветке | `preserves one rejected attempt without resubmitting its old draft with %s attempt(s)` (1/2); `preserves an algorithm-rejected attempt…`; положительные контроли `counts two actual rejected %s attempts as two penalties` (presenter/algorithm, −200) и `still auto-submits a fresh draft entered after a retry starts` |
+
+Всего в новом `games/quizor/src/judged-buzz.test.ts` 11 сценариев через настоящий
+Match. Они проверяют не только отсутствие лишнего начисления, но и сохранение
+старого ответа в разборе, новые действительные попытки, свежие черновики и голоса.
+
+По дополнительной находке root исправлены подписи эталона media-only вариантов:
+match использует `left.text || left.id` и `right.text || Вариант N`, choice/order —
+тот же fallback на id, что и AnswerForm. Три красные→зелёные регрессии
+`builds a readable reference for media-only $field.type options` добавлены в
+`regressions.test.ts` (match/choice/order), +100 и правильная подпись проверяются вместе.
+
+Проверка без общего globalSetup и без обращения к тестовой БД:
+`npx vitest run --config storage/verification/06-quizor/engine-pure.vitest.config.ts` —
+128/128, 10 файлов, 5,21 с; `npx tsc --noEmit` — exit 0.
+Полный QG и финальное scope-review выполняет root. Код заморожен, коммитов не делал.

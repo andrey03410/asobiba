@@ -74,6 +74,23 @@ it("renders a single SVG preview with the question and no input form", () => {
   expect(html).toContain("Кто мурлычет?");
   expect(html).not.toContain("<input");
 });
+it("includes the current round background image in the SVG preview", () => {
+  const html = renderToStaticMarkup(
+    <QuizorBoard
+      {...props}
+      match={{
+        ...props.match,
+        game: {
+          ...view,
+          roundVisual: visualSchema.parse({ background: { asset: "ast_RoundBG0001" } }),
+        },
+      }}
+      staticRender
+    />,
+  );
+  expect(html).toContain('href="/files/ast_RoundBG0001"');
+  expect(html).toContain('preserveAspectRatio="xMidYMid slice"');
+});
 it("conceals question contents on pause and preserves the score panel", () => {
   const html = renderToStaticMarkup(
     <QuizorBoard

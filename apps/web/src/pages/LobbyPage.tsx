@@ -144,7 +144,12 @@ export function LobbyPage() {
     setLoadError(null);
     api
       .lobby(id)
-      .then((res) => alive && setLobby(res.lobby))
+      // An initial HTTP snapshot may arrive after a newer socket push or command.
+      // It only fills the initial state; it must not return a running match to waiting.
+      .then((res) =>
+        alive &&
+        setLobby((current) => (current?.id === id ? current : res.lobby)),
+      )
       .catch(
         (err) =>
           alive &&
@@ -160,8 +165,8 @@ export function LobbyPage() {
 
   // The socket pushes the lobby after every change, including other people's.
   useEffect(() => {
-    if (socket.lobby) setLobby(socket.lobby);
-  }, [socket.lobby]);
+    if (socket.lobby?.id === id) setLobby(socket.lobby);
+  }, [id, socket.lobby]);
 
   const lobbyStatus = lobby?.status;
   useEffect(() => {

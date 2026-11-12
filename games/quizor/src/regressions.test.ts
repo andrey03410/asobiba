@@ -51,6 +51,64 @@ const dispatch = (
 };
 
 describe("Quizor reviewed regressions", () => {
+  it.each([
+    {
+      field: {
+        id: "a",
+        type: "match",
+        left: [{ id: "image", text: "Картинка" }, { id: "sound" }],
+        right: [
+          { id: "x", asset: "ast_media000000" },
+          { id: "y", asset: "ast_audio000000", media: "audio" },
+        ],
+        correct: { image: "x", sound: "y" },
+      },
+      answer: { image: "x", sound: "y" },
+      reference: "Картинка: Вариант 1; sound: Вариант 2",
+    },
+    {
+      field: {
+        id: "a",
+        type: "choice",
+        options: [
+          { id: "image", asset: "ast_media000000", grade: "correct" },
+          { id: "sound", asset: "ast_audio000000", grade: "miss" },
+        ],
+      },
+      answer: "image",
+      reference: "image",
+    },
+    {
+      field: {
+        id: "a",
+        type: "order",
+        items: [
+          { id: "image", asset: "ast_media000000" },
+          { id: "sound", asset: "ast_audio000000" },
+        ],
+        correct: ["sound", "image"],
+      },
+      answer: ["sound", "image"],
+      reference: "sound → image",
+    },
+  ])(
+    "builds a readable reference for media-only $field.type options",
+    ({ field, answer, reference }) => {
+      const m = match(
+        {
+          rounds: [
+            { id: "r", questions: [question("media", { fields: [field] })] },
+          ],
+        },
+        1,
+      );
+      reach(m, "answer");
+      dispatch(m, 0, { type: "answer", answers: { a: answer } });
+      expect(view(m).reference).toBe(reference);
+      expect(view(m).history[0].reference).toBe(reference);
+      expect(view(m).players[0].score).toBe(100);
+    },
+  );
   it("excludes a passed bidder when the sealed auction settles", () => {
     const m = match(
       {

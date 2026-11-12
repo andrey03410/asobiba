@@ -257,6 +257,7 @@ const config = {
         id: "board",
         title: "Табло",
         format: "board",
+        visual: { theme: "midnight", background: { asset: image.id } },
         questions: [
           question("cell", "Третья планета от Солнца?", "Земля", {
             theme: "Космос",
