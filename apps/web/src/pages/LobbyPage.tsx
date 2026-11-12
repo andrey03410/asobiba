@@ -11,6 +11,7 @@ import { CopyButton } from "../components/CopyButton";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { MatchHud } from "../components/MatchHud";
 import { MatchStage } from "../components/MatchStage";
+import { SessionActions } from "../components/SessionActions";
 import { StatusBadge } from "../components/StatusBadge";
 import { gameClient, type WebGameClient } from "../games";
 import { useToast } from "../toast";
@@ -134,7 +135,7 @@ export function LobbyPage() {
   };
 
   const seatNames = useMemo(() => {
-    const map = new Map<Seat, string>();
+    const map = new Map<Seat, string>((lobby?.seatNames ?? []).map((name, seat) => [seat, name]));
     for (const m of lobby?.members ?? []) if (m.seat !== null && m.role === "player") map.set(m.seat, m.login);
     return map;
   }, [lobby]);
@@ -149,9 +150,7 @@ export function LobbyPage() {
           </p>
           <h1>{loadError.status === 404 ? "Лобби не найдено" : "Не удалось открыть лобби"}</h1>
           <p className="muted">{loadError.status === 404 ? "Возможно, его закрыли или в ссылке опечатка." : loadError.message}</p>
-          <Link to="/" className="btn btn-primary">
-            К списку лобби
-          </Link>
+          {user.role !== "guest" && <Link to="/" className="btn btn-primary">К списку лобби</Link>}
         </div>
       </div>
     );
@@ -175,6 +174,7 @@ export function LobbyPage() {
 
   const side = (
     <>
+      {user.role === "guest" && <section className="card"><SessionActions /></section>}
       <section className="card">
         <MemberList lobby={lobby} client={client} meId={user.id} />
         <div className="lobby-actions">

@@ -2,6 +2,8 @@ import type { ClientMessage, LobbyDto, ServerMessage } from "@asobiba/api";
 import type { MatchView, Seat } from "@asobiba/sdk";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useAuth } from "./auth";
+
 export type SocketStatus = "connecting" | "open" | "reconnecting";
 
 export interface LobbySocket {
@@ -41,6 +43,7 @@ function parse(data: unknown): ServerMessage | null {
  * match view, reconnects with exponential backoff and tracks the server clock.
  */
 export function useLobbySocket(lobbyId: string, onError?: (code: string, message: string) => void): LobbySocket {
+  const { user, refresh } = useAuth();
   const [status, setStatus] = useState<SocketStatus>("connecting");
   const [lobby, setLobby] = useState<LobbyDto | null>(null);
   const [match, setMatch] = useState<MatchView | null>(null);
@@ -128,10 +131,13 @@ export function useLobbySocket(lobbyId: string, onError?: (code: string, message
         }
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         window.clearInterval(pingTimer);
         if (socketRef.current === socket) socketRef.current = null;
-        scheduleReconnect();
+        if (event.code === 4401) {
+          setMatch(null); setSeat(null); setLobby(null);
+          void refresh().then(scheduleReconnect);
+        } else scheduleReconnect();
       };
       // onerror is always followed by onclose
     };
@@ -167,7 +173,7 @@ export function useLobbySocket(lobbyId: string, onError?: (code: string, message
         socket.close();
       }
     };
-  }, [lobbyId]);
+  }, [lobbyId, user?.id, refresh]);
 
   const sendAction = useCallback(
     (action: unknown) => {

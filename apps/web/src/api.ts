@@ -13,10 +13,12 @@ import type {
   CreateTokenResponse,
   GameResponse,
   GamesResponse,
+  GuestJoinRequest,
   InviteCheckResponse,
   InviteDto,
   LobbiesResponse,
   LobbyResponse,
+  LobbyInvitationDto,
   LoginRequest,
   MeResponse,
   RegisterRequest,
@@ -116,8 +118,8 @@ export const api = {
   me: () => request<MeResponse>("GET", "/api/me"),
   login: (body: LoginRequest) => request<AuthResponse>("POST", "/api/auth/login", { body }),
   register: (body: RegisterRequest) => request<AuthResponse>("POST", "/api/auth/register", { body }),
-  /** Not in the contract yet: expected to clear the session cookie. */
-  logout: () => request<void>("POST", "/api/auth/logout"),
+  logout: (confirmActive = false) => request<void>("POST", "/api/auth/logout", { body: { confirmActive } }),
+  guestJoin: (body: GuestJoinRequest) => request<AuthResponse & LobbyResponse>("POST", "/api/auth/guest", { body }),
   checkInvite: (code: string) => request<InviteCheckResponse>("GET", `/api/invites/check/${enc(code)}`),
 
   // invites (admin)
@@ -148,6 +150,7 @@ export const api = {
   // lobbies
   lobbies: () => request<LobbiesResponse>("GET", "/api/lobbies"),
   lobby: (id: string) => request<LobbyResponse>("GET", `/api/lobbies/${enc(id)}`),
+  invitation: (id: string) => request<{ invitation: LobbyInvitationDto }>("GET", `/api/lobbies/${enc(id)}/invitation`),
   createLobby: (body: CreateLobbyRequest) => request<LobbyResponse>("POST", "/api/lobbies", { body }),
   joinLobby: (id: string, role: "player" | "spectator") => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/join`, { body: { role } }),
   leaveLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/leave`),

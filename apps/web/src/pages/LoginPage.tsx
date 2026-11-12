@@ -2,6 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api";
 import { useAuth } from "../auth";
+import { SessionActions } from "../components/SessionActions";
 import { safeNext, useTitle } from "../util";
 
 export function LoginPage() {
@@ -15,6 +16,10 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  if (user?.role === "guest") return <div className="auth-page"><div className="card auth-card">
+    <h1>Войти в аккаунт</h1><p>Сначала завершите гостевой вход, затем введите логин и пароль.</p>
+    <SessionActions next={next} />
+  </div></div>;
   if (user) return <Navigate to={next} replace />;
 
   const submit = async (e: FormEvent) => {
