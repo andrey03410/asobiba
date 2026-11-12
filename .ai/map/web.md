@@ -102,3 +102,5 @@
 - [задача 02](../features/02-jinchi/README.md) — редактор и клиент Jinchi
 - [задача 04](../features/04-russkoe-pole/README.md) — сцена партии во весь экран
 - [задача 05](../features/05-guest-join/README.md) — приглашения без регистрации, гостевые действия и смена личности между вкладками
+
+- [задача 06](../features/06-quizor/README.md) — Quizor, формы ответа, пульт и медиа на сцене

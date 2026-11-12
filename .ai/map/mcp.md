@@ -64,3 +64,5 @@ id раунда. Адресное превью не считается partial-�
 
 - [задача 01](../features/01-rebuild/README.md) — первая версия MCP
 - [задача 05](../features/05-guest-join/README.md) — гостям доступна игра по ссылке, создание через MCP остаётся за аккаунтами
+
+- [задача 06](../features/06-quizor/README.md) — Quizor probe/resolve и адресное PNG-превью

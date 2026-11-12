@@ -103,3 +103,5 @@ skippedRounds — не запущенные. Исчерпание бюджета
 
 - [задача 01](../features/01-rebuild/README.md) — первая версия SDK
 - [задача 04](../features/04-russkoe-pole/README.md) — часы фазы и `presentRules`
+
+- [задача 06](../features/06-quizor/README.md) — control/wake, ведущий и восстановление журнала

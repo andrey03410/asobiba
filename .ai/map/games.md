@@ -128,3 +128,5 @@
 
 - [задача 02](../features/02-jinchi/README.md) — Jinchi, редактор и навигация
 - [задача 04](../features/04-russkoe-pole/README.md) — Русское поле
+
+- [задача 06](../features/06-quizor/README.md) — Quizor, правила и судейство квизов
