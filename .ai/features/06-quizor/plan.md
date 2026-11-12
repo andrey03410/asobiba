@@ -70,7 +70,7 @@
 
 - [x] Обновить `.ai/map/{sdk,games,server,assets,mcp,web}.md` по фактическому коду.
 - [x] Проверить ссылки, отметить план/README, записать решения и хвосты.
-- [ ] После зелёных QG/ревью: history, stage merged, merge PR и обновление origin/main.
+- [x] После зелёных QG/ревью: history, stage merged, merge PR и обновление origin/main.
 
 ## Фокус ревью
 
