@@ -14,7 +14,6 @@ function InvitationPage({ id }: { id: string }) {
   const [invitation, setInvitation] = useState<LobbyInvitationDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [attempt] = useState(() => crypto.randomUUID());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useTitle(invitation?.name ?? "Приглашение в игру");
@@ -27,7 +26,7 @@ function InvitationPage({ id }: { id: string }) {
   const join = async (role: "player" | "spectator") => {
     if (busy) return;
     setBusy(true); setError(null);
-    try { const result = await api.guestJoin({ name, lobbyId: id, role, attempt }); setUser(result.user); }
+    try { const result = await api.guestJoin({ name, lobbyId: id, role }); setUser(result.user); }
     catch (error) {
       setError(errorMessage(error));
       if (error instanceof ApiRequestError && error.status === 409) toast(error.message, "error");

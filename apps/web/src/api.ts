@@ -28,6 +28,7 @@ import type {
   ValidateResponse,
 } from "@asobiba/api";
 import type { ConfigIssue } from "@asobiba/sdk";
+import { forgetGuestAttempt, guestAttempt, withIdentityLock } from "./guestIdentity";
 
 export class ApiRequestError extends Error {
   readonly status: number;
@@ -116,10 +117,39 @@ export interface AssetResponse {
 export const api = {
   // auth
   me: () => request<MeResponse>("GET", "/api/me"),
-  login: (body: LoginRequest) => request<AuthResponse>("POST", "/api/auth/login", { body }),
-  register: (body: RegisterRequest) => request<AuthResponse>("POST", "/api/auth/register", { body }),
-  logout: (confirmActive = false) => request<void>("POST", "/api/auth/logout", { body: { confirmActive } }),
-  guestJoin: (body: GuestJoinRequest) => request<AuthResponse & LobbyResponse>("POST", "/api/auth/guest", { body }),
+  login: (body: LoginRequest) => withIdentityLock(async () => {
+    const result = await request<AuthResponse>("POST", "/api/auth/login", { body });
+    await forgetGuestAttempt();
+    return result;
+  }),
+  register: (body: RegisterRequest) => withIdentityLock(async () => {
+    const result = await request<AuthResponse>("POST", "/api/auth/register", { body });
+    await forgetGuestAttempt();
+    return result;
+  }),
+  logout: (confirmActive = false) => withIdentityLock(async () => {
+    await request<void>("POST", "/api/auth/logout", { body: { confirmActive } });
+    await forgetGuestAttempt();
+  }),
+  guestJoin: (body: Omit<GuestJoinRequest, "attempt">) => withIdentityLock(async () => {
+    const current = await request<MeResponse>("GET", "/api/me");
+    if (current.user) {
+      await forgetGuestAttempt();
+      const joined = await request<LobbyResponse>("POST", `/api/lobbies/${enc(body.lobbyId)}/join`, { body: { role: body.role } });
+      return { user: current.user, ...joined };
+    }
+    const attempt = await guestAttempt();
+    try {
+      const result = await request<AuthResponse & LobbyResponse>("POST", "/api/auth/guest", { body: { ...body, attempt } });
+      await forgetGuestAttempt();
+      return result;
+    } catch (error) {
+      // A full/started lobby can fail after setting a valid session cookie. A truly
+      // lost response must retain the key so another tab can replay creation.
+      try { if ((await request<MeResponse>("GET", "/api/me")).user) await forgetGuestAttempt(); } catch { /* preserve pending entrance */ }
+      throw error;
+    }
+  }),
   checkInvite: (code: string) => request<InviteCheckResponse>("GET", `/api/invites/check/${enc(code)}`),
 
   // invites (admin)
