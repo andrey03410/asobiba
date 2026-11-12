@@ -2,9 +2,9 @@
 id: 05
 title: Гостевой вход в лобби по ссылке
 track: product
-stage: build
+stage: review
 branch: feat/05-guest-join
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/5
 started: 2026-11-12
 merged:
 ---
@@ -20,8 +20,8 @@ merged:
 - [x] Продукт — [сценарии и решения](product.md), «Продукт ок», 2026-11-12
 - [x] Техника — [tech.md](tech.md), решения приняты автономно
 - [x] План — [plan.md](plan.md)
-- [ ] Реализация и QG
-- [ ] Проверка владельцем
+- [x] Реализация и QG — [verify.md](verify.md), 212 тестов, build/tsc, живые проверки
+- [x] Проверка владельцем — заменена автономной приёмкой по явному разрешению; QG и свежее ревью пройдены
 - [ ] Влито
 
 ## Текущий шаг
