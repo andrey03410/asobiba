@@ -16,7 +16,25 @@ export type Role = "admin" | "user";
 export interface UserDto {
   id: string;
   login: string;
-  role: Role;
+  role: Role | "guest";
+}
+
+/** POST /api/auth/guest → { user, lobby } + session cookie. attempt is a secret retry key. */
+export interface GuestJoinRequest {
+  name: string;
+  lobbyId: string;
+  role: "player" | "spectator";
+  attempt: string;
+}
+
+export interface LobbyInvitationDto {
+  id: string;
+  name: string;
+  gameTitle: string;
+  host: string;
+  status: LobbyStatus;
+  players: number;
+  seats: number;
 }
 
 /** POST /api/auth/register → 201 { user } + session cookie */
@@ -159,6 +177,8 @@ export interface LobbyDto {
   seats: number;
   minPlayers: number;
   members: LobbyMemberDto[];
+  /** Names captured at the start of the current/last match, even after a member leaves. */
+  seatNames?: string[];
   config: ConfigDocument;
   /** Absolute link to the lobby page. */
   url: string;

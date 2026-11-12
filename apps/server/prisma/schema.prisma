@@ -10,8 +10,9 @@ datasource db {
 model User {
   id             String         @id
   login          String         @unique
-  passwordHash   String
-  role           String         @default("user") // admin | user
+  passwordHash   String?
+  displayName    String?
+  role           String         @default("user") // admin | user | guest
   createdAt      DateTime       @default(now())
   sessions       Session[]
   tokens         ApiToken[]
@@ -20,6 +21,7 @@ model User {
   configs        GameConfig[]
   hostedLobbies  Lobby[]        @relation("LobbyHost")
   memberships    LobbyMember[]
+  lobbyVisits    LobbyVisit[]
   invitesCreated Invite[]       @relation("InviteCreator")
   inviteUsed     Invite?        @relation("InviteUser")
 }
@@ -121,6 +123,7 @@ model Lobby {
   updatedAt DateTime      @updatedAt
   members   LobbyMember[]
   matches   Match[]
+  visits    LobbyVisit[]
 
   @@index([status])
 }
@@ -129,11 +132,23 @@ model LobbyMember {
   lobbyId  String
   userId   String
   role     String // player | spectator
+  guestNumber Int?
   joinedAt DateTime @default(now())
   lobby    Lobby    @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([lobbyId, userId])
+}
+
+/// A guest opened a specific lobby link; this grants its referenced images, not membership.
+model LobbyVisit {
+  lobbyId String
+  userId  String
+  lobby   Lobby @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([lobbyId, userId])
+  @@index([userId])
 }
 
 /// One match of a lobby. log holds human actions with timestamps; replaying
@@ -145,6 +160,7 @@ model Match {
   seed       Int
   startedAt  DateTime
   seatUsers  Json // userId by seat
+  seatNames  Json @default("[]")
   log        Json
   status     String // playing | finished | aborted
   result     Json?

@@ -1856,3 +1856,13 @@ textarea:focus {
     justify-content: center;
   }
 }
+
+/* Guest invitation and identity controls also fit the game drawer. */
+.guest-invitation .btn-wide + .btn-wide { margin-top: .65rem; }
+.session-actions .lobby-actions { margin-top: .5rem; }
+.session-actions-compact .lobby-actions { margin-top: 0; flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .header-inner { flex-wrap: wrap; }
+  .header-user { flex-wrap: wrap; }
+  .session-actions-compact .btn { padding-inline: .5rem; }
+}

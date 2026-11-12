@@ -1,6 +1,6 @@
-import { Link, NavLink, Outlet, useNavigate } from "react-router";
+import { Link, NavLink, Outlet } from "react-router";
 import { useAuth } from "../auth";
-import { useToast } from "../toast";
+import { SessionActions } from "./SessionActions";
 
 export function Logo() {
   return (
@@ -17,25 +17,14 @@ export function Logo() {
 }
 
 export function Layout() {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-  const toast = useToast();
-
-  const onLogout = async () => {
-    try {
-      await logout();
-    } catch {
-      toast("Не удалось выйти на сервере, но на этом устройстве сессия сброшена", "error");
-    }
-    navigate("/login");
-  };
+  const { user } = useAuth();
 
   return (
     <div className="app">
       <header className="header">
         <div className="header-inner">
           <Logo />
-          {user && (
+          {user && user.role !== "guest" && (
             <nav className="nav" aria-label="Разделы">
               <NavLink to="/" end className="nav-link">
                 Лобби
@@ -51,10 +40,9 @@ export function Layout() {
                 <span className="header-login" title={user.role === "admin" ? "Администратор" : undefined}>
                   {user.login}
                   {user.role === "admin" && <span className="role-mark">админ</span>}
+                  {user.role === "guest" && <span className="role-mark">гость</span>}
                 </span>
-                <button type="button" className="btn btn-ghost btn-small" onClick={onLogout}>
-                  Выйти
-                </button>
+                <SessionActions compact />
               </>
             ) : user === null ? (
               <Link to="/login" className="btn btn-small">

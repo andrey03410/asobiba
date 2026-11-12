@@ -62,7 +62,7 @@ export async function buildApp(options: AppOptions): Promise<{ app: FastifyInsta
     bodyLimit: 1024 * 1024,
   });
 
-  const auth = new AuthService(db);
+  const auth = new AuthService(db, now);
   const assets = new AssetService(db, env);
   const configs = new ConfigService(db, catalog, assets);
   const lobbies = new LobbyService({ db, catalog, configs, env, now, log: app.log });

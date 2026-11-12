@@ -4,7 +4,7 @@ import { Layout } from "./components/Layout";
 import { gamesCss } from "./games";
 import { AccountPage } from "./pages/AccountPage";
 import { HomePage } from "./pages/HomePage";
-import { LobbyPage } from "./pages/LobbyPage";
+import { LobbyEntryPage } from "./pages/LobbyEntryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NewLobbyPage } from "./pages/NewLobbyPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -25,7 +25,7 @@ export function AppShell() {
             <Route
               index
               element={
-                <RequireAuth>
+                <RequireAuth accountOnly>
                   <HomePage />
                 </RequireAuth>
               }
@@ -33,23 +33,19 @@ export function AppShell() {
             <Route
               path="/new"
               element={
-                <RequireAuth>
+                <RequireAuth accountOnly>
                   <NewLobbyPage />
                 </RequireAuth>
               }
             />
             <Route
               path="/lobby/:id"
-              element={
-                <RequireAuth>
-                  <LobbyPage />
-                </RequireAuth>
-              }
+              element={<LobbyEntryPage />}
             />
             <Route
               path="/account"
               element={
-                <RequireAuth>
+                <RequireAuth accountOnly>
                   <AccountPage />
                 </RequireAuth>
               }

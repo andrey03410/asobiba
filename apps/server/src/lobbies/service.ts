@@ -1,5 +1,5 @@
-import type { CreateLobbyRequest, LobbyDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
-import { type ConfigDocument, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
+import type { CreateLobbyRequest, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
+import { collectAssetRefs, type ConfigDocument, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
 import type { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
 import type { Db } from "../db";
@@ -20,6 +20,7 @@ interface Room {
   matchId: string | null;
   /** userId by seat in the current or last match. */
   seatUsers: string[];
+  seatNames: string[];
   finishedSaved: boolean;
   subscribers: Set<Subscriber>;
   timer: NodeJS.Timeout | null;
@@ -90,6 +91,7 @@ export class LobbyService {
       match: null,
       matchId: last?.id ?? null,
       seatUsers: (last?.seatUsers as string[] | undefined) ?? [],
+      seatNames: (last?.seatNames as string[] | undefined) ?? [],
       finishedSaved: true,
       subscribers: new Set(),
       timer: null,
@@ -124,11 +126,12 @@ export class LobbyService {
       host: { id: row.host.id, login: row.host.login },
       seats: max,
       minPlayers: min,
+      seatNames: room?.seatNames ?? [],
       members: row.members.map((m) => {
         const seat = seatUsers.indexOf(m.userId);
         return {
           userId: m.userId,
-          login: m.user.login,
+          login: this.memberName(m),
           role: m.role === "player" ? "player" : "spectator",
           seat: m.role === "player" && seat >= 0 ? seat : null,
           joinedAt: m.joinedAt.toISOString(),
@@ -141,6 +144,48 @@ export class LobbyService {
   }
 
   // ---------- queries ----------
+
+  private memberName(member: LobbyRow["members"][number]): string {
+    return member.user.role === "guest" ? `${member.user.displayName} · гость ${member.guestNumber}` : member.user.login;
+  }
+
+  async invitation(lobbyId: string): Promise<LobbyInvitationDto> {
+    const row = await this.loadRow(lobbyId);
+    return { id: row.id, name: row.name, gameTitle: this.deps.catalog.get(row.gameId)?.title ?? row.gameId,
+      host: row.host.login, status: row.status as LobbyStatus,
+      players: row.members.filter((m) => m.role === "player").length, seats: row.seats };
+  }
+
+  async visit(user: UserDto, lobbyId: string): Promise<void> {
+    if (user.role !== "guest") return;
+    await this.loadRow(lobbyId);
+    await this.deps.db.lobbyVisit.upsert({ where: { lobbyId_userId: { lobbyId, userId: user.id } },
+      create: { lobbyId, userId: user.id }, update: {} });
+  }
+
+  async guestCanReadAsset(userId: string, assetId: string): Promise<boolean> {
+    const visits = await this.deps.db.lobbyVisit.findMany({ where: { userId }, include: { lobby: { select: { config: true } } } });
+    return visits.some(({ lobby }) => collectAssetRefs(this.shownConfig(lobby.config as unknown as ConfigDocument)).some((ref) => ref.assetId === assetId));
+  }
+
+  /** Called under the session lock; each lobby lock also excludes a concurrent start. */
+  async endGuest(userId: string, confirmActive: boolean): Promise<void> {
+    const memberships = await this.deps.db.lobbyMember.findMany({ where: { userId }, select: { lobbyId: true } });
+    const ids = memberships.map((m) => m.lobbyId).sort();
+    const locked = async (index: number): Promise<void> => {
+      if (index < ids.length) return this.lock(ids[index]!, () => locked(index + 1));
+      const rows = await Promise.all(ids.map((id) => this.loadRow(id)));
+      const active = (row: LobbyRow) => row.status === "playing" && row.members.some((m) => m.userId === userId && m.role === "player");
+      if (!confirmActive && rows.some(active)) throw conflict("active_guest_matches", "Вы участвуете в партии. После выхода вы потеряете доступ к месту, аккаунт не сможет продолжить за гостя. Без таймера партия может ждать вас; хозяин сможет закрыть лобби. Выйти?");
+      for (const row of rows) {
+        if (active(row)) continue;
+        await this.deps.db.lobbyMember.deleteMany({ where: { lobbyId: row.id, userId } });
+        await this.publishLobby(await this.room(row.id));
+      }
+      await this.deps.db.lobbyVisit.deleteMany({ where: { userId } });
+    };
+    await locked(0);
+  }
 
   async get(lobbyId: string): Promise<LobbyDto> {
     const row = await this.loadRow(lobbyId);
@@ -183,6 +228,7 @@ export class LobbyService {
   // ---------- commands ----------
 
   async create(user: UserDto, req: CreateLobbyRequest): Promise<LobbyDto> {
+    if (user.role === "guest") throw forbidden("Создать лобби можно только с аккаунтом");
     let input: unknown = req.config;
     if (req.configId) input = (await this.deps.configs.get(user.id, req.configId)).document;
     if (input === undefined) throw badRequest("no_config", "Нужен configId или config");
@@ -220,7 +266,8 @@ export class LobbyService {
         throw conflict("match_in_progress", "Нельзя встать из-за стола посреди партии");
       }
       if (me) await this.deps.db.lobbyMember.update({ where: { lobbyId_userId: { lobbyId, userId: user.id } }, data: { role } });
-      else await this.deps.db.lobbyMember.create({ data: { lobbyId, userId: user.id, role } });
+      else await this.deps.db.lobbyMember.create({ data: { lobbyId, userId: user.id, role,
+        guestNumber: user.role === "guest" ? Math.max(0, ...row.members.map((m) => m.guestNumber ?? 0)) + 1 : null } });
       return this.publishLobby(room);
     });
   }
@@ -254,16 +301,17 @@ export class LobbyService {
       if (prev.length === players.length && prev.every((u) => players.includes(u))) seatUsers = [...prev.slice(1), ...prev.slice(0, 1)];
       const now = this.deps.now();
       const seed = randomSeed();
+      const seatNames = seatUsers.map((id) => this.memberName(row.members.find((m) => m.userId === id)!));
       const match = Match.start({ game, config, seats: seatUsers.length, seed, startedAt: now });
       const matchId = newId("mat");
       await this.deps.db.$transaction([
         this.deps.db.match.updateMany({ where: { lobbyId, status: "playing" }, data: { status: "aborted", finishedAt: new Date(now) } }),
         this.deps.db.match.create({
-          data: { id: matchId, lobbyId, seed, startedAt: new Date(now), seatUsers, log: [], status: "playing" },
+          data: { id: matchId, lobbyId, seed, startedAt: new Date(now), seatUsers, seatNames, log: [], status: "playing" },
         }),
         this.deps.db.lobby.update({ where: { id: lobbyId }, data: { status: "playing" } }),
       ]);
-      Object.assign(room, { match, matchId, seatUsers, finishedSaved: false });
+      Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false });
       await this.afterMatchChange(room);
       const dto = await this.publishLobby(room);
       this.publishMatch(room);

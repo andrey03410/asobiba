@@ -8,7 +8,7 @@
 
 - [`apps/server/src/assets/images.ts`](../../apps/server/src/assets/images.ts) — `inspectImage` (сигнатура, размер, стороны), `rasterizeSvg`, `renderTrustedSvg` для превью.
 - [`fetch.ts`](../../apps/server/src/assets/fetch.ts) — `fetchPublicUrl` и `isPrivateAddress`.
-- [`service.ts`](../../apps/server/src/assets/service.ts) — `AssetService`: `save`, `createFromSvg`, `importUrl`, `beginUpload`/`finishUpload`, `list`, `remove`, `file`, `dataUris`, `ownershipIssues`.
+- [`service.ts`](../../apps/server/src/assets/service.ts) — `AssetService`: `save`, `createFromSvg`, `importUrl`, `beginUpload`/`finishUpload`, `list`, `remove`, `file`, `previewDataUris`, `ownershipIssues`.
 
 ## Данные
 
@@ -22,7 +22,7 @@
 - SVG: до 200 000 символов, без `DOCTYPE`/`ENTITY`, ссылки (`href`, `xlink:href`) — только `#id` и `data:image/(png|jpeg|gif|webp);base64`, `url()` — только `#id`, без `@import`. Растеризация resvg шириной 512 px, без системных шрифтов: текст в SVG не рисуется. Пропорции проверяются до рендера: высота больше 4 ширин (больше 2048 px) — ошибка `svg_aspect`, иначе узкий `viewBox` съел бы гигабайты. В браузеры уходит только PNG.
 - Импорт по ссылке: только http(s) без логина в URL. IP-литерал проверяется сразу, имя — в собственном `lookup` при соединении (DNS rebinding не проходит). Редиректы — вручную, до трёх, каждый проверяется. Тайм-аут тишины 10 с и общий срок запроса 20 с, лимит размера на заголовке и на потоке. Битое `%`-кодирование в имени файла не ломает импорт. Приватные сети (`BlockList`: 10/8, 127/8, 169.254/16, 172.16/12, 192.168/16, 100.64/10, IPv6 ULA и link-local, mapped IPv4…) запрещены без `ASSET_URL_ALLOW_PRIVATE=1`.
 - Загрузка агентом: `asset_upload_begin` → `PUT /api/uploads/<ticket>` телом файла (`curl --upload-file`), ответ — `{ asset }`. Сайт грузит `POST /api/assets?name=` телом файла.
-- Отдача `GET /files/assets/:id` — любому вошедшему пользователю: игроки лобби видят картинки чужого конфига. Заголовки `nosniff` и приватный кэш.
+- Отдача `GET /files/assets/:id` — любому вошедшему пользователю с аккаунтом. Гость читает только картинки из показанного конфига конкретного лобби, ссылку на которое открыл: `LobbyVisit` и `LobbyService.guestCanReadAsset` с `collectAssetRefs`. Прямой запрос другой картинки — 403. Сам пул, загрузка и удаление требуют аккаунта. Заголовки `nosniff` и приватный кэш.
 - Превью на сервере встраивает не оригиналы, а миниатюры PNG до 160 px (`previewDataUris`, кэш на 200 картинок по id): картинка клетки повторяется в каждой клетке поля, и оригиналы раздували SVG превью до сотен мегабайт.
 - В конфиг можно положить только свою картинку: `ConfigService.validate` добавляет `asset_not_found` для чужих и несуществующих id.
 
@@ -35,7 +35,9 @@
 
 - `npx vitest run apps/server/src/assets` — загрузка и отдача, не-картинки, SVG → PNG 512 и отказы, импорт с редиректом, приватные адреса, одноразовый билет.
 - Вживую: `scripts/verify-mcp.mjs` создаёт SVG-фигуру и кладёт её в превью.
+- Гостевой доступ проверяется в `apps/server/src/auth/guests.int.test.ts`: до посещения лобби картинка запрещена, после — доступна, посторонняя остаётся запрещённой.
 
 ## История
 
 - [задача 01](../features/01-rebuild/README.md) — пул картинок
+- [задача 05](../features/05-guest-join/README.md) — доступ гостя только к игровым картинкам посещённых лобби
