@@ -25,8 +25,14 @@ export function requireUser(req: FastifyRequest): UserDto {
   return req.user;
 }
 
-function requireAdmin(req: FastifyRequest): UserDto {
+export function requireAccount(req: FastifyRequest): UserDto {
   const user = requireUser(req);
+  if (user.role === "guest") throw forbidden("Для этого нужен аккаунт");
+  return user;
+}
+
+function requireAdmin(req: FastifyRequest): UserDto {
+  const user = requireAccount(req);
   if (user.role !== "admin") throw forbidden("Только для админа");
   return user;
 }
@@ -34,8 +40,7 @@ function requireAdmin(req: FastifyRequest): UserDto {
 const idParam = z.object({ id: z.string().min(1).max(80) });
 
 export function registerRoutes(app: FastifyInstance, s: Services): void {
-  const setSession = async (reply: FastifyReply, userId: string) => {
-    const { token } = await s.auth.createSession(userId);
+  const setCookie = (reply: FastifyReply, token: string) => {
     reply.setCookie(SESSION_COOKIE, token, {
       path: "/",
       httpOnly: true,
@@ -45,8 +50,16 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     });
   };
 
+  const setSession = async (reply: FastifyReply, userId: string) => setCookie(reply, (await s.auth.createSession(userId)).token);
+  const withUser = <T>(req: FastifyRequest, fn: (user: UserDto) => Promise<T>) =>
+    s.auth.withSession(req.cookies[SESSION_COOKIE], async (user) => {
+      if (!user) throw unauthorized();
+      return fn(user);
+    });
+
   // ---------- auth ----------
   app.post("/api/auth/register", async (req, reply) => {
+    if (req.user) throw new HttpError(409, "already_signed_in", "Сначала выйдите из текущей сессии");
     const body = parse(z.object({ login: z.string(), password: z.string(), invite: z.string() }), req.body);
     const user = await s.auth.register(body);
     await setSession(reply, user.id);
@@ -58,6 +71,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   const perLogin = new FailureLimiter(10, 15 * 60_000, s.now);
   const perIp = new FailureLimiter(30, 15 * 60_000, s.now);
   app.post("/api/auth/login", async (req, reply) => {
+    if (req.user) throw new HttpError(409, "already_signed_in", "Сначала выйдите из текущей сессии");
     const body = parse(z.object({ login: z.string().max(64), password: z.string().max(256) }), req.body);
     const loginKey = [body.login.trim().toLowerCase()];
     const ipKey = [req.ip];
@@ -78,8 +92,33 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     return { user };
   });
 
+  const guestLimit = new FailureLimiter(30, 15 * 60_000, s.now);
+  app.post("/api/auth/guest", async (req, reply) => {
+    const body = parse(z.object({ name: z.string().max(200), lobbyId: z.string().min(1).max(80),
+      role: z.enum(["player", "spectator"]), attempt: z.string().regex(/^[a-zA-Z0-9_-]{32,80}$/) }), req.body);
+    if (req.user) return withUser(req, async (user) => {
+      await s.lobbies.visit(user, body.lobbyId);
+      return { user, lobby: await s.lobbies.join(user, body.lobbyId, body.role) };
+    });
+    const invitation = await s.lobbies.invitation(body.lobbyId);
+    if (invitation.status === "closed") throw new HttpError(409, "closed", "Лобби закрыто");
+    guestLimit.check([req.ip]);
+    guestLimit.fail([req.ip]);
+    const created = await s.auth.createGuest(body.name, body.attempt);
+    setCookie(reply, created.token);
+    return s.auth.withSession(created.token, async (user) => {
+      if (!user) throw unauthorized();
+      await s.lobbies.visit(user, body.lobbyId);
+      return { user, lobby: await s.lobbies.join(user, body.lobbyId, body.role) };
+    });
+  });
+
   app.post("/api/auth/logout", async (req, reply) => {
-    await s.auth.deleteSession(req.cookies[SESSION_COOKIE]);
+    const body = parse(z.object({ confirmActive: z.boolean().optional() }).optional(), req.body);
+    await s.auth.withSession(req.cookies[SESSION_COOKIE], async (user) => {
+      if (user?.role === "guest") await s.lobbies.endGuest(user.id, body?.confirmActive ?? false);
+      await s.auth.deleteSession(req.cookies[SESSION_COOKIE]);
+    });
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
     reply.code(204);
   });
@@ -103,26 +142,26 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
 
   // ---------- MCP tokens ----------
   const mcpUrl = `${s.env.publicUrl}/mcp`;
-  app.get("/api/tokens", async (req) => ({ tokens: await s.auth.listTokens(requireUser(req).id), mcpUrl }));
+  app.get("/api/tokens", async (req) => ({ tokens: await s.auth.listTokens(requireAccount(req).id), mcpUrl }));
   app.post("/api/tokens", async (req, reply) => {
-    const user = requireUser(req);
+    const user = requireAccount(req);
     const body = parse(z.object({ name: z.string().max(60) }), req.body);
     const { token, secret } = await s.auth.createToken(user.id, body.name);
     reply.code(201);
     return { token, secret, mcpUrl };
   });
   app.delete("/api/tokens/:id", async (req, reply) => {
-    await s.auth.revokeToken(requireUser(req).id, parse(idParam, req.params).id);
+    await s.auth.revokeToken(requireAccount(req).id, parse(idParam, req.params).id);
     reply.code(204);
   });
 
   // ---------- games ----------
   app.get("/api/games", async (req) => {
-    requireUser(req);
+    requireAccount(req);
     return { games: listGames(s.catalog) };
   });
   app.get("/api/games/:id", async (req) => {
-    requireUser(req);
+    requireAccount(req);
     const game = s.catalog.get(parse(idParam, req.params).id);
     if (!game) throw notFound("Игра не найдена");
     return { game: describeGame(game) };
@@ -130,32 +169,32 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
 
   // ---------- configs ----------
   app.post("/api/configs/validate", async (req) => {
-    const user = requireUser(req);
+    const user = requireAccount(req);
     const body = parse(z.object({ config: z.unknown() }), req.body);
     return s.configs.validate(user.id, body.config);
   });
-  app.get("/api/configs", async (req) => ({ configs: await s.configs.list(requireUser(req).id) }));
+  app.get("/api/configs", async (req) => ({ configs: await s.configs.list(requireAccount(req).id) }));
   app.post("/api/configs", async (req, reply) => {
-    const user = requireUser(req);
+    const user = requireAccount(req);
     const body = parse(z.object({ config: z.unknown() }), req.body);
     const config = await s.configs.save(user.id, body.config);
     reply.code(201);
     return { config };
   });
   app.put("/api/configs/:id", async (req) => {
-    const user = requireUser(req);
+    const user = requireAccount(req);
     const body = parse(z.object({ config: z.unknown() }), req.body);
     return { config: await s.configs.save(user.id, body.config, parse(idParam, req.params).id) };
   });
   app.delete("/api/configs/:id", async (req, reply) => {
-    await s.configs.remove(requireUser(req).id, parse(idParam, req.params).id);
+    await s.configs.remove(requireAccount(req).id, parse(idParam, req.params).id);
     reply.code(204);
   });
 
   // ---------- assets ----------
-  app.get("/api/assets", async (req) => ({ assets: await s.assets.list(requireUser(req).id) }));
+  app.get("/api/assets", async (req) => ({ assets: await s.assets.list(requireAccount(req).id) }));
   app.post("/api/assets", async (req, reply) => {
-    const user = requireUser(req);
+    const user = requireAccount(req);
     const query = parse(z.object({ name: z.string().max(200).optional() }), req.query);
     if (!Buffer.isBuffer(req.body)) throw badRequest("no_file", "Пришлите картинку телом запроса (Content-Type image/*)");
     const asset = await s.assets.save(user.id, { name: query.name, body: req.body, source: "upload" });
@@ -163,7 +202,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     return { asset };
   });
   app.delete("/api/assets/:id", async (req, reply) => {
-    await s.assets.remove(requireUser(req).id, parse(idParam, req.params).id);
+    await s.assets.remove(requireAccount(req).id, parse(idParam, req.params).id);
     reply.code(204);
   });
   app.put("/api/uploads/:ticket", async (req, reply) => {
@@ -174,7 +213,9 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     return { asset };
   });
   app.get("/files/assets/:id", async (req, reply) => {
-    requireUser(req);
+    const user = requireUser(req);
+    const assetId = parse(idParam, req.params).id;
+    if (user.role === "guest" && !(await s.lobbies.guestCanReadAsset(user.id, assetId))) throw forbidden("Картинка недоступна в этом лобби");
     const file = await s.assets.file(parse(idParam, req.params).id);
     if (!file) throw notFound("Картинка не найдена");
     reply.header("content-type", file.mime);
@@ -185,11 +226,11 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
 
   // ---------- lobbies ----------
   app.get("/api/lobbies", async (req) => {
-    requireUser(req);
+    requireAccount(req);
     return { lobbies: await s.lobbies.list() };
   });
   app.post("/api/lobbies", async (req, reply) => {
-    const user = requireUser(req);
+    const user = requireAccount(req);
     const body = parse(
       z.object({ name: z.string().max(60).default(""), configId: z.string().max(80).optional(), config: z.unknown().optional() }),
       req.body,
@@ -198,17 +239,21 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     reply.code(201);
     return { lobby };
   });
-  app.get("/api/lobbies/:id", async (req) => {
-    requireUser(req);
-    return { lobby: await s.lobbies.get(parse(idParam, req.params).id) };
-  });
-  app.post("/api/lobbies/:id/join", async (req) => {
+  app.get("/api/lobbies/:id/invitation", async (req) => ({ invitation: await s.lobbies.invitation(parse(idParam, req.params).id) }));
+  app.get("/api/lobbies/:id", async (req) => withUser(req, async (user) => {
+    const id = parse(idParam, req.params).id;
+    await s.lobbies.visit(user, id);
+    return { lobby: await s.lobbies.get(id) };
+  }));
+  app.post("/api/lobbies/:id/join", async (req) => withUser(req, async (user) => {
     const body = parse(z.object({ role: z.enum(["player", "spectator"]) }), req.body);
-    return { lobby: await s.lobbies.join(requireUser(req), parse(idParam, req.params).id, body.role) };
-  });
-  app.post("/api/lobbies/:id/leave", async (req) => ({ lobby: await s.lobbies.leave(requireUser(req), parse(idParam, req.params).id) }));
-  app.post("/api/lobbies/:id/start", async (req) => ({ lobby: await s.lobbies.start(requireUser(req), parse(idParam, req.params).id) }));
-  app.post("/api/lobbies/:id/close", async (req) => ({ lobby: await s.lobbies.close(requireUser(req), parse(idParam, req.params).id) }));
+    const id = parse(idParam, req.params).id;
+    await s.lobbies.visit(user, id);
+    return { lobby: await s.lobbies.join(user, id, body.role) };
+  }));
+  app.post("/api/lobbies/:id/leave", async (req) => withUser(req, async (user) => ({ lobby: await s.lobbies.leave(user, parse(idParam, req.params).id) })));
+  app.post("/api/lobbies/:id/start", async (req) => ({ lobby: await s.lobbies.start(requireAccount(req), parse(idParam, req.params).id) }));
+  app.post("/api/lobbies/:id/close", async (req) => ({ lobby: await s.lobbies.close(requireAccount(req), parse(idParam, req.params).id) }));
 
   // ---------- WebSocket ----------
   const clientMessage = z.discriminatedUnion("type", [
@@ -228,33 +273,40 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
     };
     const sub: Subscriber = { userId: user.id, send, closed: () => socket.readyState === socket.CLOSING || socket.readyState === socket.CLOSED };
+    const token = req.cookies[SESSION_COOKIE]!;
+    const stopWatching = s.auth.watchSession(token, () => socket.close(4401, "session_ended"));
+    let expiryTimer: NodeJS.Timeout | undefined;
+    const checkExpiry = async () => {
+      const expires = await s.auth.sessionExpiresAt(token);
+      if (socket.readyState !== socket.OPEN) return;
+      if (expires === null || expires <= s.now()) { socket.close(4401, "session_ended"); return; }
+      expiryTimer = setTimeout(() => void checkExpiry().catch(() => socket.close(1011)), Math.min(expires - s.now(), 2 ** 31 - 1));
+      expiryTimer.unref();
+    };
+    void checkExpiry().catch(() => socket.close(1011));
     socket.on("message", (raw) => {
-      let msg: ClientMessage;
-      try {
+      void s.auth.withSession(token, async (current) => {
+        if (!current || socket.readyState !== socket.OPEN) { socket.close(4401, "session_ended"); return; }
+        let msg: ClientMessage;
         const parsed = clientMessage.safeParse(JSON.parse(raw.toString()));
-        if (!parsed.success) throw new Error("bad message");
+        if (!parsed.success) throw badRequest("bad_message", "Неверное сообщение");
         msg = parsed.data as ClientMessage;
-      } catch {
-        send({ type: "error", code: "bad_message", message: "Неверное сообщение" });
-        return;
-      }
-      const fail = (e: unknown) => {
+        if (msg.type === "ping") send({ type: "pong", serverTime: s.now() });
+        else if (msg.type === "subscribe") {
+          await s.lobbies.visit(current, msg.lobbyId);
+          await s.lobbies.subscribe(sub, msg.lobbyId);
+        } else if (msg.type === "unsubscribe") s.lobbies.unsubscribe(sub, msg.lobbyId);
+        else if (msg.type === "action") {
+          const res = await s.lobbies.action(current, msg.lobbyId, msg.action);
+          if (!res.ok) send({ type: "error", code: res.error.code, message: res.error.message });
+        }
+      }).catch((e) => {
         const err = e instanceof HttpError ? e : null;
-        if (!err) req.log.error({ err: e }, "ws handler failed");
-        send({ type: "error", code: err?.code ?? "internal", message: err?.message ?? "Ошибка сервера" });
-      };
-      if (msg.type === "ping") send({ type: "pong", serverTime: s.now() });
-      else if (msg.type === "subscribe") s.lobbies.subscribe(sub, msg.lobbyId).catch(fail);
-      else if (msg.type === "unsubscribe") s.lobbies.unsubscribe(sub, msg.lobbyId);
-      else if (msg.type === "action") {
-        s.lobbies
-          .action(user, msg.lobbyId, msg.action)
-          .then((res) => {
-            if (!res.ok) send({ type: "error", code: res.error.code, message: res.error.message });
-          })
-          .catch(fail);
-      }
+        if (!err && !(e instanceof SyntaxError)) req.log.error({ err: e }, "ws handler failed");
+        send({ type: "error", code: err?.code ?? (e instanceof SyntaxError ? "bad_message" : "internal"),
+          message: err?.message ?? (e instanceof SyntaxError ? "Неверное сообщение" : "Ошибка сервера") });
+      });
     });
-    socket.on("close", () => s.lobbies.unsubscribe(sub));
+    socket.on("close", () => { clearTimeout(expiryTimer); stopWatching(); s.lobbies.unsubscribe(sub); });
   });
 }
