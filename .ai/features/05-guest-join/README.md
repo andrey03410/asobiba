@@ -2,7 +2,7 @@
 id: 05
 title: Гостевой вход в лобби по ссылке
 track: product
-stage: tech
+stage: plan
 branch: feat/05-guest-join
 pr:
 started: 2026-11-12
@@ -18,7 +18,7 @@ merged:
 
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [сценарии и решения](product.md), «Продукт ок», 2026-11-12
-- [ ] Техника
+- [x] Техника — [tech.md](tech.md), решения приняты автономно
 - [ ] План
 - [ ] Реализация и QG
 - [ ] Проверка владельцем
