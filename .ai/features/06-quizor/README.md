@@ -2,7 +2,7 @@
 id: 06
 title: Quizor — конструктор квизов
 track: product
-stage: plan
+stage: build
 branch: feat/06-quizor
 pr:
 started: 2026-11-12
@@ -20,14 +20,14 @@ merged:
 в брифе — только умолчания (P00 в [product.md](product.md)).
 
 **Автономный режим:** разрешён владельцем 2026-11-12 до merge и push в main.
-Следующая стадия — план, затем реализация, QG и независимое ревью.
+Идёт реализация по [plan.md](plan.md), затем QG и независимое ревью.
 
 ## Стадии
 
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [product.md](product.md), «продукт ок» 2026-11-12
 - [x] Техника — [tech.md](tech.md), решения агента в автономном режиме
-- [ ] План — [plan.md](plan.md)
+- [x] План — [plan.md](plan.md)
 - [ ] Реализация и QG — [verify.md](verify.md)
 - [ ] Проверка владельцем
 - [ ] Влито
