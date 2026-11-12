@@ -8,7 +8,7 @@ import { TokensTab } from "./account/TokensTab";
 
 const TABS = [
   { id: "agent", title: "Агент (MCP)" },
-  { id: "assets", title: "Картинки" },
+  { id: "assets", title: "Файлы" },
   { id: "configs", title: "Мои конфиги" },
   { id: "invites", title: "Приглашения", admin: true },
 ] as const;

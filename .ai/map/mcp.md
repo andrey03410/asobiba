@@ -7,7 +7,7 @@
 ## Где код
 
 - [`apps/server/src/mcp/routes.ts`](../../apps/server/src/mcp/routes.ts) — `POST /mcp`: токен `Authorization: Bearer asb_…` → новый `McpServer` и `StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })` на каждый запрос. `GET`/`DELETE` — 405. Без токена — 401 с `WWW-Authenticate`.
-- [`server.ts`](../../apps/server/src/mcp/server.ts) — `createMcpServer(user, services)`: 16 инструментов, ошибки `HttpError` превращаются в `isError` с `{ error, issues }`.
+- [`server.ts`](../../apps/server/src/mcp/server.ts) — `createMcpServer(user, services)`: 18 инструментов, ошибки `HttpError` превращаются в `isError` с `{ error, issues }`.
 - [`instructions.ts`](../../apps/server/src/mcp/instructions.ts) — инструкция `initialize` (меньше 3 КБ) и `TOOL_NAMES`.
 - [`.mcp.json`](../../.mcp.json) — подключение для Claude Code: `http://localhost:8787/mcp` с `${ASOBIBA_MCP_TOKEN}`.
 
@@ -15,7 +15,8 @@
 
 - Инструменты:
   - `games_list`, `game_capabilities(gameId)` — схема, руководства, слоты, темы, каталог, пресеты целиком;
-  - `config_validate`, `config_simulate(config, rounds?)` (до 200 раундов, синхронно), `config_preview(config, moment?, seed?)` — PNG 768 px шириной как MCP-картинка плюс текст с итогом раунда;
+  - `config_validate`, `config_simulate(config, rounds?)` (до 200 раундов, синхронно), `config_preview(config, moment?, seed?, target?)` — PNG 768 px шириной как MCP-картинка плюс текст с итогом раунда;
+  - `config_resolve(config, questionId)`, `config_probe(config, questionId, answers)` — Quizor: источники наследования и приёмка примеров с объяснениями;
   - `config_save(config, configId?)`, `config_list(gameId?)`, `config_get`;
   - `asset_list`, `asset_create_svg(name, svg)`, `asset_import_url(url, name?)`, `asset_upload_begin(name)` → `{ uploadUrl, method: "PUT", expiresAt, example }`;
   - `lobby_create(name, configId | config)` → `{ lobby: { id, url, … } }`, `lobby_list`, `lobby_get` (состав и счёт без ходов), `lobby_close` (только хозяин).
@@ -37,6 +38,17 @@ rounds (начатые), skippedRounds и отдельную диагности�
 Превью возвращает phase и partial; end может быть промежуточным положением большой
 карты. Не считай такое превью победой или бесконечной партией.
 
+## Quizor
+
+`config_resolve` возвращает итоговые настройки вопроса/полей и provenance; `config_probe`
+принимает массив объектов `{idПоля: значение}` и возвращает grades. Для ближайшего
+численного ответа массив считается одной группой. Оба инструмента сначала проверяют
+конфиг и владение медиа; к чужим сохранённым конфигам они доступа не дают.
+`config_preview` принимает `target: {kind: "question"|"round"|"intro", id}`; intro использует
+id раунда. Адресное превью не считается partial-партией. Инструменты не выполняют
+игровые ходы и не управляют живой партией. Медиа загружается через существующий пул:
+картинки до 2 МиБ/2048 px, звук и видео до 1 ГиБ, поддержка кодеков зависит от браузера.
+
 ## Грабли
 
 - Уже запущенная сессия Claude Code не подхватывает `.mcp.json`: для проверок используй `scripts/verify-mcp.mjs`.
@@ -45,10 +57,12 @@ rounds (начатые), skippedRounds и отдельную диагности�
 
 ## Как проверить
 
-- `npx vitest run apps/server/src/mcp` — 401 без токена, длина инструкции, ровно 16 имён, сценарий агента от возможностей до лобби с PNG-превью, изоляция пользователей.
+- `npx vitest run apps/server/src/mcp` — 401 без токена, длина инструкции, ровно 18 имён, сценарий агента от возможностей до лобби с PNG-превью, изоляция пользователей.
 - Вживую: `npx tsx --env-file-if-exists=.env scripts/seed-verify.ts`, затем `node scripts/verify-mcp.mjs --out storage/verification/<run>` против `npm run dev`. Скрипт рисует SVG-фигуру, собирает конфиг на основе `party`, проверяет, прогоняет, сохраняет `preview-start.png`/`preview-end.png` и создаёт лобби.
 
 ## История
 
 - [задача 01](../features/01-rebuild/README.md) — первая версия MCP
 - [задача 05](../features/05-guest-join/README.md) — гостям доступна игра по ссылке, создание через MCP остаётся за аккаунтами
+
+- [задача 06](../features/06-quizor/README.md) — Quizor probe/resolve и адресное PNG-превью

@@ -1,5 +1,9 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { createWriteStream } from "node:fs";
+import { mkdir, readFile, rename, rm } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { parseFile } from "music-metadata";
 import type { AssetDto } from "@asobiba/api";
 import type { ConfigIssue } from "@asobiba/sdk";
 import type { Asset } from "../generated/prisma/client";
@@ -7,8 +11,9 @@ import type { Db } from "../db";
 import type { Env } from "../env";
 import { conflict, HttpError, notFound } from "../http-errors";
 import { newId, randomString, sha256 } from "../ids";
-import { fetchPublicUrl } from "./fetch";
-import { inspectImage, MAX_IMAGE_BYTES, rasterizeSvg, renderTrustedSvg } from "./images";
+import { fetchPublicUrlStream } from "./fetch";
+import { rasterizeSvg, renderTrustedSvg } from "./images";
+import { inspectAssetFile, MAX_CONFIG_MEDIA_BYTES, MAX_MEDIA_BYTES, MAX_USER_ASSET_BYTES } from "./media";
 
 /** Side of the thumbnails that previews embed: a 15×15 board repeats a cell image 225 times. */
 const PREVIEW_THUMB_SIDE = 160;
@@ -16,6 +21,7 @@ const PREVIEW_THUMB_CACHE = 200;
 
 export const MAX_ASSETS_PER_USER = 300;
 const UPLOAD_TTL_MS = 10 * 60 * 1000;
+export type AssetBody = Buffer | AsyncIterable<Uint8Array>;
 
 export function assetDto(asset: Asset): AssetDto {
   return {
@@ -46,6 +52,8 @@ function safeDecode(segment: string): string {
 
 export class AssetService {
   private readonly thumbs = new Map<string, string>();
+  private readonly saves = new Map<string, Promise<void>>();
+  private readonly durations = new Map<string, Promise<number | null>>();
   constructor(
     private readonly db: Db,
     private readonly env: Env,
@@ -53,32 +61,50 @@ export class AssetService {
 
   private abs(relPath: string): string {
     const full = resolve(this.env.storageDir, relPath);
-    if (!full.startsWith(resolve(this.env.storageDir))) throw new Error("asset path escapes storage");
+    if (!full.startsWith(`${resolve(this.env.storageDir)}${sep}`)) throw new Error("asset path escapes storage");
     return full;
   }
 
-  async save(ownerId: string, input: { name?: string; body: Buffer; source: AssetDto["source"] }): Promise<AssetDto> {
-    const info = inspectImage(input.body);
-    const count = await this.db.asset.count({ where: { ownerId } });
-    if (count >= MAX_ASSETS_PER_USER) throw conflict("too_many_assets", `В пуле уже ${count} картинок: удалите ненужные`);
+  async save(ownerId: string, input: { name?: string; body: AssetBody; source: AssetDto["source"] }): Promise<AssetDto> {
     const id = newId("ast");
-    const relPath = join("assets", ownerId, `${id}.${info.ext}`);
-    await mkdir(dirname(this.abs(relPath)), { recursive: true });
-    await writeFile(this.abs(relPath), input.body);
-    const asset = await this.db.asset.create({
-      data: {
-        id,
-        ownerId,
-        name: cleanName(input.name, `${id}.${info.ext}`),
-        mime: info.mime,
-        width: info.width,
-        height: info.height,
-        bytes: input.body.length,
-        path: relPath,
-        source: input.source,
-      },
-    });
-    return assetDto(asset);
+    const temp = this.abs(join("assets", ownerId, `${id}.part`));
+    await mkdir(dirname(temp), { recursive: true });
+    let bytes = 0;
+    let finalPath: string | undefined;
+    try {
+      const limiter = new Transform({ transform(chunk: Buffer, _encoding, callback) {
+        bytes += chunk.length;
+        callback(bytes > MAX_MEDIA_BYTES ? new HttpError(413, "too_big", "Файл больше 1 ГиБ") : null, chunk);
+      } });
+      // Backpressure bounds memory independently of a file's length or declared Content-Length.
+      await pipeline(Readable.from(Buffer.isBuffer(input.body) ? [input.body] : input.body), limiter, createWriteStream(temp, { flags: "wx" }));
+      const info = await inspectAssetFile(temp, bytes);
+      const relPath = join("assets", ownerId, `${id}.${info.ext}`);
+      // Serialize quota check + persistence for this owner; simultaneous uploads cannot both spend the last bytes.
+      const previous = this.saves.get(ownerId) ?? Promise.resolve();
+      let release!: () => void;
+      const pending = new Promise<void>((r) => { release = r; });
+      this.saves.set(ownerId, pending);
+      await previous;
+      try {
+        const usage = await this.db.asset.aggregate({ where: { ownerId }, _count: true, _sum: { bytes: true } });
+        if (usage._count >= MAX_ASSETS_PER_USER) throw conflict("too_many_assets", `В пуле уже ${usage._count} файлов: удалите ненужные`);
+        if ((usage._sum.bytes ?? 0) + bytes > MAX_USER_ASSET_BYTES) throw conflict("asset_quota", "Пул превышает 10 ГиБ: удалите ненужные файлы");
+        finalPath = this.abs(relPath);
+        await rename(temp, finalPath);
+        const asset = await this.db.asset.create({ data: {
+          id, ownerId, name: cleanName(input.name, `${id}.${info.ext}`), mime: info.mime,
+          width: info.width, height: info.height, bytes, path: relPath, source: input.source,
+        } });
+        return assetDto(asset);
+      } finally {
+        release();
+        if (this.saves.get(ownerId) === pending) this.saves.delete(ownerId);
+      }
+    } catch (error) {
+      if (finalPath) await rm(finalPath, { force: true });
+      throw error;
+    } finally { await rm(temp, { force: true }); }
   }
 
   async createFromSvg(ownerId: string, name: string, svg: string): Promise<AssetDto> {
@@ -86,8 +112,8 @@ export class AssetService {
   }
 
   async importUrl(ownerId: string, url: string, name?: string): Promise<AssetDto> {
-    const { body, finalUrl } = await fetchPublicUrl(url, { allowPrivate: this.env.allowPrivateUrls, maxBytes: MAX_IMAGE_BYTES });
-    const fallback = safeDecode(new URL(finalUrl).pathname.split("/").pop() ?? "") || "картинка";
+    const { body, finalUrl } = await fetchPublicUrlStream(url, { allowPrivate: this.env.allowPrivateUrls, maxBytes: MAX_MEDIA_BYTES, totalTimeoutMs: 10 * 60 * 1000 });
+    const fallback = safeDecode(new URL(finalUrl).pathname.split("/").pop() ?? "") || "медиа";
     return this.save(ownerId, { name: name ?? fallback, body, source: "url" });
   }
 
@@ -98,7 +124,7 @@ export class AssetService {
     return { uploadUrl: `${this.env.publicUrl}/api/uploads/${ticket}`, expiresAt: expiresAt.toISOString() };
   }
 
-  async finishUpload(ticket: string, body: Buffer): Promise<AssetDto> {
+  async finishUpload(ticket: string, body: AssetBody): Promise<AssetDto> {
     const id = sha256(ticket);
     const row = await this.db.uploadTicket.findUnique({ where: { id } });
     if (!row || row.usedAt || row.expiresAt.getTime() < Date.now()) {
@@ -120,13 +146,35 @@ export class AssetService {
     const asset = await this.db.asset.findFirst({ where: { id, ownerId } });
     if (!asset) throw notFound("Картинка не найдена");
     await this.db.asset.delete({ where: { id } });
+    this.durations.delete(`${ownerId}:${id}`);
     await rm(this.abs(asset.path), { force: true });
   }
 
-  /** File for /files/assets/:id. Any logged-in user may read: ids are random, configs share them with lobby players. */
-  async file(id: string): Promise<{ path: string; mime: string } | null> {
+  /** Metadata only; the HTTP route applies per-user visibility before opening a bounded stream. */
+  async file(id: string): Promise<{ path: string; mime: string; ownerId: string; bytes: number } | null> {
     const asset = await this.db.asset.findUnique({ where: { id } });
-    return asset ? { path: this.abs(asset.path), mime: asset.mime } : null;
+    return asset ? { path: this.abs(asset.path), mime: asset.mime, ownerId: asset.ownerId, bytes: asset.bytes } : null;
+  }
+
+  /** Immutable files make duration safe to cache. Scope the cache by owner so it cannot reveal another pool. */
+  async durationSeconds(ownerId: string, id: string): Promise<number | null> {
+    const key = `${ownerId}:${id}`;
+    let pending = this.durations.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const asset = await this.db.asset.findFirst({ where: { id, ownerId } });
+        if (!asset || !/^(audio|video)\//.test(asset.mime)) return null;
+        try {
+          // parseFile uses file access/streams; never read a movie into a Buffer to get its duration.
+          const metadata = await parseFile(this.abs(asset.path), { duration: true, skipCovers: true });
+          const seconds = metadata.format.duration;
+          return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+        } catch { return null; }
+      })();
+      this.durations.set(key, pending);
+      if (this.durations.size > 1000) this.durations.delete(this.durations.keys().next().value as string);
+    }
+    return pending;
   }
 
   /**
@@ -144,6 +192,7 @@ export class AssetService {
     if (missing.length === 0) return out;
     const rows = await this.db.asset.findMany({ where: { id: { in: missing } } });
     for (const row of rows) {
+      if (!row.mime.startsWith("image/")) continue;
       const buf = await readFile(this.abs(row.path));
       const scale = Math.min(1, PREVIEW_THUMB_SIDE / Math.max(row.width, row.height));
       const w = Math.max(1, Math.round(row.width * scale));
@@ -157,19 +206,22 @@ export class AssetService {
     return out;
   }
 
-  /** Issues for references to images that are missing or belong to someone else. */
+  /** Missing/foreign references and the total size of unique audio/video references in a config. */
   async ownershipIssues(ownerId: string, refs: readonly { path: string; assetId: string }[]): Promise<ConfigIssue[]> {
     if (refs.length === 0) return [];
-    const owned = await this.db.asset.findMany({ where: { ownerId, id: { in: refs.map((r) => r.assetId) } }, select: { id: true } });
+    const owned = await this.db.asset.findMany({ where: { ownerId, id: { in: refs.map((r) => r.assetId) } }, select: { id: true, mime: true, bytes: true } });
     const ids = new Set(owned.map((a) => a.id));
-    return refs
+    const issues: ConfigIssue[] = refs
       .filter((r) => !ids.has(r.assetId))
       .map((r) => ({
         path: r.path,
         code: "asset_not_found",
-        message: `Картинки ${r.assetId} нет в вашем пуле`,
-        hint: "Возьмите id из asset_list или загрузите картинку заново",
+        message: `Файла ${r.assetId} нет в вашем пуле`,
+        hint: "Возьмите id из asset_list или загрузите файл заново",
         severity: "error" as const,
       }));
+    const mediaBytes = owned.reduce((n, a) => n + a.bytes, 0);
+    if (mediaBytes > MAX_CONFIG_MEDIA_BYTES) issues.push({ path: "rules", code: "media_quota", message: "Уникальные медиа квиза занимают больше 1 ГиБ", hint: "Уменьшите файлы или уберите часть звука и видео", severity: "error" });
+    return issues;
   }
 }

@@ -19,6 +19,12 @@ function cfg(game: string) {
 }
 
 describe("simulate", () => {
+  it("finds a playable actor after an authorized seat with no simulation moves", () => {
+    const concurrent = defineGame({ ...raceGame, currentSeats: (s) => [1 - s.turn, s.turn], legalActions: (s, seat, ctx) => seat === s.turn ? raceGame.legalActions(s, seat, ctx) : [] });
+    const report = simulate(concurrent, cfg("race"), { rounds: 2 });
+    expect(report.finished).toBe(2);
+    expect(report.issues).toEqual([]);
+  });
   it("plays every round of a healthy game to the end", () => {
     const report = simulate(raceGame, cfg("race"), { rounds: 40 });
     expect(report.finished).toBe(40);
@@ -220,5 +226,21 @@ describe("simulation deadline before action execution", () => {
     expect(actionCalls).toBe(0);
     expect(report).toMatchObject({ rounds: 1, unfinished: 1, skippedRounds: 1, maxActions: 0 });
     expect(issueCodes(report)).toEqual(["budget-exceeded"]);
+  });
+});
+
+describe("simulation game clocks", () => {
+  it("advances waiting phases at their deadline before declaring a game stuck", () => {
+    const waiting = defineGame({
+      ...raceGame,
+      currentSeats: () => [],
+      legalActions: () => [],
+      nextWakeAt: (s: { total: number }) => s.total < 3 ? (s.total + 1) * 100 : null,
+      wake: (s: any, ctx: any) => ({ ...s, total: s.total + 1, lastNow: ctx.now }),
+      roundResult: (s: { total: number }) => s.total === 3 ? { winners: [0], losers: [1], draw: false, reason: "clock" } : null,
+    });
+    const report = simulate(waiting, cfg("race"), { rounds: 3 });
+    expect(report).toMatchObject({ finished: 3, unfinished: 0, maxActions: 3 });
+    expect(report.issues).toEqual([]);
   });
 });

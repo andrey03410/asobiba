@@ -1,0 +1,1 @@
+{"name":"@asobiba/game-quizor","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/index.ts","./client":"./src/client/index.ts"},"dependencies":{"@asobiba/sdk":"*","zod":"^4.6.7"},"peerDependencies":{"react":"^19.3.1"}}

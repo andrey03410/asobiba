@@ -117,8 +117,8 @@ export interface AssetRef {
   assetId: string;
 }
 
-/** Every `{ asset: "ast_…" }` inside the visual section. The server checks ownership. */
-export function collectAssetRefs(config: Pick<ConfigDocument, "visual">): AssetRef[] {
+/** Every media reference in visuals and rules. The server checks ownership. */
+export function collectAssetRefs(config: Pick<ConfigDocument, "visual"> & Partial<Pick<ConfigDocument, "rules">>): AssetRef[] {
   const out: AssetRef[] = [];
   const walk = (value: unknown, path: string) => {
     if (Array.isArray(value)) {
@@ -132,5 +132,6 @@ export function collectAssetRefs(config: Pick<ConfigDocument, "visual">): AssetR
     }
   };
   walk(config.visual, "visual");
+  if (config.rules !== undefined) walk(config.rules, "rules");
   return out;
 }

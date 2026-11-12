@@ -185,6 +185,7 @@ export const api = {
   joinLobby: (id: string, role: "player" | "spectator") => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/join`, { body: { role } }),
   leaveLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/leave`),
   startLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/start`),
+  setPresenter: (id: string, userId: string | null) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/presenter`, { body: { userId } }),
   closeLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/close`),
 };
 

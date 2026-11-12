@@ -1,6 +1,8 @@
 import { lookup as dnsLookup } from "node:dns";
 import http from "node:http";
 import https from "node:https";
+import type { IncomingMessage } from "node:http";
+import { Readable } from "node:stream";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { HttpError } from "../http-errors";
 
@@ -36,7 +38,7 @@ export interface FetchOptions {
  * (custom DNS lookup), so DNS rebinding cannot slip a private address in.
  * Redirects are followed manually, each hop checked again.
  */
-export async function fetchPublicUrl(rawUrl: string, options: FetchOptions): Promise<{ body: Buffer; contentType: string | null; finalUrl: string }> {
+export async function fetchPublicUrlStream(rawUrl: string, options: FetchOptions): Promise<{ body: Readable; contentType: string | null; finalUrl: string }> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -53,16 +55,49 @@ export async function fetchPublicUrl(rawUrl: string, options: FetchOptions): Pro
     }
     const res = await request(url, options);
     if (res.status >= 300 && res.status < 400 && res.location) {
+      res.body.destroy();
       url = new URL(res.location, url);
       continue;
     }
-    if (res.status !== 200) throw new HttpError(422, "fetch_failed", `Сервер ответил ${res.status}`);
-    return { body: res.body, contentType: res.contentType, finalUrl: url.toString() };
+    if (res.status !== 200) {
+      res.body.destroy();
+      throw new HttpError(422, "fetch_failed", `Сервер ответил ${res.status}`);
+    }
+    const body = Readable.from((async function* () {
+      let bytes = 0;
+      try {
+        for await (const chunk of res.body) {
+          bytes += chunk.length;
+          if (bytes > options.maxBytes) throw new HttpError(413, "too_big", "Файл по ссылке слишком большой");
+          yield chunk;
+        }
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(422, "fetch_failed", `Не удалось скачать: ${(error as Error).message}`);
+      } finally { res.body.destroy(); }
+    })());
+    return { body, contentType: res.contentType, finalUrl: url.toString() };
   }
   throw new HttpError(422, "too_many_redirects", "Слишком много перенаправлений");
 }
 
-function request(url: URL, options: FetchOptions): Promise<{ status: number; location: string | null; contentType: string | null; body: Buffer }> {
+/** Compatibility helper for small callers; asset imports use fetchPublicUrlStream instead. */
+export async function fetchPublicUrl(rawUrl: string, options: FetchOptions): Promise<{ body: Buffer; contentType: string | null; finalUrl: string }> {
+  const response = await fetchPublicUrlStream(rawUrl, options);
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of response.body) {
+    bytes += chunk.length;
+    if (bytes > options.maxBytes) {
+      response.body.destroy();
+      throw new HttpError(413, "too_big", "Файл по ссылке слишком большой");
+    }
+    chunks.push(chunk);
+  }
+  return { ...response, body: Buffer.concat(chunks) };
+}
+
+function request(url: URL, options: FetchOptions): Promise<{ status: number; location: string | null; contentType: string | null; body: IncomingMessage }> {
   const guardedLookup: LookupFunction = (hostname, opts, callback) => {
     dnsLookup(hostname, { ...opts, all: true }, (err, addresses) => {
       if (err) return callback(err, "", 4);
@@ -81,40 +116,25 @@ function request(url: URL, options: FetchOptions): Promise<{ status: number; loc
   return new Promise((resolve, reject) => {
     // the socket timeout only catches silence; a server dripping bytes needs a total deadline
     const deadline = setTimeout(() => req.destroy(new HttpError(422, "timeout", "Ссылка отвечает слишком долго")), options.totalTimeoutMs ?? 20_000);
-    const done = <T,>(fn: (v: T) => void) => (v: T) => {
-      clearTimeout(deadline);
-      fn(v);
-    };
-    resolve = done(resolve);
-    reject = done(reject);
+    const fail = (error: Error) => { clearTimeout(deadline); reject(error); };
     const req = lib.get(
       url,
-      { lookup: guardedLookup, timeout: options.timeoutMs ?? 10_000, headers: { "user-agent": "Asobiba/0.1 (+asset import)", accept: "image/*" } },
+      { lookup: guardedLookup, timeout: options.timeoutMs ?? 10_000, headers: { "user-agent": "Asobiba/0.1 (+asset import)", accept: "image/*,audio/*,video/*" } },
       (res) => {
         const status = res.statusCode ?? 0;
-        if (status >= 300 && status < 400) {
-          res.resume();
-          return resolve({ status, location: res.headers.location ?? null, contentType: null, body: Buffer.alloc(0) });
-        }
+        res.once("end", () => clearTimeout(deadline));
+        res.once("close", () => clearTimeout(deadline));
+        // Keep a listener even before the consumer starts piping the response.
+        res.on("error", () => clearTimeout(deadline));
         const declared = Number(res.headers["content-length"] ?? 0);
         if (declared > options.maxBytes) {
           res.destroy();
-          return reject(new HttpError(413, "too_big", "Картинка по ссылке слишком большая"));
+          return fail(new HttpError(413, "too_big", "Файл по ссылке слишком большой"));
         }
-        const chunks: Buffer[] = [];
-        let total = 0;
-        res.on("data", (chunk: Buffer) => {
-          total += chunk.length;
-          if (total > options.maxBytes) {
-            res.destroy();
-            reject(new HttpError(413, "too_big", "Картинка по ссылке слишком большая"));
-          } else chunks.push(chunk);
-        });
-        res.on("end", () => resolve({ status, location: null, contentType: res.headers["content-type"] ?? null, body: Buffer.concat(chunks) }));
-        res.on("error", reject);
+        resolve({ status, location: res.headers.location ?? null, contentType: res.headers["content-type"] ?? null, body: res });
       },
     );
     req.on("timeout", () => req.destroy(new HttpError(422, "timeout", "Ссылка не ответила вовремя")));
-    req.on("error", (e) => reject(e instanceof HttpError ? e : new HttpError(422, "fetch_failed", `Не удалось скачать: ${e.message}`)));
+    req.on("error", (e) => fail(e instanceof HttpError ? e : new HttpError(422, "fetch_failed", `Не удалось скачать: ${e.message}`)));
   });
 }

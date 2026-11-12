@@ -16,6 +16,8 @@ interface Props {
   clockOffset: number;
   online: boolean;
   onAction?: (action: unknown) => void;
+  onControl?: (action: unknown) => void;
+  controlRole?: "host" | "presenter";
   /** Host only: start the next match from the result card. */
   onPlayAgain?: () => void;
   /** Leave the stage for the lobby page; offered once the match is over. */
@@ -92,7 +94,7 @@ function FullscreenIcon({ active }: { active: boolean }) {
  * The match stage: once a match is on, the lobby steps aside and the board takes
  * the whole window. A slim bar keeps the turn, the clock and the way back.
  */
-export function MatchStage({ lobby, match, config, client, mySeat, seatName, clockOffset, online, onAction, onPlayAgain, onLeave, busy, drawer }: Props) {
+export function MatchStage({ lobby, match, config, client, mySeat, seatName, clockOffset, online, onAction, onControl, controlRole, onPlayAgain, onLeave, busy, drawer }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(rootRef);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -184,7 +186,7 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
         )}
         <div className="stage-tools">
           {!online && <span className="stage-chip is-warn">нет связи…</span>}
-          {mySeat === null && <span className="stage-chip">зритель</span>}
+          {mySeat === null && <span className="stage-chip">{controlRole === "presenter" ? "ведущий" : "зритель"}</span>}
           {fullscreen.available && (
             <button type="button" className="stage-btn" onClick={fullscreen.toggle} title={fullscreen.active ? "Выйти из полного экрана (Esc)" : "Во весь экран"} aria-label={fullscreen.active ? "Выйти из полного экрана" : "Во весь экран"}>
               <FullscreenIcon active={fullscreen.active} />
@@ -196,7 +198,7 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
       <main className="stage-body">
         <ErrorBoundary resetKey={match}>
           <div className={`stage-board${mySeat === null ? " is-spectator" : ""}`}>
-            <client.Board match={match} config={config} seat={mySeat} assetUrl={assetUrl} onAction={onAction} playerNames={playerNames} clockOffset={clockOffset} stage fullscreen={fullscreen} onHold={onHold} />
+            <client.Board match={match} config={config} seat={mySeat} assetUrl={assetUrl} onAction={onAction} onControl={onControl} controlRole={controlRole} connected={online} playerNames={playerNames} clockOffset={clockOffset} stage fullscreen={fullscreen} onHold={onHold} />
           </div>
         </ErrorBoundary>
 

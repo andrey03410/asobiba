@@ -73,6 +73,12 @@ describe("validateConfig", () => {
 });
 
 describe("collectAssetRefs", () => {
+  it("includes question media and answer option assets in rules", () => {
+    expect(collectAssetRefs({ visual: {}, rules: { rounds: [{ questions: [{ blocks: [{ type: "audio", asset: "ast_audio12345" }], fields: [{ options: [{ asset: "ast_option1234" }] }] }] }] } })).toEqual([
+      { path: "rules.rounds[0].questions[0].blocks[0].asset", assetId: "ast_audio12345" },
+      { path: "rules.rounds[0].questions[0].fields[0].options[0].asset", assetId: "ast_option1234" },
+    ]);
+  });
   it("finds every asset reference with its path", () => {
     const res = validateConfig(catalog, {
       ...base,

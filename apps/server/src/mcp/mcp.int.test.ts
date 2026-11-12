@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestApp, resetDb, SIMPLE_SVG, signUp, type TestApp } from "../test/helpers";
 import { MCP_INSTRUCTIONS, TOOL_NAMES } from "./instructions";
+import { wavSeconds } from "../assets/media-fixtures";
 
 let t: TestApp;
 let base = "";
@@ -29,6 +30,31 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 }
 
 describe("MCP over Streamable HTTP", () => {
+  it("freezes a full uploaded WAV duration through the real agent recipe", async () => {
+    const owner = await signUp(t, "owner");
+    const { secret } = await t.services.auth.createToken(owner.user.id, "Media timing");
+    const client = await connect(secret);
+    try {
+      const ticket = await call(client, "asset_upload_begin", { name: "12.5 seconds" });
+      const response = await fetch(`${base}${new URL(ticket.json.uploadUrl).pathname}`, { method: "PUT", body: new Uint8Array(wavSeconds(12.5)) });
+      expect(response.status).toBe(201);
+      const { asset } = await response.json() as { asset: { id: string } };
+      const caps = await call(client, "game_capabilities", { gameId: "quizor" });
+      const config = caps.json.presetConfigs.find((p: { id: string }) => p.id === "classic").config;
+      config.rules.rounds[0].questions[0].blocks = [{ type: "audio", asset: asset.id }];
+      const valid = await call(client, "config_validate", { config });
+      expect(valid.json.ok).toBe(true);
+      expect(valid.json.config.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
+      const saved = await call(client, "config_save", { config });
+      expect(saved.isError).toBe(false);
+      expect(saved.json.config.document.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
+      const lobby = await call(client, "lobby_create", { name: "Timed audio", configId: saved.json.config.id });
+      expect(lobby.isError).toBe(false);
+      const frozen = await t.db.lobby.findUniqueOrThrow({ where: { id: lobby.json.lobby.id } });
+      expect((frozen.config as any).rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
+    } finally { await client.close(); }
+  });
+
   it("rejects requests without a valid token", async () => {
     const res = await fetch(`${base}/mcp`, {
       method: "POST",
@@ -103,6 +129,54 @@ describe("MCP over Streamable HTTP", () => {
       expect(preview.json).toMatchObject({ phase: "playing", partial: true });
       expect(preview.json.round).not.toBe("раунд не начат");
       expect(preview.content.some(c => c.type === "image")).toBe(true);
+    } finally { await client.close(); }
+  });
+
+  it("exposes authoring probes without allowing game moves", async () => {
+    const ann = await signUp(t, "ann");
+    const { secret } = await t.services.auth.createToken(ann.user.id, "Authoring");
+    const client = await connect(secret);
+    try {
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain("config_probe");
+      const response = await call(client, "config_probe", { config: { sdk: 1, game: "tic-tac-toe", gameVersion: 1 }, questionId: "q", answers: [{ answer: "A" }] });
+      expect(response.isError).toBe(true);
+      expect(response.json.error.code).toBe("unsupported_probe");
+      const tools = await client.listTools();
+      expect(tools.tools.some(tool => /action|control|move/.test(tool.name))).toBe(false);
+    } finally { await client.close(); }
+  });
+
+  it("grades Quizor examples and resolves inherited settings through real MCP", async () => {
+    const ann = await signUp(t, "ann");
+    const { secret } = await t.services.auth.createToken(ann.user.id, "Quizor author");
+    const client = await connect(secret);
+    const config = {
+      sdk: 1, game: "quizor", gameVersion: 1,
+      rules: {
+        defaults: { value: 80 },
+        rounds: [{ id: "r", settings: { value: 120 }, questions: [{
+          id: "q", prompt: "Столица?", settings: { value: 200 },
+          fields: [{ id: "a", type: "text", settings: { value: 300 }, answers: [{ text: "Москва" }] }],
+        }] }],
+      },
+    };
+    try {
+      const resolved = await call(client, "config_resolve", { config, questionId: "q" });
+      expect(resolved.isError, JSON.stringify(resolved.json)).toBe(false);
+      expect(resolved.json).toMatchObject({ settings: { value: 200 }, provenance: { value: "question:q" }, fields: [{ settings: { value: 300 }, provenance: { value: "field:a" } }] });
+      const grades = await call(client, "config_probe", { config, questionId: "q", answers: [{ a: "Москва" }, { a: "Париж" }] });
+      expect(grades.isError).toBe(false);
+      expect(grades.json.grades).toMatchObject([{ grade: "correct", points: 300, fields: [{ fieldId: "a", correct: true, explanation: expect.any(String) }] }, { grade: "miss", points: 0 }]);
+      const missing = await call(client, "config_resolve", { config, questionId: "missing" });
+      expect(missing.isError).toBe(true);
+      expect(missing.json.error.code).toBe("not_found");
+      const preview = await call(client, "config_preview", { config, target: { kind: "question", id: "q" } });
+      expect(preview.isError).toBe(false);
+      expect(preview.json).toMatchObject({ partial: false, target: { kind: "question", id: "q" }, width: 768 });
+      expect(preview.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
+      const badPreview = await call(client, "config_preview", { config, target: { kind: "question", id: "missing" } });
+      expect(badPreview.isError).toBe(true);
+      expect(badPreview.json.error.code).toBe("target_not_found");
     } finally { await client.close(); }
   });
 

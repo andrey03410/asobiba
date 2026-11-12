@@ -7,6 +7,8 @@ import type { MatchView } from "./match";
  * SDK has no UI dependency; game client packages type `Board` with React.
  */
 export interface BoardProps {
+  /** Transport state; boards may resynchronize local drafts after reconnect. */
+  connected?: boolean;
   match: MatchView;
   config: ConfigDocument;
   /** The viewer's seat, or null for spectators. */
@@ -14,6 +16,9 @@ export interface BoardProps {
   /** Resolves `ast_…` to a URL (a site path or a data: URI in previews). */
   assetUrl: (assetId: string) => string;
   onAction?: (action: unknown) => void;
+  /** Separate channel: the server authorizes the role for every call. */
+  onControl?: (action: unknown) => void;
+  controlRole?: "host" | "presenter";
   /** Server-side previews: no animations, no interaction. */
   staticRender?: boolean;
   /** Display names by seat for compact in-board HUDs. */
@@ -57,6 +62,11 @@ export interface SeatIconProps {
   size?: number;
 }
 
+export interface PreviewTarget {
+  kind: "question" | "round" | "intro";
+  id: string;
+}
+
 export interface GameClient<Component = unknown, Icon = unknown> {
   gameId: string;
   Board: Component;
@@ -65,4 +75,5 @@ export interface GameClient<Component = unknown, Icon = unknown> {
   css: string;
   /** Sample position for previews: `start` — empty board, `end` — a sampled random round, possibly intermediate when the game computation budget is reached. Check phase/lastRound before describing it as finished. */
   previewMatch(config: ConfigDocument, moment: "start" | "end", seed: number): MatchView;
+  previewTarget?(config: ConfigDocument, target: PreviewTarget, seed: number): MatchView;
 }

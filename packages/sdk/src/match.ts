@@ -1,5 +1,5 @@
 import type { ConfigDocument } from "./config";
-import { type AnyGame, type GameContext, isActionError, type RoundResult, type Seat } from "./game";
+import { type AnyGame, type ControlRole, type GameContext, isActionError, type RoundResult, type Seat } from "./game";
 import { createRng, type Rng } from "./rng";
 
 /** Pause between rounds so players can see how the round ended. */
@@ -10,6 +10,8 @@ export interface MatchLogEntry {
   at: number;
   seat: Seat;
   action: unknown;
+  /** A control uses seat -1 and is replayed through the trusted control channel. */
+  controlRole?: ControlRole;
 }
 
 /** Everything needed to rebuild a match: config + this record. */
@@ -112,7 +114,9 @@ export class Match {
     const { record } = options;
     const match = Match.start({ game: options.game, config: options.config, seats: record.seats, seed: record.seed, startedAt: record.startedAt });
     for (const entry of record.log) {
-      const res = match.dispatch(entry.seat, entry.action, entry.at);
+      const res = entry.controlRole
+        ? match.dispatchControl(entry.controlRole, entry.action, entry.at)
+        : match.dispatch(entry.seat, entry.action, entry.at);
       if (!res.ok) throw new Error(`Match.restore: log entry rejected at ${entry.at}: ${res.error.code}`);
     }
     match.advance(options.now);
@@ -156,6 +160,26 @@ export class Match {
     return { ok: true };
   }
 
+  /** Applies an independently authorized control; payload fields never grant a role. */
+  dispatchControl(role: ControlRole, rawAction: unknown, at: number): DispatchResult {
+    const time = Math.max(at, this.clock);
+    this.advance(time);
+    if (!["host", "presenter", "system"].includes(role)) return fail("bad_control_role", "Неизвестная роль управления");
+    if (!this.game.applyControl) return fail("no_controls", "Игра не поддерживает управление");
+    if (this.phase === "finished") return fail("finished", "Партия закончена");
+    if (this.phase === "intermission") return fail("intermission", "Пауза между раундами");
+    const rngState = this.rng.state();
+    const next = this.game.applyControl(this.state, rawAction, { ...this.ctx(time), role });
+    if (isActionError(next)) {
+      this.rng.restore(rngState);
+      return { ok: false, error: next.error };
+    }
+    this.state = next;
+    this.log.push({ at: time, seat: -1, action: structuredClone(rawAction), controlRole: role });
+    this.afterChange(time);
+    return { ok: true };
+  }
+
   /** Processes timers, pauses and realtime steps up to `now`. Returns true if anything happened. */
   advance(now: number): boolean {
     let changed = false;
@@ -174,7 +198,7 @@ export class Match {
     return this.nextEvent()?.at ?? null;
   }
 
-  view(seat: Seat | null): MatchView {
+  view(seat: Seat | null, role?: ControlRole): MatchView {
     return {
       phase: this.phase,
       round: this.round,
@@ -187,7 +211,7 @@ export class Match {
       lastRound: this.roundResults.at(-1) ?? null,
       roundResults: [...this.roundResults],
       result: this.result,
-      game: this.game.view(this.state, seat),
+      game: role === "presenter" && this.game.presenterView ? this.game.presenterView(this.state) : this.game.view(this.state, seat),
     };
   }
 
@@ -202,6 +226,14 @@ export class Match {
     }
     if (this.phase !== "playing") return null;
     const candidates: { at: number; run: () => void }[] = [];
+    const gameWake = this.game.nextWakeAt?.(this.state);
+    if (this.game.wake && typeof gameWake === "number" && Number.isFinite(gameWake)) {
+      const at = Math.max(this.clock, gameWake);
+      candidates.push({ at, run: () => {
+        this.state = this.game.wake!(this.state, this.ctx(at));
+        this.afterChange(at);
+      } });
+    }
     if (this.turnDeadline !== null) {
       const at = this.turnDeadline;
       candidates.push({ at, run: () => this.handleTimeout(at) });
@@ -350,7 +382,7 @@ export class Match {
    */
   private outcome(at: number): RoundResult | null {
     const rr = this.game.roundResult(this.state);
-    if (rr || this.game.kind !== "turn") return rr;
+    if (rr || this.game.kind !== "turn" || this.game.applyControl || this.game.nextWakeAt) return rr;
     const seats = this.game.currentSeats(this.state);
     const ctx = this.ctx(at);
     if (seats.some((s) => this.game.legalActions(this.state, s, ctx).length > 0)) return null;

@@ -6,6 +6,8 @@ import { z } from "zod";
 import type { Services } from "./app";
 import { FailureLimiter } from "./auth/rate-limit";
 import { SESSION_TTL_MS } from "./auth/service";
+import type { AssetBody } from "./assets/service";
+import { MAX_MEDIA_BYTES, parseFileRange } from "./assets/media";
 import { badRequest, forbidden, HttpError, notFound, unauthorized } from "./http-errors";
 import type { Subscriber } from "./lobbies/service";
 
@@ -193,36 +195,51 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
 
   // ---------- assets ----------
   app.get("/api/assets", async (req) => ({ assets: await s.assets.list(requireAccount(req).id) }));
-  app.post("/api/assets", async (req, reply) => {
-    const user = requireAccount(req);
-    const query = parse(z.object({ name: z.string().max(200).optional() }), req.query);
-    if (!Buffer.isBuffer(req.body)) throw badRequest("no_file", "Пришлите картинку телом запроса (Content-Type image/*)");
-    const asset = await s.assets.save(user.id, { name: query.name, body: req.body, source: "upload" });
-    reply.code(201);
-    return { asset };
+  // Only these two routes opt into raw streams. JSON elsewhere keeps its 2 MiB parser limit.
+  void app.register(async (uploads) => {
+    uploads.removeAllContentTypeParsers();
+    uploads.addContentTypeParser("*", (_req, payload, done) => done(null, payload));
+    const body = (req: FastifyRequest): AssetBody => {
+      const declared = Number(req.headers["content-length"] ?? 0);
+      if (declared > MAX_MEDIA_BYTES) throw new HttpError(413, "too_big", "Файл больше 1 ГиБ");
+      return (req.body ?? Buffer.alloc(0)) as AssetBody;
+    };
+    uploads.post("/api/assets", async (req, reply) => {
+      const user = requireAccount(req);
+      const query = parse(z.object({ name: z.string().max(200).optional() }), req.query);
+      const asset = await s.assets.save(user.id, { name: query.name, body: body(req), source: "upload" });
+      return reply.code(201).send({ asset });
+    });
+    uploads.put("/api/uploads/:ticket", async (req, reply) => {
+      const { ticket } = parse(z.object({ ticket: z.string().startsWith("upl_").max(80) }), req.params);
+      const asset = await s.assets.finishUpload(ticket, body(req));
+      return reply.code(201).send({ asset });
+    });
   });
   app.delete("/api/assets/:id", async (req, reply) => {
     await s.assets.remove(requireAccount(req).id, parse(idParam, req.params).id);
     reply.code(204);
   });
-  app.put("/api/uploads/:ticket", async (req, reply) => {
-    const { ticket } = parse(z.object({ ticket: z.string().startsWith("upl_").max(80) }), req.params);
-    if (!Buffer.isBuffer(req.body)) throw badRequest("no_file", "Пришлите файл телом PUT-запроса");
-    const asset = await s.assets.finishUpload(ticket, req.body);
-    reply.code(201);
-    return { asset };
-  });
-  app.get("/files/assets/:id", async (req, reply) => {
+  app.route({ method: ["GET", "HEAD"], url: "/files/assets/:id", handler: async (req, reply) => {
     const user = requireUser(req);
     const assetId = parse(idParam, req.params).id;
-    if (user.role === "guest" && !(await s.lobbies.guestCanReadAsset(user.id, assetId))) throw forbidden("Картинка недоступна в этом лобби");
-    const file = await s.assets.file(parse(idParam, req.params).id);
-    if (!file) throw notFound("Картинка не найдена");
+    const file = await s.assets.file(assetId);
+    if (!file) throw notFound("Файл не найден");
+    if (file.ownerId !== user.id && !(await s.lobbies.canReadAsset(user.id, assetId))) throw forbidden("Файл пока недоступен в этом лобби");
     reply.header("content-type", file.mime);
     reply.header("cache-control", "private, max-age=86400, immutable");
     reply.header("x-content-type-options", "nosniff");
-    return reply.send(createReadStream(file.path));
-  });
+    reply.header("accept-ranges", "bytes");
+    if (req.method === "GET" && req.headers.range) {
+      const range = parseFileRange(req.headers.range, file.bytes);
+      if (!range) return reply.code(416).header("content-range", `bytes */${file.bytes}`).send();
+      reply.code(206).header("content-range", `bytes ${range.start}-${range.end}/${file.bytes}`).header("content-length", range.end - range.start + 1);
+      return reply.send(createReadStream(file.path, range));
+    }
+    reply.header("content-length", file.bytes);
+    if (req.method === "HEAD") return reply.send();
+    return reply.send(createReadStream(file.path, { start: 0, end: file.bytes - 1 }));
+  } });
 
   // ---------- lobbies ----------
   app.get("/api/lobbies", async (req) => {
@@ -251,6 +268,11 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     await s.lobbies.visit(user, id);
     return { lobby: await s.lobbies.join(user, id, body.role) };
   }));
+  app.post("/api/lobbies/:id/presenter", async (req) => {
+    const user = requireAccount(req);
+    const body = parse(z.object({ userId: z.string().max(80).nullable() }), req.body);
+    return { lobby: await s.lobbies.setPresenter(user, parse(idParam, req.params).id, body.userId) };
+  });
   app.post("/api/lobbies/:id/leave", async (req) => withUser(req, async (user) => ({ lobby: await s.lobbies.leave(user, parse(idParam, req.params).id) })));
   app.post("/api/lobbies/:id/start", async (req) => ({ lobby: await s.lobbies.start(requireAccount(req), parse(idParam, req.params).id) }));
   app.post("/api/lobbies/:id/close", async (req) => ({ lobby: await s.lobbies.close(requireAccount(req), parse(idParam, req.params).id) }));
@@ -260,6 +282,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     z.object({ type: z.literal("subscribe"), lobbyId: z.string().max(80) }),
     z.object({ type: z.literal("unsubscribe"), lobbyId: z.string().max(80) }),
     z.object({ type: z.literal("action"), lobbyId: z.string().max(80), action: z.unknown() }),
+    z.object({ type: z.literal("control"), lobbyId: z.string().max(80), action: z.unknown() }),
     z.object({ type: z.literal("ping") }),
   ]);
 
@@ -296,8 +319,8 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
           await s.lobbies.visit(current, msg.lobbyId);
           await s.lobbies.subscribe(sub, msg.lobbyId);
         } else if (msg.type === "unsubscribe") s.lobbies.unsubscribe(sub, msg.lobbyId);
-        else if (msg.type === "action") {
-          const res = await s.lobbies.action(current, msg.lobbyId, msg.action);
+        else if (msg.type === "action" || msg.type === "control") {
+          const res = msg.type === "control" ? await s.lobbies.control(current, msg.lobbyId, msg.action) : await s.lobbies.action(current, msg.lobbyId, msg.action);
           if (!res.ok) send({ type: "error", code: res.error.code, message: res.error.message });
         }
       }).catch((e) => {
