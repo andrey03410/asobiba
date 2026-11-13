@@ -510,6 +510,7 @@ export function LobbyPage() {
           </div>
           <p className="muted">
             {lobby.gameTitle} · {lobby.config.title} · хозяин {lobby.host.login}
+            {(lobby.config.rules as { video?: unknown } | undefined)?.video ? <> · <span className="badge" title="Сцены роликов douga">видео</span></> : null}
           </p>
         </div>
         <CopyButton
