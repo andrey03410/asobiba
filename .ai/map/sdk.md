@@ -86,6 +86,16 @@ skippedRounds — не запущенные. Исчерпание бюджета
 и берёт его в момент вызова. Через 15 с удержание
 снимается само. Превью (`staticRender`) эти поля не получает.
 
+## Видео douga
+
+`GameDefinition.video?: GameVideoSupport` ([`video.ts`](../../packages/sdk/src/video.ts)) — игра
+играет сцены интерактивного снимка douga. Она объявляет `configSnapshots(config)` (какие
+снимки нужны конфигу), `directives(view)` (какие куски вид разрешает получить) и
+`checkVideo` (свои проверки по сводке снимка). `validateConfig(catalog, input, {videoSnapshots})`
+без сводки нужного снимка даёт `video_snapshot`. `describeGame` добавляет раздел `video`
+(контракт, гайд, рецепты douga). `BoardProps.lobbyId` нужен доске, чтобы просить куски у сервера.
+Подробности — [video.md](video.md).
+
 ## Грабли
 
 - `.default({})` у вложенного объекта в Zod 4 не прогоняет значение через схему: поля внутри останутся без умолчаний. Используй `.prefault({})`.
@@ -105,3 +115,4 @@ skippedRounds — не запущенные. Исчерпание бюджета
 - [задача 04](../features/04-russkoe-pole/README.md) — часы фазы и `presentRules`
 
 - [задача 06](../features/06-quizor/README.md) — control/wake, ведущий и восстановление журнала
+- [задача 07](../features/07-video-games/README.md) — контракт видео `GameVideoSupport`, `VideoDirective`, `videoKey`

@@ -15,6 +15,7 @@ Fastify-процесс `apps/server`: вход по приглашениям, с
 - [`preview/render.ts`](../../apps/server/src/preview/render.ts) — PNG-превью из компонента доски игры.
 - [`db.ts`](../../apps/server/src/db.ts) и [`sqlite.ts`](../../apps/server/src/sqlite.ts) — клиент Prisma 7 через адаптер `better-sqlite3`.
 - [`http-errors.ts`](../../apps/server/src/http-errors.ts) — `HttpError(status, code, message, issues?)`.
+- [`video/`](../../apps/server/src/video/) — снимки douga, компиляция сцен и доступ к кускам: [video.md](video.md).
 - [`test/helpers.ts`](../../apps/server/src/test/helpers.ts) — `createTestApp`, `resetDb`, `signUp`.
 
 ## Данные
@@ -22,7 +23,8 @@ Fastify-процесс `apps/server`: вход по приглашениям, с
 Модели в [schema](../../apps/server/prisma/schema.prisma):
 - `User` (аккаунт: логин в нижнем регистре, роль `admin`/`user`; гость: роль `guest`, `displayName`, внутренний login `@guest:…`, без пароля), `Session` (id = sha256 токена куки), `Invite` (хранится sha256 кода), `ApiToken` (sha256, `prefix` для показа, `revokedAt`);
 - `Asset`, `UploadTicket` — [assets.md](assets.md); `GameConfig` — документ конфига в `Json`;
-- `Lobby` (замороженная копия нормализованного конфига, `seats`, статус `waiting`/`playing`/`finished`/`closed`), `LobbyMember` (`player`/`spectator`/`presenter`, `guestNumber`), `LobbyVisit` (пользователь открыл ссылку, без занятия места), `Match` (`seed`, `startedAt`, `seatUsers`, `seatNames`, `log`, статус `playing`/`finished`/`aborted`, `result`).
+- `Lobby` (замороженная копия нормализованного конфига, `seats`, статус `waiting`/`playing`/`finished`/`closed`), `LobbyMember` (`player`/`spectator`/`presenter`, `guestNumber`), `LobbyVisit` (пользователь открыл ссылку, без занятия места), `Match` (`seed`, `startedAt`, `seatUsers`, `seatNames`, `log`, статус `playing`/`finished`/`aborted`, `result`);
+- `VideoSnapshot`, `VideoFile`, `VideoSnapshotFile` — снимки douga, [video.md](video.md).
 
 ## Как устроено
 
@@ -108,3 +110,4 @@ PNG-превью использует staticRender доски; SVG-номера 
 - [задача 05](../features/05-guest-join/README.md) — гости по ссылке, серверные права и отзыв живых сессий
 
 - [задача 06](../features/06-quizor/README.md) — ведущий, безопасные виды и восстановление завершённых партий
+- [задача 07](../features/07-video-games/README.md) — импорт снимков douga, куски видео по ключу и файлы `/files/video`

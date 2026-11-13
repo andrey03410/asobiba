@@ -30,6 +30,7 @@
 - `COOKIE_SECURE=1` — куки только по HTTPS (на сервере за Caddy).
 - `ASSET_URL_ALLOW_PRIVATE=1` — разрешить импорт картинок с приватных адресов. Только для тестов.
 - `ASOBIBA_MCP_TOKEN` — личный токен для [`.mcp.json`](../../.mcp.json).
+- `DOUGA_URL` — адрес douga для импорта снимков (`http://127.0.0.1:3000` локально, внутренний адрес на сервере). См. [video.md](video.md).
 
 ## Данные
 
@@ -61,6 +62,8 @@ Prisma 7 на macOS может возвращать пустую `Schema engine 
 - `Match.seed` — знаковый `INT` в SQLite: зерно партии берётся 31-битным (`randomSeed`). Беззнаковое 32-битное ломало старт партии примерно в половине случаев.
 - Версии Prisma закреплены точно (`7.10.1`): тег `latest` у пакета `prisma` указывает на кандидат Prisma 8 — другую ORM с другим API. Подсказка CLI «npm i prisma@latest» поставит именно её. Prisma 8 пока не подходит: SQLite там экспериментальный, а даты из нашей базы не читаются (задача 03).
 - `better-sqlite3` — нативный модуль: после смены версии Node нужен `npm rebuild`.
+- Пакеты `@douga/*` подключены через `file:../douga/packages/*`: соседняя папка `../douga` нужна уже для `npm install`. После обновления douga — снова `npm install`, версии Remotion должны совпасть.
+- В [`.claude/launch.json`](../../.claude/launch.json) есть `douga-dev` для живых проверок видео. Сборка douga (`npm run build`) ломает её работающий dev-сервер: перед сборкой его останавливают.
 - `npm run dev` пишет логи сервера в JSON (pino). Для чтения удобно `| grep -v '"incoming request"'`.
 
 ## Как проверить
@@ -73,3 +76,4 @@ Prisma 7 на macOS может возвращать пустую `Schema engine 
 
 - [задача 01](../features/01-rebuild/README.md) — пересборка на TypeScript, монорепо, SQLite и миграции
 - [задача 03](../features/03-prisma-7/README.md) — переход на Prisma 7.10.1, `prisma.config.ts`, клиент в `src/generated`
+- [задача 07](../features/07-video-games/README.md) — `DOUGA_URL` и пакеты douga из соседней папки

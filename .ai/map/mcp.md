@@ -49,6 +49,13 @@ id раунда. Адресное превью не считается partial-�
 игровые ходы и не управляют живой партией. Медиа загружается через существующий пул:
 картинки до 2 МиБ/2048 px, звук и видео до 1 ГиБ, поддержка кодеков зависит от браузера.
 
+## Видео douga
+
+`video_snapshot_import {token}` → `video_snapshot_list` → `video_snapshot_get {snapshotId, stills?}`
+(сегменты, сцены, моменты, карточки; со `stills: true` — до 6 кадров картинками) →
+`video_snapshot_delete`. Токен берётся из `video_interactive_publish` в MCP douga.
+Все инструменты проверяют, что снимок принадлежит владельцу токена. Подробности — [video.md](video.md).
+
 ## Грабли
 
 - Уже запущенная сессия Claude Code не подхватывает `.mcp.json`: для проверок используй `scripts/verify-mcp.mjs`.
@@ -66,3 +73,4 @@ id раунда. Адресное превью не считается partial-�
 - [задача 05](../features/05-guest-join/README.md) — гостям доступна игра по ссылке, создание через MCP остаётся за аккаунтами
 
 - [задача 06](../features/06-quizor/README.md) — Quizor probe/resolve и адресное PNG-превью
+- [задача 07](../features/07-video-games/README.md) — инструменты `video_snapshot_*`
