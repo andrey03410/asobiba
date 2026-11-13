@@ -295,7 +295,7 @@ export class VideoService {
     }
   }
 
-  /** Snapshots in a saved config or an open lobby cannot go. */
+  /** Snapshots in a saved config or a lobby that is not closed cannot go. */
   remove(ownerId: string, id: string): Promise<{ removed: true }> {
     return this.withFiles(() => this.removeNow(ownerId, id));
   }
@@ -305,11 +305,12 @@ export class VideoService {
     const needle = `"${id}"`;
     const configs = await this.db.gameConfig.findMany({ where: { ownerId }, select: { document: true } });
     const lobbies = await this.db.lobby.findMany({
-      where: { status: { in: ["waiting", "playing"] } },
+      // A finished lobby can be played again and shows its review: it still needs the scenes.
+      where: { status: { in: ["waiting", "playing", "finished"] } },
       select: { config: true },
     });
     if ([...configs.map((c) => c.document), ...lobbies.map((l) => l.config)].some((doc) => JSON.stringify(doc).includes(needle)))
-      throw conflict("video_in_use", "Ролик используется в конфиге или открытом лобби");
+      throw conflict("video_in_use", "Ролик используется в сохранённом конфиге или в лобби, которое не закрыто: удалите конфиг или закройте лобби");
     const hashes = (await this.db.videoSnapshotFile.findMany({ where: { snapshotId: id }, select: { hash: true } })).map(
       (f) => f.hash,
     );

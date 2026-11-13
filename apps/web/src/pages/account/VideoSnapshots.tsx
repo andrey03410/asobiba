@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../../api";
 import { CopyButton } from "../../components/CopyButton";
 import { useToast } from "../../toast";
-import { formatBytes } from "../../util";
+import { formatBytes, plural } from "../../util";
 
 /** «Ролики douga»: interactive snapshots imported by token (task 07). */
 export function VideoSnapshots() {
@@ -87,7 +87,7 @@ export function VideoSnapshots() {
               <span>
                 <b>{row.title}</b>{" "}
                 <span className="muted small">
-                  ревизия {row.revision} · {row.scenes} сцен · {formatBytes(row.bytes)}
+                  ревизия {row.revision} · {row.scenes} {plural(row.scenes, ["сцена", "сцены", "сцен"])} · {formatBytes(row.bytes)}
                 </span>
               </span>
               <span className="row" style={{ gap: 8 }}>

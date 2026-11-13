@@ -591,7 +591,9 @@ export function QuizorBoard(props: BoardProps) {
           <span className="qz-brand">QUIZOR</span>
           <h2>{view.title || config.title}</h2>
           <p>
-            {phaseLabel[view.phase]}
+            {view.phase === "reveal" && view.history.some((h) => h.questionId === view.questionId && h.poll)
+              ? "Итоги голосования"
+              : phaseLabel[view.phase]}
             {view.questionNumber > 0 &&
               ` · ${view.questionNumber}/${view.questionCount}`}
           </p>

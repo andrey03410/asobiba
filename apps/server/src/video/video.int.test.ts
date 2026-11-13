@@ -218,6 +218,18 @@ describe("Douga snapshots", () => {
     ).rejects.toMatchObject({ code: "video_moment" });
   });
 
+  it("keeps a snapshot while a lobby can still replay it, frees it once the lobby is closed", async () => {
+    const host = await signUp(t, "host");
+    const { snapshot: imported } = (await post(host, "/api/video/snapshots", { token: TOKEN })).body;
+    const lobby = await t.services.lobbies.create(host.user, { name: "Видео", config: quizConfig(imported.id) });
+    const remove = () => t.app.inject({ method: "DELETE", url: `/api/video/snapshots/${imported.id}`, headers: { cookie: host.cookie } });
+    // A finished lobby offers «Сыграть ещё» and its review: the scenes are still needed.
+    await t.db.lobby.update({ where: { id: lobby.id }, data: { status: "finished" } });
+    expect((await remove()).json().error.code).toBe("video_in_use");
+    await t.db.lobby.update({ where: { id: lobby.id }, data: { status: "closed" } });
+    expect((await remove()).statusCode).toBe(200);
+  });
+
   it("refuses a snapshot whose media sources are not its own files", async () => {
     const owner = await signUp(t, "owner");
     const content = await makeSnapshot();
