@@ -33,6 +33,7 @@ Prisma 7 + SQLite · Vite + React 19 · MCP (Streamable HTTP) · Vitest.
 | Игры и как добавить новую | [games](.ai/map/games.md) | `games/*/` |
 | Сервер: вход, лобби, комнаты, WebSocket | [server](.ai/map/server.md) | `apps/server/src/` |
 | Картинки пользователей | [assets](.ai/map/assets.md) | `apps/server/src/assets/` |
+| Видео douga: снимки, сцены, плеер | [video](.ai/map/video.md) | `apps/server/src/video/`, `packages/video/` |
 | MCP-сервер | [mcp](.ai/map/mcp.md) | `apps/server/src/mcp/` |
 | Сайт | [web](.ai/map/web.md) | `apps/web/src/` |
 

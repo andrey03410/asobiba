@@ -7,3 +7,4 @@ export * from "./rng";
 export * from "./schema";
 export * from "./simulate";
 export * from "./client";
+export * from "./video";

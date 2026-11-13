@@ -1,7 +1,10 @@
 import type { ConfigDto } from "@asobiba/api";
-import { collectAssetRefs, type ConfigDocument, type ConfigIssue, type GameCatalog, validateConfig } from "@asobiba/sdk";
+import { collectAssetRefs, type ConfigDocument, type ConfigIssue, type GameCatalog, validateConfig, type VideoPlay, type VideoSnapshotSummary } from "@asobiba/sdk";
 import type { GameConfig, Prisma } from "../generated/prisma/client";
 import type { AssetService } from "../assets/service";
+import { MAX_CONFIG_MEDIA_BYTES } from "../assets/media";
+import type { VideoService } from "../video/service";
+import { sceneTiming } from "../video/timing";
 import type { Db } from "../db";
 import { conflict, invalidConfig, notFound } from "../http-errors";
 import { newId } from "../ids";
@@ -40,14 +43,30 @@ export class ConfigService {
     private readonly db: Db,
     private readonly catalog: GameCatalog,
     private readonly assets: AssetService,
+    private readonly video?: VideoService,
   ) {}
 
   /** Bound complete JSON, then check schemas, asset ownership/quotas and Quizor slot MIME. */
   async validate(userId: string, input: unknown): Promise<UserValidation> {
     const size = documentSizeIssues(input);
     if (size.length > 0) return { ok: false, config: null, issues: size };
-    const res = validateConfig(this.catalog, input);
+    let res = validateConfig(this.catalog, input);
     if (!res.ok) return { ok: false, config: null, issues: res.issues };
+    const game = this.catalog.get(res.config.game);
+    const snapshotIds = game?.video?.configSnapshots(res.config) ?? [];
+    let videoSnapshots: Record<string, VideoSnapshotSummary> = {};
+    if (snapshotIds.length) {
+      if (!this.video) return { ok: false, config: null, issues: [{ path: "rules.video", code: "video_unavailable", message: "Видео недоступно на этом сервере", severity: "error" }] };
+      videoSnapshots = await this.video.summaries(userId, snapshotIds);
+      res = validateConfig(this.catalog, input, { videoSnapshots });
+      if (!res.ok) return { ok: false, config: null, issues: res.issues };
+      const timing = this.normalizeSceneTimings(res.config.rules, videoSnapshots, snapshotIds[0]);
+      const quota: ConfigIssue[] = [];
+      for (const id of snapshotIds)
+        if ((await this.video.snapshotBytes(id)) > MAX_CONFIG_MEDIA_BYTES)
+          quota.push({ path: "rules.video.snapshot", code: "media_quota", message: "Ролик douga занимает больше 1 ГиБ", hint: "Уменьшите медиа проекта в douga", severity: "error" });
+      if (timing.length || quota.length) return { ok: false, config: null, issues: [...res.issues, ...timing, ...quota] };
+    }
     const normalizedSize = documentSizeIssues(res.config);
     if (normalizedSize.length > 0) return { ok: false, config: null, issues: normalizedSize };
     const refs = collectAssetRefs(res.config);
@@ -62,6 +81,29 @@ export class ConfigService {
       if (enrichedSize.length > 0) return { ok: false, config: null, issues: enrichedSize };
     }
     return { ok: true, config: res.config, issues: res.issues };
+  }
+
+  /** `scene` blocks get their start and length from the snapshot frames. */
+  private normalizeSceneTimings(rules: unknown, snapshots: Record<string, VideoSnapshotSummary>, snapshotId: string): ConfigIssue[] {
+    const summary = snapshots[snapshotId];
+    const issues: ConfigIssue[] = [];
+    if (!summary) return issues;
+    const walk = (value: unknown, path: string): void => {
+      if (Array.isArray(value)) { value.forEach((item, index) => walk(item, `${path}[${index}]`)); return; }
+      if (!value || typeof value !== "object") return;
+      const node = value as Record<string, unknown>;
+      if (node.type === "scene" && node.play && typeof node.play === "object") {
+        const timing = sceneTiming(summary, { play: node.play as VideoPlay, start: node.start as string | undefined, hold: node.hold as string | undefined }, path);
+        if ("code" in timing) issues.push(timing);
+        else {
+          node.startSeconds = timing.startSeconds;
+          node.durationSeconds = timing.durationSeconds;
+        }
+      }
+      for (const [key, child] of Object.entries(node)) walk(child, `${path}.${key}`);
+    };
+    walk(rules, "rules");
+    return issues;
   }
 
   private async normalizeMediaDurations(userId: string, rules: unknown): Promise<ConfigIssue[]> {

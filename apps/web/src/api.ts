@@ -26,6 +26,7 @@ import type {
   TokensResponse,
   UserDto,
   ValidateResponse,
+  VideoSnapshotDto,
 } from "@asobiba/api";
 import type { ConfigIssue } from "@asobiba/sdk";
 import { forgetGuestAttempt, guestAttempt, withIdentityLock } from "./guestIdentity";
@@ -176,6 +177,11 @@ export const api = {
   assets: () => request<AssetsResponse>("GET", "/api/assets"),
   uploadAsset: (file: File) => request<AssetResponse>("POST", `/api/assets?name=${enc(file.name)}`, { raw: file, contentType: file.type }),
   deleteAsset: (id: string) => request<void>("DELETE", `/api/assets/${enc(id)}`),
+
+  // douga snapshots (task 07)
+  videoSnapshots: () => request<{ snapshots: VideoSnapshotDto[] }>("GET", "/api/video/snapshots"),
+  importVideoSnapshot: (token: string) => request<{ snapshot: VideoSnapshotDto; reused: boolean }>("POST", "/api/video/snapshots", { body: { token } }),
+  deleteVideoSnapshot: (id: string) => request<{ removed: true }>("DELETE", `/api/video/snapshots/${enc(id)}`),
 
   // lobbies
   lobbies: () => request<LobbiesResponse>("GET", "/api/lobbies"),

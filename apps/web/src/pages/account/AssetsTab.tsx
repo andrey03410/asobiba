@@ -4,6 +4,7 @@ import { api, errorMessage } from "../../api";
 import { CopyButton } from "../../components/CopyButton";
 import { useToast } from "../../toast";
 import { formatBytes } from "../../util";
+import { VideoSnapshots } from "./VideoSnapshots";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif,audio/wav,audio/x-wav,audio/mpeg,audio/ogg,audio/mp4,audio/webm,video/mp4,video/webm,.wav,.mp3,.ogg,.m4a,.mp4,.webm";
 
@@ -151,6 +152,7 @@ export function AssetsTab() {
           </ul>
         )}
       </section>
+      <VideoSnapshots />
     </div>
   );
 }

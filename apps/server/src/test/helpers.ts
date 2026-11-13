@@ -22,6 +22,8 @@ export async function resetDb(db: Db): Promise<void> {
   await db.uploadTicket.deleteMany();
   await db.asset.deleteMany();
   await db.apiToken.deleteMany();
+  await db.videoSnapshot.deleteMany();
+  await db.videoFile.deleteMany();
   await db.session.deleteMany();
   await db.invite.deleteMany();
   await db.user.deleteMany();
@@ -37,12 +39,12 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
-export async function createTestApp(options: { now?: () => number } = {}): Promise<TestApp> {
+export async function createTestApp(options: { now?: () => number; fetch?: typeof fetch; dougaUrl?: string } = {}): Promise<TestApp> {
   const db = testDb();
   const storageDir = resolve(process.env.ASOBIBA_STORAGE_DIR as string, randomString(8));
   mkdirSync(storageDir, { recursive: true });
-  const env = { ...loadEnv(), storageDir, publicUrl: "http://asobiba.test", production: false };
-  const { app, services } = await buildApp({ env, db, now: options.now, logger: false });
+  const env = { ...loadEnv(), storageDir, publicUrl: "http://asobiba.test", production: false, dougaUrl: options.dougaUrl ?? null };
+  const { app, services } = await buildApp({ env, db, now: options.now, logger: false, fetch: options.fetch });
   const t: TestApp = {
     app,
     services,

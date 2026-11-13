@@ -13,7 +13,7 @@ export function randomString(length: number): string {
   return out;
 }
 
-export type IdPrefix = "usr" | "ses" | "inv" | "tok" | "ast" | "cfg" | "lob" | "mat";
+export type IdPrefix = "usr" | "ses" | "inv" | "tok" | "ast" | "cfg" | "lob" | "mat" | "vsn";
 
 export function newId(prefix: IdPrefix, length = 12): string {
   return `${prefix}_${randomString(length)}`;

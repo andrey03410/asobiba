@@ -43,6 +43,21 @@ PUBLIC_URL=https://games.example.com COOKIE_SECURE=1 HOST=127.0.0.1 npm start
 Один процесс на `:8787` отдаёт сайт, API, WebSocket и MCP. Перед ним — Caddy или nginx
 с HTTPS и проксированием WebSocket. `npm start` сам применяет миграции.
 
+### Видео-игры и douga
+
+Видео-квизы играют сцены роликов [douga](../douga): пакеты `@douga/*` подключаются из соседней
+папки `../douga/packages`, поэтому douga кладётся рядом и ставится первой (`npm install` в ней).
+Ролик импортируется по токену из douga (`DOUGA_URL`) и дальше живёт в пуле asobiba: партии идут,
+даже когда douga выключена. На одном сервере — две папки рядом, два имени за одним прокси:
+
+```caddy
+games.example.com { reverse_proxy 127.0.0.1:8787 }
+douga.example.com { reverse_proxy 127.0.0.1:3000 }
+```
+
+`DOUGA_URL=http://127.0.0.1:3000` — внутренний адрес douga. Пример выкладки обоих —
+[`scripts/deploy.sh`](scripts/deploy.sh).
+
 ## Устройство
 
 | Папка | Что там |

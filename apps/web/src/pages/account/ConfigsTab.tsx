@@ -82,6 +82,7 @@ export function ConfigsTab() {
                 <span className="row-title">
                   <SeatIcons config={c} />
                   <b>{c.title}</b>
+                  {usesVideo(c.document) && <span className="badge" title="Сцены роликов douga">видео</span>}
                 </span>
                 <span className="muted small">
                   {games[c.gameId] ?? c.gameId} · изменён {formatDate(c.updatedAt)} · <code>{c.id}</code>
@@ -101,4 +102,10 @@ export function ConfigsTab() {
       )}
     </section>
   );
+}
+
+/** Configs that play Douga scenes (task 07). */
+function usesVideo(document: unknown): boolean {
+  const rules = (document as { rules?: { video?: unknown } } | null)?.rules;
+  return Boolean(rules && typeof rules === "object" && rules.video);
 }

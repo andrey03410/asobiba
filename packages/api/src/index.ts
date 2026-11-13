@@ -132,6 +132,23 @@ export interface ConfigsResponse {
 }
 
 // ---------- assets ----------
+/** Imported Douga snapshot (task 07). */
+export interface VideoSnapshotDto {
+  id: string;
+  title: string;
+  projectId: string;
+  revision: number;
+  bytes: number;
+  scenes: number;
+  createdAt: string;
+}
+/**
+ * POST /api/video/snapshots {token} → 201 { snapshot, reused }
+ * GET /api/video/snapshots → { snapshots }
+ * DELETE /api/video/snapshots/:id → { removed } | 409 video_in_use
+ * GET /api/lobbies/:id/video/:key → compiled plan slice of a directive the viewer sees
+ * GET|HEAD /files/video/<hash><ext> → a file of a slice the viewer was given
+ */
 export interface AssetDto {
   id: string;
   name: string;

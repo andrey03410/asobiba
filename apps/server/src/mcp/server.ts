@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { answersSchema, probeQuestion, resolveQuestion, type QuizorRules } from "@asobiba/game-quizor";
 import type { UserDto } from "@asobiba/api";
 import { describeGame, listGames, simulate } from "@asobiba/sdk";
@@ -219,6 +220,58 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
         const res = await s.assets.beginUpload(user.id, name);
         return json({ ...res, method: "PUT", example: `curl --upload-file ./media.mp4 '${res.uploadUrl}'` });
       }),
+  );
+
+  server.registerTool(
+    "video_snapshot_import",
+    {
+      title: "Импортировать ролик douga",
+      description:
+        "Забирает интерактивный снимок douga по токену из video_interactive_publish: документ, медиа, шрифты и кадры сцен. Снимок неизменен и живёт в пуле (квота 10 ГиБ); повторный импорт того же снимка вернёт его. Ошибки: snapshot_not_ready (douga ещё готовит кадры — повторите), douga_version, douga_unavailable.",
+      inputSchema: { token: z.string().min(1).max(200) },
+    },
+    ({ token }) => run(async () => json(await s.video.importSnapshot(user.id, token))),
+  );
+
+  server.registerTool(
+    "video_snapshot_list",
+    { title: "Мои ролики douga", description: "Импортированные снимки: id (vsn_…), название, размер, число сцен.", inputSchema: {}, annotations: { readOnlyHint: true } },
+    () => run(async () => json({ snapshots: await s.video.list(user.id) })),
+  );
+
+  server.registerTool(
+    "video_snapshot_get",
+    {
+      title: "Устройство ролика",
+      description:
+        "Сегменты, сцены, моменты (holds — где видео ждёт игру), нажимаемые карточки (choices), данные сцен (uses) и пример данных (sample). stills:true добавляет до 6 кадров сцен картинками.",
+      inputSchema: { snapshotId: z.string(), stills: z.boolean().optional() },
+      annotations: { readOnlyHint: true },
+    },
+    ({ snapshotId, stills }) =>
+      run(async () => {
+        const result = json({ snapshot: await s.video.get(user.id, snapshotId) });
+        if (!stills) return result;
+        const manifest = await s.video.manifest(snapshotId);
+        for (const scene of manifest.scenes.filter((x) => x.still).slice(0, 6)) {
+          const path = s.video.filePath(`${scene.still}.png`);
+          if (!path) continue;
+          const data = await readFile(path).catch(() => null);
+          if (data) result.content.push({ type: "text", text: `Кадр сцены ${scene.id}` }, { type: "image", data: data.toString("base64"), mimeType: "image/png" });
+        }
+        return result;
+      }),
+  );
+
+  server.registerTool(
+    "video_snapshot_delete",
+    {
+      title: "Удалить ролик",
+      description: "Удаляет снимок и его файлы, которыми не пользуются другие снимки. Нельзя, пока ролик есть в конфиге или открытом лобби (video_in_use).",
+      inputSchema: { snapshotId: z.string() },
+      annotations: { destructiveHint: true },
+    },
+    ({ snapshotId }) => run(async () => json(await s.video.remove(user.id, snapshotId))),
   );
 
   server.registerTool(

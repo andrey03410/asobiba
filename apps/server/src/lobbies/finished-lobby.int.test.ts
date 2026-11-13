@@ -54,7 +54,11 @@ describe("finished match recovery", () => {
         }] }],
       },
     } });
-    for (const person of [departed, player]) await t.services.lobbies.join(person.user, lobby.id, "player");
+    // Seats follow joinedAt (millisecond default): keep the joins in distinct milliseconds.
+    for (const person of [departed, player]) {
+      await t.services.lobbies.join(person.user, lobby.id, "player");
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
     for (const person of [lead, viewer]) await t.services.lobbies.join(person.user, lobby.id, "spectator");
     await t.services.lobbies.setPresenter(host.user, lobby.id, lead.user.id);
     const before: ServerMessage[] = [];

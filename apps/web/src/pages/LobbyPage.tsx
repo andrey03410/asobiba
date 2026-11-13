@@ -510,6 +510,7 @@ export function LobbyPage() {
           </div>
           <p className="muted">
             {lobby.gameTitle} · {lobby.config.title} · хозяин {lobby.host.login}
+            {(lobby.config.rules as { video?: unknown } | undefined)?.video ? <> · <span className="badge" title="Сцены роликов douga">видео</span></> : null}
           </p>
         </div>
         <CopyButton
@@ -543,6 +544,7 @@ export function LobbyPage() {
                   className={`board-frame${lobby.gameId === "jinchi" ? " board-frame-jinchi" : ""}${mySeat === null ? " is-spectator" : ""}`}
                 >
                   <client.Board
+                    lobbyId={lobby.id}
                     match={match}
                     config={lobby.config}
                     seat={mySeat}

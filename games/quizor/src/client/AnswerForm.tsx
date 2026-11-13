@@ -30,6 +30,8 @@ export interface AnswerField {
   maxSelected?: number;
   multiline?: boolean;
   maxLength?: number;
+  /** Choice with a scene: frame-only fields have no option buttons. */
+  pick?: "both" | "frame" | "form";
 }
 export type FormAnswers = Record<string, unknown>;
 
@@ -209,6 +211,15 @@ export function AnswerForm({
             case "boolean":
             case "choice":
             case "multi": {
+              if (f.type === "choice" && f.pick === "frame") {
+                const picked = f.options?.find((o) => o.id === value[f.id]);
+                control = (
+                  <p className="qz-frame-pick" aria-live="polite">
+                    {picked ? `Выбрано: ${picked.text || picked.id}` : "Нажмите карточку в кадре"}
+                  </p>
+                );
+                break;
+              }
               const options =
                 f.options ??
                 (f.type === "boolean"

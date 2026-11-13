@@ -102,6 +102,22 @@
 - `node scripts/verify-quizor.mjs` — настоящий MCP, SVG/WAV/импорт MP4, три PNG,
   две WS-сессии через особые вопросы/табло/финал, пауза, апелляция и файловый ACL.
 
+### Quizor: видео douga
+
+- `rules.video.snapshot` — снимок `vsn_…`. Блок `scene {play, start?, hold?, data: none|poll|scores}`
+  лежит в intro раунда, blocks и reveal вопроса. Сервер записывает в него `startSeconds` и
+  `durationSeconds` по кадрам снимка. Последний блок вопроса со `hold` держит кадр, пока открыт приём.
+- Варианты `choice` и элементы `order` получают `card`. Поле `choice` имеет `input: both|frame|form`,
+  в публичном виде — `pick`. Клик по карточке в кадре выбирает вариант (`Board.tsx`, `pickRef`).
+- Судья `poll`: мнения без правильного ответа, `poll.scoring` none | majority | consensus
+  (consensus для `order` — близость к общему топу по сумме мест). Итоги — в `history[].poll`,
+  чужие выборы скрыты без `showAnswers`.
+- Вид отдаёт `video` (директива текущего блока) и `videoPreload`; на паузе `video` снимается.
+- Проверки: `video_snapshot`, `video_scene`, `video_moment`, `video_card`, `video_data`, `video_group`,
+  `video_pacing` (свой темп со сценами несовместим), `poll_mode`, `poll_field`.
+- Код: [`video.ts`](../../games/quizor/src/video.ts), тесты [`video.test.ts`](../../games/quizor/src/video.test.ts).
+  Общее устройство — [video.md](video.md).
+
 ## Как добавить игру
 
 1. Пакет `games/<id>/` по образцу крестиков-ноликов: `defineGame` с `rulesSchema`, `visualSchema`, `actionSchema`, функциями правил, `guide`, `presets`, `slots`, `themes`, `visualCatalog`.
@@ -130,3 +146,4 @@
 - [задача 04](../features/04-russkoe-pole/README.md) — Русское поле
 
 - [задача 06](../features/06-quizor/README.md) — Quizor, правила и судейство квизов
+- [задача 07](../features/07-video-games/README.md) — сцены douga, выбор по карточке и судья `poll` в Quizor

@@ -12,6 +12,8 @@ export const MCP_INSTRUCTIONS = `Asobiba — сайт мини-игр. Ты со
 8. config_save (необязательно, чтобы переиспользовать) → lobby_create(name, configId или config).
 9. Отдай человеку url лобби и коротко перечисли, что получилось: правила, режим, визуал.
 
+Видео douga (Quizor): токен из video_interactive_publish douga → video_snapshot_import → video_snapshot_get (сцены, моменты, карточки) → rules.video и блоки scene по разделу video в game_capabilities.
+
 Размытая просьба («придумай свой режим») — комбинируй детали правил сам и объясни выбор.
 Все ресурсы принадлежат владельцу токена: чужие конфиги и картинки недоступны.`;
 
@@ -30,6 +32,10 @@ export const TOOL_NAMES = [
   "asset_create_svg",
   "asset_import_url",
   "asset_upload_begin",
+  "video_snapshot_import",
+  "video_snapshot_list",
+  "video_snapshot_get",
+  "video_snapshot_delete",
   "lobby_create",
   "lobby_list",
   "lobby_get",

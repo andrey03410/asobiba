@@ -383,6 +383,38 @@ export function judgeField(
       distance,
     };
   }
+  if (settings.judge === "poll" && (field.type === "choice" || field.type === "order")) {
+    const result = pollResult(field, peers);
+    const voted = (grade: FieldGrade): FieldGrade => ({ ...grade, label: "Голос учтён" });
+    if (field.type === "choice") {
+      if (!field.options.some((o) => o.id === answer)) return make("miss", "Некорректный вариант");
+      if (settings.poll.scoring === "none") return voted(make("miss", "Мнение без очков", false, 0));
+      const top = Math.max(...Object.values(result.votes));
+      return result.votes[answer as string] === top
+        ? make("correct", "Выбор большинства")
+        : make("miss", "Большинство выбрало другое");
+    }
+    if (
+      !Array.isArray(answer) ||
+      answer.length !== field.items.length ||
+      new Set(answer).size !== answer.length ||
+      answer.some((a) => !field.items.some((i) => i.id === a))
+    )
+      return make("miss", "Некорректный порядок");
+    if (settings.poll.scoring === "none") return voted(make("miss", "Мнение без очков", false, 0));
+    if (settings.poll.scoring === "majority")
+      return answer[0] === result.ranking[0]
+        ? make("correct", "Первое место совпало с общим")
+        : make("miss", "Общий топ начинается с другого");
+    const good = answer.filter((a, i) => a === result.ranking[i]).length;
+    const exact = good === answer.length;
+    return make(
+      exact ? "correct" : good > 0 ? "partial" : "miss",
+      "Совпадение с общим топом по местам",
+      false,
+      good / answer.length,
+    );
+  }
   if (field.type === "choice")
     return make(
       field.options.find((o) => o.id === answer)?.grade ?? "miss",
@@ -509,6 +541,37 @@ export function judgeField(
   }
   return make("miss", "Ответ оценивает человек");
 }
+export interface PollResult {
+  /** Choice: players per option. Order: Borda points (place i of N gives N − i). */
+  votes: Record<string, number>;
+  /** Options from the most to the least popular; ties by first places, then by authored order. */
+  ranking: string[];
+  /** Choice: seats per option are added by the game, which knows the seats. */
+}
+
+/** The shared opinion of all answers to a poll field. */
+export function pollResult(
+  field: Extract<Field, { type: "choice" | "order" }>,
+  answers: (AnswerValue | undefined)[],
+): PollResult {
+  const ids = field.type === "choice" ? field.options.map((o) => o.id) : field.items.map((i) => i.id);
+  const votes: Record<string, number> = Object.fromEntries(ids.map((id) => [id, 0]));
+  const firsts: Record<string, number> = Object.fromEntries(ids.map((id) => [id, 0]));
+  for (const answer of answers) {
+    if (field.type === "choice") {
+      if (typeof answer === "string" && answer in votes) {
+        votes[answer]++;
+        firsts[answer]++;
+      }
+    } else if (Array.isArray(answer) && answer.length === ids.length && new Set(answer).size === ids.length && answer.every((a) => typeof a === "string" && a in votes)) {
+      (answer as string[]).forEach((id, place) => (votes[id] += ids.length - place));
+      firsts[answer[0] as string]++;
+    }
+  }
+  const ranking = [...ids].sort((a, b) => votes[b] - votes[a] || firsts[b] - firsts[a] || ids.indexOf(a) - ids.indexOf(b));
+  return { votes, ranking };
+}
+
 export function judgeQuestion(
   question: ResolvedQuestion,
   answers: Answers,
@@ -548,9 +611,11 @@ export function judgeQuestion(
           : fields.every((f) => f.grade === "silence")
             ? "silence"
             : "miss");
+  // Poll without scoring: an opinion is neither right nor wrong.
+  const opinion = fields.length > 0 && fields.every((f) => f.label === "Голос учтён");
   return {
     grade: gradePoints(question.settings, grade).grade,
-    label: combined?.label ?? gradePoints(question.settings, grade).label,
+    label: opinion ? "Голос учтён" : (combined?.label ?? gradePoints(question.settings, grade).label),
     points,
     correct: combined?.correct ?? correct,
     doubtful: fields.some((f) => f.doubtful),

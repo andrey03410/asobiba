@@ -13,6 +13,8 @@ export interface Env {
   allowPrivateUrls: boolean;
   production: boolean;
   webDist: string;
+  /** Base URL of the Douga site for snapshot imports (task 07); null when not configured. */
+  dougaUrl: string | null;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -27,5 +29,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     allowPrivateUrls: source.ASSET_URL_ALLOW_PRIVATE === "1",
     production: source.NODE_ENV === "production",
     webDist: resolve(REPO_ROOT, "apps/web/dist"),
+    dougaUrl: source.DOUGA_URL ? source.DOUGA_URL.replace(/\/+$/, "") : null,
   };
 }
