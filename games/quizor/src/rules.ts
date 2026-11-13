@@ -59,7 +59,10 @@ const settingsShape = {
     "best",
     "self",
     "ai",
+    "poll",
   ]),
+  /** Judge `poll`: answers are opinions; how they score (task 07). */
+  poll: z.strictObject({ scoring: z.enum(["none", "majority", "consensus"]) }),
   strictness: z.enum(["literal", "exact", "strict", "normal", "soft"]),
   text: z.strictObject({ wordOrder: z.boolean(), numbers: z.boolean() }),
   value: z.number().min(0).max(1e9),
@@ -98,6 +101,7 @@ export const settingsOverrideSchema = z
     text: settingsShape.text.partial().optional(),
     timers: settingsShape.timers.partial().optional(),
     bonuses: settingsShape.bonuses.partial().optional(),
+    poll: settingsShape.poll.partial().optional(),
   })
   .partial();
 export type Settings = z.output<typeof settingsSchema>;
@@ -106,6 +110,7 @@ export const DEFAULT_SETTINGS: Settings = settingsSchema.parse({
   mode: "secret",
   recipient: "all",
   judge: "algorithm",
+  poll: { scoring: "none" },
   strictness: "normal",
   text: { wordOrder: true, numbers: false },
   value: 100,
@@ -155,8 +160,19 @@ export const DEFAULT_SETTINGS: Settings = settingsSchema.parse({
   shuffleThemes: false,
 });
 
+/** Where a `scene` block plays in a Douga snapshot (task 07). */
+export type ScenePlay = { segmentId: string } | { sceneIds: string[] };
 export interface Block {
-  type: "text" | "image" | "audio" | "video" | "pause" | "group";
+  type: "text" | "image" | "audio" | "video" | "pause" | "group" | "scene";
+  play?: ScenePlay;
+  /** Moment of the slice the block starts from (continues a held scene). */
+  start?: string;
+  /** Moment the video holds on while answers are open. */
+  hold?: string;
+  /** Match data the scene shows. */
+  data?: "none" | "poll" | "scores";
+  /** Written by the server from the snapshot: seconds from slice start to `start`. */
+  startSeconds?: number;
   text?: string;
   asset?: string;
   caption?: string;
@@ -234,6 +250,18 @@ export const blockSchema: z.ZodType<Block> = z.lazy(() =>
       text: text.optional(),
     }),
     z.strictObject({
+      type: z.literal("scene"),
+      ...blockBase,
+      play: z.union([
+        z.strictObject({ segmentId: id }),
+        z.strictObject({ sceneIds: z.array(z.string().min(1).max(400)).min(1).max(50) }),
+      ]),
+      start: id.optional(),
+      hold: id.optional(),
+      data: z.enum(["none", "poll", "scores"]).default("none"),
+      startSeconds: seconds.optional(),
+    }),
+    z.strictObject({
       type: z.literal("group"),
       ...blockBase,
       layout: z.enum(["row", "grid", "stack"]).default("grid"),
@@ -289,6 +317,8 @@ const itemSchema = z.strictObject({
   text: text.default(""),
   asset: assetRef().optional(),
   media: z.enum(["image", "audio"]).optional(),
+  /** Card of the question scene (card id or participant id of the snapshot). */
+  card: z.string().min(1).max(400).optional(),
 });
 const fieldBase = {
   id,
@@ -331,6 +361,8 @@ export const fieldSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...fieldBase,
     type: z.literal("choice"),
+    /** Where a player answers when the question has a scene: frame, form or both. */
+    input: z.enum(["both", "frame", "form"]).optional(),
     options: z
       .array(itemSchema.extend({ grade: id.default("miss") }))
       .min(2)
@@ -351,7 +383,8 @@ export const fieldSchema = z.discriminatedUnion("type", [
     ...fieldBase,
     type: z.literal("order"),
     items: z.array(itemSchema).min(2).max(100),
-    correct: z.array(id).min(2).max(100),
+    /** Not needed with judge `poll`: the top is built from the players' answers. */
+    correct: z.array(id).max(100).default([]),
     scoring: z.enum(["all", "position", "pairs"]).default("all"),
   }),
   z.strictObject({
@@ -504,6 +537,8 @@ export const finalSchema = z.strictObject({
   settings: settingsOverrideSchema.optional(),
 });
 export const rulesSchema = z.strictObject({
+  /** Douga snapshot whose scenes `scene` blocks play (task 07). */
+  video: z.strictObject({ snapshot: z.string().regex(/^vsn_[A-Za-z0-9]{12}$/) }).optional(),
   players: z
     .strictObject({
       min: z.int().min(1).max(16).default(1),
@@ -636,6 +671,7 @@ export function blockDuration(block: Block): number {
     return Math.max(0, ...(block.blocks ?? []).map(blockDuration));
   if (block.type === "text")
     return Math.max(2000, (block.text?.length ?? 0) * 50);
+  if (block.type === "scene") return 5000;
   if (block.type === "audio" || block.type === "video")
     return Math.max(
       1000,
@@ -713,6 +749,14 @@ export function checkRules(rules: QuizorRules): ConfigIssue[] {
       return;
     }
     for (const block of blocks) {
+      if (block.type === "scene" && !rules.video)
+        issue(
+          path,
+          "video_snapshot",
+          "Блок scene играет ролик douga: задайте rules.video.snapshot",
+        );
+      if (block.type === "scene" && depth > 0)
+        issue(path, "video_group", "Сцену нельзя класть в группу блоков");
       if (
         (block.type === "audio" || block.type === "video") &&
         block.to !== undefined &&
@@ -748,6 +792,15 @@ export function checkRules(rules: QuizorRules): ConfigIssue[] {
     )
       issue(p, "self_pacing", "Свой темп доступен только для тайных ответов");
     if (
+      resolved.settings.pacing === "self" &&
+      [...question.blocks, ...question.reveal].some((b) => b.type === "scene")
+    )
+      issue(
+        p,
+        "video_pacing",
+        "Сцена идёт у всех одновременно: свой темп с блоком scene несовместим",
+      );
+    if (
       resolved.settings.mode === "buzz" &&
       resolved.settings.timers.buzzSeconds === 0
     )
@@ -774,6 +827,22 @@ export function checkRules(rules: QuizorRules): ConfigIssue[] {
             "duplicate_item",
             "Идентификаторы элементов должны быть уникальны внутри списка",
           );
+      if (settings.judge === "poll" && settings.mode !== "secret")
+        issue(
+          `${p}.${field.id}`,
+          "poll_mode",
+          "Мнения собираются тайно: для судьи «мнение» нужен режим secret",
+        );
+      if (
+        settings.judge === "poll" &&
+        field.type !== "choice" &&
+        field.type !== "order"
+      )
+        issue(
+          `${p}.${field.id}`,
+          "poll_field",
+          "Судья «мнение» работает с выбором варианта и порядком",
+        );
       if (settings.judge === "ai")
         issue(
           `${p}.${field.id}`,
@@ -805,6 +874,7 @@ export function checkRules(rules: QuizorRules): ConfigIssue[] {
       if (field.type === "choice") {
         referenced.push(...field.options.map((o) => o.grade));
         if (
+          settings.judge !== "poll" &&
           !field.options.some(
             (o) => settings.grades.find((g) => g.id === o.grade)?.correct,
           )
@@ -840,6 +910,7 @@ export function checkRules(rules: QuizorRules): ConfigIssue[] {
         );
       if (
         field.type === "order" &&
+        settings.judge !== "poll" &&
         (new Set(field.correct).size !== field.items.length ||
           field.correct.some((x) => !field.items.some((i) => i.id === x)))
       )

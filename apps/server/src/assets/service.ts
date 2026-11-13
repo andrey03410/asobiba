@@ -89,7 +89,10 @@ export class AssetService {
       try {
         const usage = await this.db.asset.aggregate({ where: { ownerId }, _count: true, _sum: { bytes: true } });
         if (usage._count >= MAX_ASSETS_PER_USER) throw conflict("too_many_assets", `В пуле уже ${usage._count} файлов: удалите ненужные`);
-        if ((usage._sum.bytes ?? 0) + bytes > MAX_USER_ASSET_BYTES) throw conflict("asset_quota", "Пул превышает 10 ГиБ: удалите ненужные файлы");
+        // Douga snapshot files share the same 10 GiB pool (task 07).
+        const video = await this.db.videoFile.findMany({ where: { snapshots: { some: { snapshot: { ownerId } } } }, select: { bytes: true } });
+        const videoBytes = video.reduce((sum, file) => sum + Number(file.bytes), 0);
+        if ((usage._sum.bytes ?? 0) + videoBytes + bytes > MAX_USER_ASSET_BYTES) throw conflict("asset_quota", "Пул превышает 10 ГиБ: удалите ненужные файлы");
         finalPath = this.abs(relPath);
         await rename(temp, finalPath);
         const asset = await this.db.asset.create({ data: {

@@ -1,4 +1,6 @@
 import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { extname } from "node:path";
 import type { ClientMessage, CreateLobbyRequest, ServerMessage, UserDto } from "@asobiba/api";
 import { describeGame, listGames } from "@asobiba/sdk";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -40,6 +42,13 @@ function requireAdmin(req: FastifyRequest): UserDto {
 }
 
 const idParam = z.object({ id: z.string().min(1).max(80) });
+
+const VIDEO_MIME: Record<string, string> = {
+  ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".avif": "image/avif",
+  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".opus": "audio/ogg", ".flac": "audio/flac",
+  ".ttf": "font/ttf", ".txt": "text/plain; charset=utf-8",
+};
 
 export function registerRoutes(app: FastifyInstance, s: Services): void {
   const setCookie = (reply: FastifyReply, token: string) => {
@@ -239,6 +248,47 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     reply.header("content-length", file.bytes);
     if (req.method === "HEAD") return reply.send();
     return reply.send(createReadStream(file.path, { start: 0, end: file.bytes - 1 }));
+  } });
+
+  // ---------- video (task 07) ----------
+  app.get("/api/video/snapshots", async (req) => ({ snapshots: await s.video.list(requireAccount(req).id) }));
+  app.post("/api/video/snapshots", async (req, reply) => {
+    const { token } = parse(z.object({ token: z.string().min(1).max(200) }).strict(), req.body);
+    const { reused, ...snapshot } = await s.video.importSnapshot(requireAccount(req).id, token);
+    return reply.code(reused ? 200 : 201).send({ snapshot, reused });
+  });
+  app.get("/api/video/snapshots/:id", async (req) => ({ snapshot: await s.video.get(requireAccount(req).id, parse(idParam, req.params).id) }));
+  app.delete("/api/video/snapshots/:id", async (req) => s.video.remove(requireAccount(req).id, parse(idParam, req.params).id));
+  app.get("/api/lobbies/:id/video/:key", async (req, reply) => {
+    const user = requireUser(req);
+    const { id, key } = parse(z.object({ id: z.string().min(1).max(100), key: z.string().regex(/^[a-f0-9]{32}$/) }), req.params);
+    const { directive, names } = await s.lobbies.videoAccess(user.id, id, key);
+    const slice = await s.videoRuntime.slice(directive, names);
+    s.lobbies.allowVideoFiles(user.id, slice.files);
+    reply.header("cache-control", "private, no-store");
+    return { key: slice.key, plan: slice.plan };
+  });
+  app.route({ method: ["GET", "HEAD"], url: "/files/video/:name", handler: async (req, reply) => {
+    const user = requireUser(req);
+    const { name } = parse(z.object({ name: z.string().max(80) }), req.params);
+    const path = s.video.filePath(name);
+    if (!path) throw notFound("Файл не найден");
+    if (!s.lobbies.canReadVideoFile(user.id, name)) throw forbidden("Файл пока недоступен в этом лобби");
+    const bytes = await stat(path).then((st) => st.size, () => null);
+    if (bytes === null) throw notFound("Файл не найден");
+    reply.header("content-type", VIDEO_MIME[extname(name)] ?? "application/octet-stream");
+    reply.header("cache-control", "private, max-age=31536000, immutable");
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("accept-ranges", "bytes");
+    if (req.method === "GET" && req.headers.range) {
+      const range = parseFileRange(req.headers.range, bytes);
+      if (!range) return reply.code(416).header("content-range", `bytes */${bytes}`).send();
+      reply.code(206).header("content-range", `bytes ${range.start}-${range.end}/${bytes}`).header("content-length", range.end - range.start + 1);
+      return reply.send(createReadStream(path, range));
+    }
+    reply.header("content-length", bytes);
+    if (req.method === "HEAD") return reply.send();
+    return reply.send(createReadStream(path));
   } });
 
   // ---------- lobbies ----------

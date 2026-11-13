@@ -16,6 +16,8 @@ import { HttpError } from "./http-errors";
 import { LobbyService } from "./lobbies/service";
 import { registerMcpRoutes } from "./mcp/routes";
 import { registerRoutes, SESSION_COOKIE } from "./routes";
+import { VideoRuntime } from "./video/runtime";
+import { VideoService } from "./video/service";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -32,6 +34,8 @@ export interface Services {
   assets: AssetService;
   configs: ConfigService;
   lobbies: LobbyService;
+  video: VideoService;
+  videoRuntime: VideoRuntime;
 }
 
 export interface AppOptions {
@@ -40,6 +44,8 @@ export interface AppOptions {
   catalog?: GameCatalog;
   now?: () => number;
   logger?: boolean | { level: string };
+  /** Fetch for Douga imports (tests stub it). */
+  fetch?: typeof fetch;
 }
 
 /** One-time secrets that travel in URLs must not end up in logs. */
@@ -63,9 +69,11 @@ export async function buildApp(options: AppOptions): Promise<{ app: FastifyInsta
 
   const auth = new AuthService(db, now);
   const assets = new AssetService(db, env);
-  const configs = new ConfigService(db, catalog, assets);
+  const video = new VideoService(db, env, options.fetch);
+  const videoRuntime = new VideoRuntime(video);
+  const configs = new ConfigService(db, catalog, assets, video);
   const lobbies = new LobbyService({ db, catalog, configs, env, now, log: app.log });
-  const services: Services = { env, db, catalog, now, auth, assets, configs, lobbies };
+  const services: Services = { env, db, catalog, now, auth, assets, configs, lobbies, video, videoRuntime };
 
   await app.register(fastifyCookie);
   await app.register(fastifyWebsocket, { options: { maxPayload: 64 * 1024 } });

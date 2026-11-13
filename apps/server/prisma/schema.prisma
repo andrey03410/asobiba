@@ -24,6 +24,7 @@ model User {
   lobbyVisits    LobbyVisit[]
   invitesCreated Invite[]       @relation("InviteCreator")
   inviteUsed     Invite?        @relation("InviteUser")
+  videoSnapshots VideoSnapshot[]
 }
 
 /// Browser session. id is the sha256 of the cookie token.
@@ -167,4 +168,44 @@ model Match {
   finishedAt DateTime?
 
   @@index([lobbyId])
+}
+
+/// Imported Douga interactive snapshot (task 07). Immutable; files are shared by hash.
+model VideoSnapshot {
+  id           String              @id // vsn_ + 12
+  ownerId      String
+  owner        User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  title        String
+  projectId    String
+  revision     Int
+  manifestHash String
+  contract     Int
+  engine       Json
+  bytes        BigInt
+  scenes       Int
+  path         String
+  createdAt    DateTime            @default(now())
+  files        VideoSnapshotFile[]
+
+  @@unique([ownerId, manifestHash])
+  @@index([ownerId])
+}
+
+/// Content-addressed file of snapshots: storage/video/files/<hash><ext>.
+model VideoFile {
+  hash      String              @id
+  ext       String
+  bytes     BigInt
+  kind      String // image | video | audio | poster | font | still
+  snapshots VideoSnapshotFile[]
+}
+
+model VideoSnapshotFile {
+  snapshotId String
+  snapshot   VideoSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  hash       String
+  file       VideoFile     @relation(fields: [hash], references: [hash])
+
+  @@id([snapshotId, hash])
+  @@index([hash])
 }

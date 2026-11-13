@@ -543,6 +543,7 @@ export function LobbyPage() {
                   className={`board-frame${lobby.gameId === "jinchi" ? " board-frame-jinchi" : ""}${mySeat === null ? " is-spectator" : ""}`}
                 >
                   <client.Board
+                    lobbyId={lobby.id}
                     match={match}
                     config={lobby.config}
                     seat={mySeat}

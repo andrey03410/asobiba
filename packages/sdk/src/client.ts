@@ -21,6 +21,8 @@ export interface BoardProps {
   controlRole?: "host" | "presenter";
   /** Server-side previews: no animations, no interaction. */
   staticRender?: boolean;
+  /** Lobby of the match: boards with video fetch scene slices by it (task 07). */
+  lobbyId?: string;
   /** Display names by seat for compact in-board HUDs. */
   playerNames?: string[];
   /** Server clock offset; clients use it for turn countdowns. */

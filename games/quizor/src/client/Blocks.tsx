@@ -278,6 +278,8 @@ function Content({
         ((block.effectSeconds ?? blockDuration(block) / 1000) * 1000 || 1),
     ),
   );
+  // A Douga scene plays on the board's video stage, not inside the block list.
+  if (block.type === "scene") return null;
   if (block.type === "group")
     return (
       <div className={`qz-group qz-group-${block.layout ?? "grid"}`}>

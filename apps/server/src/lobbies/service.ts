@@ -1,5 +1,5 @@
 import type { CreateLobbyRequest, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
-import { collectAssetRefs, type ConfigDocument, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
+import { collectAssetRefs, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
 import type { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
 import type { Db } from "../db";
@@ -35,6 +35,9 @@ interface Room {
 type LobbyRow = Prisma.LobbyGetPayload<{ include: { host: true; members: { include: { user: true } } } }>;
 
 const MAX_TIMER_MS = 2 ** 31 - 1;
+/** Directives a viewer keeps access to, and viewers remembered at once. */
+const VIDEO_WINDOW = 16;
+const VIDEO_VIEWERS = 2000;
 
 export interface LobbyServiceDeps {
   db: Db;
@@ -52,6 +55,8 @@ export interface LobbyServiceDeps {
  */
 export class LobbyService {
   private readonly rooms = new Map<string, Room>();
+  private readonly videoSeen = new Map<string, Map<string, VideoDirective>>();
+  private readonly videoFiles = new Map<string, Set<string>>();
   private readonly locks = new Map<string, Promise<unknown>>();
 
   constructor(private readonly deps: LobbyServiceDeps) {}
@@ -534,7 +539,62 @@ export class LobbyService {
   private sendMatch(room: Room, sub: Subscriber) {
     const seat = this.viewerSeat(room, sub.userId);
     const controlRole = room.presenterId === sub.userId ? "presenter" : room.hostId === sub.userId ? "host" : undefined;
-    sub.send({ type: "match", lobbyId: room.lobbyId, match: room.match ? room.match.view(seat, controlRole) : null, seat, controlRole, serverTime: this.deps.now() });
+    const match = room.match ? room.match.view(seat, controlRole) : null;
+    if (match && room.match?.game.video) this.rememberVideo(room.lobbyId, sub.userId, room.match.game.video.directives(match.game));
+    sub.send({ type: "match", lobbyId: room.lobbyId, match, seat, controlRole, serverTime: this.deps.now() });
+  }
+
+  /** The last directives a viewer was shown stay fetchable: reconnects and pauses keep the scene. */
+  private rememberVideo(lobbyId: string, userId: string, directives: VideoDirective[]) {
+    if (!directives.length) return;
+    const id = `${lobbyId}\n${userId}`;
+    const seen = this.videoSeen.get(id) ?? new Map<string, VideoDirective>();
+    for (const directive of directives) {
+      seen.delete(directive.key);
+      seen.set(directive.key, directive);
+    }
+    while (seen.size > VIDEO_WINDOW) seen.delete(seen.keys().next().value!);
+    this.videoSeen.delete(id);
+    this.videoSeen.set(id, seen);
+    while (this.videoSeen.size > VIDEO_VIEWERS) this.videoSeen.delete(this.videoSeen.keys().next().value!);
+  }
+
+  /** Files of slices a user was given; `/files/video` serves nothing else. */
+  allowVideoFiles(userId: string, files: string[]) {
+    const allowed = this.videoFiles.get(userId) ?? new Set<string>();
+    for (const file of files) {
+      allowed.delete(file);
+      allowed.add(file);
+    }
+    while (allowed.size > 4096) allowed.delete(allowed.values().next().value!);
+    this.videoFiles.delete(userId);
+    this.videoFiles.set(userId, allowed);
+    while (this.videoFiles.size > VIDEO_VIEWERS) this.videoFiles.delete(this.videoFiles.keys().next().value!);
+  }
+
+  canReadVideoFile(userId: string, name: string): boolean {
+    return this.videoFiles.get(userId)?.has(name) ?? false;
+  }
+
+  /**
+   * A directive the viewer may fetch: in the viewer's current view (the same seat rule
+   * as match messages; presenter secrets only for the presenter) or among the last 16
+   * shown to them in this lobby. Names of seats replace player placeholders.
+   */
+  async videoAccess(userId: string, lobbyId: string, key: string): Promise<{ directive: VideoDirective; names: Record<string, string> }> {
+    const room = await this.room(lobbyId);
+    const game = room.match?.game;
+    if (!room.match || !game?.video) throw notFound("В этом лобби нет видео");
+    const controlRole = room.presenterId === userId ? "presenter" : room.hostId === userId ? "host" : undefined;
+    const member = room.playerIds.has(userId) || controlRole !== undefined
+      || (await this.deps.db.lobbyVisit.findUnique({ where: { lobbyId_userId: { lobbyId, userId } } })) !== null;
+    if (!member) throw forbidden("Сначала откройте лобби");
+    const current = game.video.directives(room.match.view(this.viewerSeat(room, userId), controlRole).game);
+    this.rememberVideo(lobbyId, userId, current);
+    const directive = this.videoSeen.get(`${lobbyId}\n${userId}`)?.get(key);
+    if (!directive) throw forbidden("Эта сцена пока не показана");
+    const names = Object.fromEntries(room.seatNames.map((name, seat) => [`seat-${seat}`, name]));
+    return { directive, names };
   }
 
   private publishMatch(room: Room) {

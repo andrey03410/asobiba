@@ -24,7 +24,11 @@
     "zod": "^4.6.7",
     "@asobiba/game-jinchi": "*",
     "@asobiba/game-russkoe-pole": "*",
-    "@asobiba/game-quizor": "*"
+    "@asobiba/game-quizor": "*",
+    "@douga/video": "file:../../../douga/packages/video",
+    "@douga/node": "file:../../../douga/packages/node",
+    "@douga/render": "file:../../../douga/packages/render",
+    "remotion": "4.0.475"
   },
   "devDependencies": {
     "@types/react": "^19.2.7",

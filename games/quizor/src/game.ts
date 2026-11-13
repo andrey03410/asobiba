@@ -4,6 +4,7 @@ import {
   type GameContext,
   type RoundResult,
   type SetupContext,
+  type VideoDirective,
 } from "@asobiba/sdk";
 import { z } from "zod";
 import {
@@ -27,6 +28,7 @@ import {
 import {
   gradePoints,
   judgeQuestion,
+  pollResult,
   type FieldGrade,
   type QuestionGrade,
 } from "./judge";
@@ -38,6 +40,7 @@ import {
   type QuizorVisual,
 } from "./visual";
 import { PRESETS } from "./presets";
+import { attachVideo, quizorVideo, type PollSummary } from "./video";
 import { QUIZOR_GUIDE } from "./guide";
 
 const seatSchema = z.int().min(0).max(15);
@@ -176,13 +179,18 @@ export type PublicField = {
     text: string;
     asset?: string;
     media?: "image" | "audio";
+    /** Card of the question scene that picks this option (task 07). */
+    card?: string;
   }[];
   items?: {
     id: string;
     text: string;
     asset?: string;
     media?: "image" | "audio";
+    card?: string;
   }[];
+  /** Choice with a scene: where the player answers (frame, form or both). */
+  pick?: "both" | "frame" | "form";
   left?: {
     id: string;
     text: string;
@@ -255,6 +263,8 @@ export interface HistoryEntry {
   answers: PublicAnswer[];
   corrections: string[];
   disclosed: boolean;
+  /** Fields judged by `poll`: the shared opinion (task 07). */
+  poll?: Record<string, PollSummary>;
 }
 export interface QuizorEvent {
   id: number;
@@ -280,6 +290,9 @@ export interface BoardCell {
   special?: string;
 }
 export interface QuizorView {
+  /** The Douga scene playing now, and scenes the client may load early (task 07). */
+  video?: VideoDirective | null;
+  videoPreload?: VideoDirective[];
   revealStartedAt?: number | null;
   revealBlockStartedAt?: number | null;
   revealIndex?: number;
@@ -1400,6 +1413,23 @@ function resumeJudgedBuzz(s: QuizorState): boolean {
   event(s, "Кнопка открыта для перехвата");
   return true;
 }
+/** Shared opinions of `poll` fields, with who picked what for showAnswers. */
+function pollSummaries(s: QuizorState): { poll?: Record<string, PollSummary> } {
+  if (!s.active) return {};
+  const out: Record<string, PollSummary> = {};
+  for (const { field, settings: fs } of s.active.fields) {
+    if (fs.judge !== "poll" || (field.type !== "choice" && field.type !== "order")) continue;
+    const seats = Object.entries(s.submissions).map(([seat, sub]) => ({ seat: Number(seat), answer: sub.answers[field.id] }));
+    const result = pollResult(field, seats.map((x) => x.answer));
+    const picks: Record<string, number[]> = {};
+    for (const { seat, answer } of seats) {
+      const first = field.type === "choice" ? answer : Array.isArray(answer) ? answer[0] : undefined;
+      if (typeof first === "string" && first in result.votes) (picks[first] ??= []).push(seat);
+    }
+    out[field.id] = { ...result, picks };
+  }
+  return Object.keys(out).length ? { poll: out } : {};
+}
 function finishScores(s: QuizorState, ctx: Ctx) {
   if (
     !s.active ||
@@ -1533,6 +1563,7 @@ function finishScores(s: QuizorState, ctx: Ctx) {
     answers,
     corrections: [],
     disclosed: cfg.reveal === "question",
+    ...pollSummaries(s),
   });
   s.phase = "reveal";
   s.revealStartedAt = s.now;
@@ -2696,12 +2727,15 @@ function publicField(field: Field): PublicField {
       unit: field.unit,
     });
   if (field.type === "choice" || field.type === "multi")
-    out.options = field.options.map(({ id, text, asset, media }) => ({
+    out.options = field.options.map(({ id, text, asset, media, card }) => ({
       id,
       text,
       ...(asset ? { asset } : {}),
       ...(media ? { media } : {}),
+      ...(card ? { card } : {}),
     }));
+  if (field.type === "choice" && field.options.some((o) => o.card))
+    out.pick = field.input ?? "both";
   if (field.type === "multi") out.maxSelected = field.maxSelected;
   if (field.type === "order") out.items = field.items.map((i) => ({ ...i }));
   if (field.type === "match") {
@@ -2833,14 +2867,20 @@ function view(s: QuizorState, seat: number | null): QuizorView {
     : s.answerOpenedAt !== null;
   const history = s.history
     .filter((h) => h.disclosed)
-    .map((h) => ({
-      ...structuredClone(h),
-      answers: cfg.showAnswers
-        ? h.answers
-        : seat === null
-          ? []
-          : h.answers.filter((a) => a.seat === seat),
-    }));
+    .map((h) => {
+      const entry = {
+        ...structuredClone(h),
+        answers: cfg.showAnswers
+          ? h.answers
+          : seat === null
+            ? []
+            : h.answers.filter((a) => a.seat === seat),
+      };
+      // Who picked what is as private as the answers themselves.
+      if (!cfg.showAnswers)
+        for (const poll of Object.values(entry.poll ?? {})) delete poll.picks;
+      return entry;
+    });
   const current = s.history.find(
     (h) => h.questionId === s.active?.question.id && h.disclosed,
   );
@@ -3104,7 +3144,16 @@ function view(s: QuizorState, seat: number | null): QuizorView {
     s.phase === "preload" && s.active
       ? mediaRefs(s.active.question.blocks)
       : [];
+  const upcoming =
+    s.phase === "intro"
+      ? (s.rules.rounds[s.round]?.intro.slice(s.blockIndex + 1) ?? [])
+      : (s.phase === "preload" || s.phase === "show") && s.active
+        ? s.active.question.blocks.slice(Math.max(0, blockIndex + 1))
+        : [];
+  attachVideo(out, s.rules, upcoming);
   if (s.paused) {
+    out.video = null;
+    out.videoPreload = [];
     out.preload = [];
     out.prompt = "";
     out.blocks = [];
@@ -3366,4 +3415,5 @@ export const quizor = defineGame<
   ],
   themes: THEMES,
   visualCatalog: VISUAL_CATALOG,
+  video: quizorVideo,
 });

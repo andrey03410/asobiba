@@ -5,7 +5,10 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type MutableRefObject,
 } from "react";
+import type { ChoiceHit } from "@asobiba/video";
+import { loadSlice, VideoStage } from "@asobiba/video/client";
 import type { QuizorView } from "../game";
 import { blockDuration } from "../rules";
 import { resolveVisual } from "../visual";
@@ -57,6 +60,7 @@ function QuestionAnswer({
   cached,
   onDraft,
   connected,
+  pickRef,
 }: {
   view: QuizorView;
   assetUrl: BoardProps["assetUrl"];
@@ -64,6 +68,8 @@ function QuestionAnswer({
   cached?: FormAnswers;
   onDraft(value: FormAnswers): void;
   connected: boolean;
+  /** A press on a card of the scene picks the option with that `card`. */
+  pickRef?: MutableRefObject<((hit: ChoiceHit) => void) | null>;
 }) {
   const [value, setValue] = useState<FormAnswers>(() => ({
     ...initialAnswers(view.fields),
@@ -101,6 +107,27 @@ function QuestionAnswer({
       draft.current = null;
     }, 200);
   };
+  const latest = useRef({ value, change, open: view.canAnswer && !sent });
+  latest.current = { value, change, open: view.canAnswer && !sent };
+  useEffect(() => {
+    if (!pickRef) return;
+    pickRef.current = (hit) => {
+      if (!latest.current.open) return;
+      for (const field of view.fields) {
+        if (field.type !== "choice" || field.pick === "form") continue;
+        const option = field.options?.find(
+          (o) => o.card !== undefined && (o.card === hit.cardId || o.card === hit.participantId),
+        );
+        if (option) {
+          latest.current.change({ ...latest.current.value, [field.id]: option.id });
+          return;
+        }
+      }
+    };
+    return () => {
+      pickRef.current = null;
+    };
+  }, [pickRef, view.fields]);
   return (
     <AnswerForm
       fields={view.fields}
@@ -507,6 +534,12 @@ export function QuizorBoard(props: BoardProps) {
       /* local preferences are optional */
     }
   }, [muted, compact]);
+  const pickRef = useRef<((hit: ChoiceHit) => void) | null>(null);
+  const preloadKeys = (view.videoPreload ?? []).map((d) => d.key).join(",");
+  useEffect(() => {
+    if (!props.lobbyId || props.staticRender || !preloadKeys) return;
+    for (const key of preloadKeys.split(",")) void loadSlice(props.lobbyId, key).catch(() => undefined);
+  }, [props.lobbyId, props.staticRender, preloadKeys]);
   const buzzStart = useRef(0);
   const canBuzz = Boolean(onAction) && view.legal.includes("buzz");
   useEffect(() => {
@@ -616,6 +649,18 @@ export function QuizorBoard(props: BoardProps) {
             className="qz-scene"
             key={`${view.roundId}:${view.phase === "board" ? "board" : (view.questionId ?? view.phase)}`}
           >
+            {view.video && props.lobbyId && (
+              <VideoStage
+                className="qz-video"
+                directive={view.video}
+                preload={view.videoPreload}
+                lobbyId={props.lobbyId}
+                clockOffset={clockOffset}
+                paused={frozen}
+                muted={muted}
+                onPick={(hit) => pickRef.current?.(hit)}
+              />
+            )}
             {view.phase === "intro" && (
               <div className="qz-intro">
                 <span className="qz-kicker">Раунд {view.round}</span>
@@ -882,6 +927,7 @@ export function QuizorBoard(props: BoardProps) {
                   act={act}
                   cached={draftCache.current.get(view.questionId ?? "")}
                   connected={props.connected !== false}
+                  pickRef={pickRef}
                   onDraft={(answers) =>
                     draftCache.current.set(view.questionId ?? "", answers)
                   }
