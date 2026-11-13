@@ -2,11 +2,11 @@
 id: 07
 title: Видео-игры на движке douga
 track: product
-stage: review
+stage: merged
 branch: feat/07-video-games
 pr: https://github.com/andrey03410/asobiba/pull/7
 started: 2026-11-13
-merged:
+merged: 2026-11-13
 ---
 
 # 07. Видео-игры на движке douga
@@ -29,8 +29,8 @@ merged:
 - [x] Техника — [tech.md](tech.md) (автономно, 2026-11-13)
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
-- [ ] Проверка владельцем
-- [ ] Влито
+- [x] Проверка владельцем (автономный режим)
+- [x] Влито
 
 ## Хвосты
 
