@@ -2,7 +2,7 @@
 id: 07
 title: Видео-игры на движке douga
 track: product
-stage: tech
+stage: plan
 branch: feat/07-video-games
 pr:
 started: 2026-11-13
@@ -26,7 +26,7 @@ merged:
 
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [product.md](product.md) (автономно, 2026-11-13)
-- [ ] Техника — [tech.md](tech.md)
+- [x] Техника — [tech.md](tech.md) (автономно, 2026-11-13)
 - [ ] План — [plan.md](plan.md)
 - [ ] Реализация и QG — [verify.md](verify.md)
 - [ ] Проверка владельцем
