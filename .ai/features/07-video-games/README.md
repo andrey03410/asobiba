@@ -2,7 +2,7 @@
 id: 07
 title: Видео-игры на движке douga
 track: product
-stage: plan
+stage: build
 branch: feat/07-video-games
 pr:
 started: 2026-11-13
@@ -19,15 +19,15 @@ merged:
 Парная задача в douga — `douga/.ai/features/34-interactive-video/` (ветка `feat/34-interactive-video`):
 пакеты, интерактивный слой документа и снимок.
 
-> **Автономный режим стадий `product` и `tech`** (дословно — в [brief.md](brief.md#разрешение-автономности)).
-> План, реализация и вливание этим разрешением не покрыты.
+> **Автономный режим до вливания** (дословно — в [brief.md](brief.md#автономный-режим-до-вливания)).
+> Продукт и техника приняты автономно, дальше агент сам ведёт план, реализацию, QG, ревью, PR и merge.
 
 ## Стадии
 
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [product.md](product.md) (автономно, 2026-11-13)
 - [x] Техника — [tech.md](tech.md) (автономно, 2026-11-13)
-- [ ] План — [plan.md](plan.md)
+- [x] План — [plan.md](plan.md)
 - [ ] Реализация и QG — [verify.md](verify.md)
 - [ ] Проверка владельцем
 - [ ] Влито
