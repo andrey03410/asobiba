@@ -2,9 +2,9 @@
 id: 07
 title: Видео-игры на движке douga
 track: product
-stage: build
+stage: review
 branch: feat/07-video-games
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/7
 started: 2026-11-13
 merged:
 ---
