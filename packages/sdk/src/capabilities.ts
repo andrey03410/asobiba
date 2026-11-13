@@ -31,6 +31,8 @@ export interface GameCapabilities extends GameSummary {
   themes: ThemeDescriptor[];
   visualCatalog: Record<string, Record<string, string>>;
   presetConfigs: { id: string; config: ConfigDocument }[];
+  /** Games with a video layer: where Douga scenes go and which recipes fit. */
+  video?: { contract: number; guide: string; recipes: string[] };
 }
 
 export function summarizeGame(game: AnyGame): GameSummary {
@@ -64,5 +66,6 @@ export function describeGame(game: AnyGame): GameCapabilities {
     themes: game.themes,
     visualCatalog: game.visualCatalog,
     presetConfigs: game.presets.map((p) => ({ id: p.id, config: presetDocument(game, p) })),
+    ...(game.video ? { video: { contract: game.video.contract, guide: game.video.guide, recipes: game.video.recipes } } : {}),
   };
 }

@@ -1,3 +1,5 @@
+import type { GameVideoSupport } from "./video";
+import type { ConfigDocument } from "./config";
 import type { z } from "zod";
 import type { ConfigIssue } from "./issues";
 import type { Rng } from "./rng";
@@ -154,6 +156,8 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   themes: ThemeDescriptor[];
   /** Named lists of visual presets with descriptions, e.g. pieces, animations. */
   visualCatalog: Record<string, Record<string, string>>;
+  /** Optional video layer: scenes of Douga snapshots (task 07). */
+  video?: GameVideoSupport<ConfigDocument<R, V>, PV>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

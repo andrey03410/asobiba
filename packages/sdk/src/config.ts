@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AnyGame, ConfigPreset } from "./game";
 import { type ConfigIssue, hasErrors, issuesFromZod, prefixIssues } from "./issues";
+import type { VideoSnapshotSummary } from "./video";
 import { ASSET_ID, type SeriesSettings, seriesSchema, type TimerSettings, timerSchema } from "./schema";
 
 export const SDK_VERSION = 1;
@@ -56,7 +57,15 @@ function issue(path: string, code: string, message: string, hint?: string): Conf
  * defaults, then the game's cross-field checks. Returns the normalized document
  * or issues with paths and hints.
  */
-export function validateConfig(catalog: GameCatalog, input: unknown): ValidationResult {
+export interface ValidateOptions {
+  /**
+   * Summaries of the Douga snapshots the config uses (task 07). When given, the game
+   * checks its video references; a missing summary is `video_snapshot`.
+   */
+  videoSnapshots?: Record<string, VideoSnapshotSummary>;
+}
+
+export function validateConfig(catalog: GameCatalog, input: unknown, options: ValidateOptions = {}): ValidationResult {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return { ok: false, issues: [issue("", "invalid_type", "Конфиг должен быть JSON-объектом", "Начните с пресета из game_capabilities")] };
   }
@@ -90,6 +99,12 @@ export function validateConfig(catalog: GameCatalog, input: unknown): Validation
   const issues: ConfigIssue[] = [];
   if (game.checkRules) issues.push(...prefixIssues(game.checkRules(config.rules), "rules"));
   if (game.checkVisual) issues.push(...prefixIssues(game.checkVisual(config.visual, config.rules), "visual"));
+  if (game.video && options.videoSnapshots) {
+    for (const id of game.video.configSnapshots(config))
+      if (!options.videoSnapshots[id])
+        issues.push(issue("rules.video.snapshot", "video_snapshot", `Нет снимка ${id}`, "Импортируйте ролик через video_snapshot_import и возьмите id из video_snapshot_list"));
+    if (!hasErrors(issues) && game.video.checkVideo) issues.push(...game.video.checkVideo(config, options.videoSnapshots));
+  }
   if (game.kind === "realtime" && config.timer.turnSeconds > 0) {
     issues.push(issue("timer.turnSeconds", "timer_realtime", "Таймер хода есть только у пошаговых игр", "Поставьте 0"));
   }

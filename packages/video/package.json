@@ -1,0 +1,22 @@
+{
+  "name": "@asobiba/video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bridge to the Douga engine: video directives for games and the VideoStage client.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client/index.ts"
+  },
+  "dependencies": {
+    "@asobiba/sdk": "*",
+    "@douga/video": "file:../../../douga/packages/video",
+    "@douga/render": "file:../../../douga/packages/render",
+    "@douga/player": "file:../../../douga/packages/player",
+    "remotion": "4.0.475",
+    "@remotion/player": "4.0.475"
+  },
+  "peerDependencies": {
+    "react": "^19.3.1"
+  }
+}
