@@ -273,7 +273,15 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     const { name } = parse(z.object({ name: z.string().max(80) }), req.params);
     const path = s.video.filePath(name);
     if (!path) throw notFound("Файл не найден");
-    if (!s.lobbies.canReadVideoFile(user.id, name)) throw forbidden("Файл пока недоступен в этом лобби");
+    if (!s.lobbies.canReadVideoFile(user.id, name)) {
+      // Rights live in memory: after a restart the slice named in the URL is checked again.
+      const via = z.object({ lobby: z.string().min(1).max(100), key: z.string().regex(/^[a-f0-9]{32}$/) }).safeParse(req.query);
+      if (!via.success) throw forbidden("Файл пока недоступен в этом лобби");
+      const { directive, names } = await s.lobbies.videoAccess(user.id, via.data.lobby, via.data.key);
+      const slice = await s.videoRuntime.slice(directive, names);
+      if (!slice.files.includes(name)) throw forbidden("Файл пока недоступен в этом лобби");
+      s.lobbies.allowVideoFiles(user.id, slice.files);
+    }
     const bytes = await stat(path).then((st) => st.size, () => null);
     if (bytes === null) throw notFound("Файл не найден");
     reply.header("content-type", VIDEO_MIME[extname(name)] ?? "application/octet-stream");

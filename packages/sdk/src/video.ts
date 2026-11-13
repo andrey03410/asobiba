@@ -29,7 +29,9 @@ export interface VideoDirective {
   play: VideoPlay;
   /** Server time (ms) when frame 0 of the slice plays. */
   startedAt: number;
-  /** Stop on this moment until the directive changes. */
+  /** The slice begins at the scene of this moment; playback starts on the moment. */
+  start?: { momentId: string } | null;
+  /** Stop on this moment until the directive changes. The slice ends with its scene. */
   hold?: { momentId: string } | null;
   /** Match data that is already safe to show to this viewer. */
   data?: VideoMatchData | null;
@@ -81,8 +83,51 @@ export function canonicalJson(value: unknown): string {
 }
 
 /** The key of a directive: SHA-256 of what is drawn (not when). Pure, sync, any runtime. */
-export function videoKey(input: Pick<VideoDirective, "snapshot" | "play" | "data">): string {
-  return sha256Hex(canonicalJson({ snapshot: input.snapshot, play: input.play, data: input.data ?? null })).slice(0, 32);
+export function videoKey(input: Pick<VideoDirective, "snapshot" | "play" | "data" | "start" | "hold">): string {
+  return sha256Hex(
+    canonicalJson({
+      snapshot: input.snapshot,
+      play: input.play,
+      data: input.data ?? null,
+      start: input.start?.momentId ?? null,
+      hold: input.hold?.momentId ?? null,
+    }),
+  ).slice(0, 32);
+}
+
+export interface WindowScene {
+  from: number;
+  to: number;
+  holds: { momentId: string; frame: number }[];
+}
+
+export type SliceWindow =
+  | { from: number; to: number; startFrame: number; holdFrame: number | null }
+  | { missing: "start" | "hold" };
+
+/**
+ * Frames of a played piece cut to its moments. It begins with the scene of `start` and
+ * ends with the scene of `hold`: scenes after the hold (a reveal, say) never reach a
+ * viewer who waits on it. Scene frames are inside the piece; the same rule runs on the
+ * server (slice, config timing) and in the browser (where to stop).
+ */
+export function sliceWindow(scenes: WindowScene[], start?: string | null, hold?: string | null): SliceWindow {
+  const from = scenes.length ? Math.min(...scenes.map((s) => s.from)) : 0;
+  const to = scenes.length ? Math.max(...scenes.map((s) => s.to)) : 0;
+  const holds = scenes.flatMap((s) => s.holds).sort((a, b) => a.frame - b.frame);
+  const moment = (id: string, after: number) => holds.find((h) => h.momentId === id && h.frame >= after)?.frame;
+  const sceneOf = (frame: number) =>
+    scenes.find((s) => s.from <= frame && frame < s.to) ?? [...scenes].reverse().find((s) => s.from <= frame);
+  const startFrame = start ? moment(start, from) : from;
+  if (startFrame === undefined) return { missing: "start" };
+  const holdFrame = hold ? moment(hold, startFrame + (start === hold ? 1 : 0)) : null;
+  if (holdFrame === undefined) return { missing: "hold" };
+  return {
+    from: start ? (sceneOf(startFrame)?.from ?? from) : from,
+    to: holdFrame === null ? to : (sceneOf(holdFrame)?.to ?? to),
+    startFrame,
+    holdFrame,
+  };
 }
 
 export function videoDirective(input: Omit<VideoDirective, "key">): VideoDirective {

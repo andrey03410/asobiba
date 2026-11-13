@@ -1,4 +1,4 @@
-import type { VideoDirective, VideoMatchData } from "@asobiba/sdk";
+import { sliceWindow, type VideoDirective, type VideoMatchData } from "@asobiba/sdk";
 import {
   applyMatchData,
   compileVideo,
@@ -32,7 +32,8 @@ type MeasureText = Awaited<ReturnType<typeof createMeasureText>>;
  * so a replay of a match gets the same slices.
  */
 export class VideoRuntime {
-  private readonly slices = new Map<string, VideoSlice>();
+  /** Pending or ready slices: viewers of one scene share a single compile. */
+  private readonly slices = new Map<string, Promise<VideoSlice>>();
   private readonly fonts = new Map<string, Promise<MeasureText | undefined>>();
 
   constructor(private readonly video: VideoService) {}
@@ -57,10 +58,18 @@ export class VideoRuntime {
   }
 
   /** The slice of one directive; `names` replace player placeholders with seat names. */
-  async slice(directive: VideoDirective, names: Record<string, string> = {}): Promise<VideoSlice> {
+  slice(directive: VideoDirective, names: Record<string, string> = {}): Promise<VideoSlice> {
     const cacheKey = `${directive.key}:${JSON.stringify(names)}`;
     const cached = this.slices.get(cacheKey);
     if (cached) return cached;
+    const pending = this.compile(directive, names);
+    pending.catch(() => this.slices.delete(cacheKey));
+    if (this.slices.size >= SLICE_CACHE) this.slices.delete(this.slices.keys().next().value!);
+    this.slices.set(cacheKey, pending);
+    return pending;
+  }
+
+  private async compile(directive: VideoDirective, names: Record<string, string>): Promise<VideoSlice> {
     const snapshot = await this.video.manifest(directive.snapshot);
     const measureText = await this.measure(directive.snapshot, snapshot);
     const manifest: AssetManifest = structuredClone(snapshot.manifest);
@@ -80,6 +89,12 @@ export class VideoRuntime {
     } catch {
       throw new HttpError(404, "video_scene", "В снимке нет такой сцены");
     }
+    // Cut to the moments: what follows the scene of the hold (a reveal) stays on the server.
+    const window = sliceWindow(plan.interaction?.scenes ?? [], directive.start?.momentId, directive.hold?.momentId);
+    if ("missing" in window) throw new HttpError(404, "video_moment", "В куске нет момента сцены");
+    const from = directive.start ? window.from : 0;
+    const to = directive.hold ? window.to : plan.durationInFrames;
+    if (from > 0 || to < plan.durationInFrames) plan = slicePlan(plan, { from, to });
     const files = new Set<string>();
     for (const usage of compiledMediaUsages(plan)) {
       for (const src of [usage.asset.src, usage.asset.posterSrc])
@@ -91,10 +106,7 @@ export class VideoRuntime {
       files.add(`${face.hash}.ttf`);
       files.add(`${face.licenseHash}.txt`);
     }
-    const slice = { key: directive.key, plan, files: [...files] };
-    if (this.slices.size >= SLICE_CACHE) this.slices.delete(this.slices.keys().next().value!);
-    this.slices.set(cacheKey, slice);
-    return slice;
+    return { key: directive.key, plan, files: [...files] };
   }
 }
 

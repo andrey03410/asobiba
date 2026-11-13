@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
-import type { VideoDirective } from "@asobiba/sdk";
+import { sliceWindow, type VideoDirective } from "@asobiba/sdk";
 import type { ChoiceHit, CompiledVideo } from "@douga/video";
 import type { InteractiveEvent } from "@douga/player/InteractivePlayer";
 import { loadSlice } from "./slices";
@@ -26,11 +26,11 @@ export interface VideoStageProps {
   style?: CSSProperties;
 }
 
-/** First hold of a moment in the slice, or null. */
-export function holdFrameOf(plan: CompiledVideo, momentId: string | undefined): number | null {
-  if (!momentId) return null;
-  const frames = (plan.interaction?.scenes ?? []).flatMap((s) => s.holds).filter((h) => h.momentId === momentId);
-  return frames.length ? Math.min(...frames.map((h) => h.frame)) : null;
+/** Frame of the directive's hold in its slice (after its start, as on the server), or null. */
+export function holdFrameOf(plan: CompiledVideo, directive: Pick<VideoDirective, "start" | "hold">): number | null {
+  if (!directive.hold) return null;
+  const window = sliceWindow(plan.interaction?.scenes ?? [], directive.start?.momentId, directive.hold.momentId);
+  return "missing" in window ? null : window.holdFrame;
 }
 
 /**
@@ -65,7 +65,7 @@ export function VideoStage(props: VideoStageProps) {
 
   const now = useMemo(() => () => Date.now() + offset.current, []);
   const current = plan;
-  const holdFrame = current ? holdFrameOf(current, directive.hold?.momentId) : null;
+  const holdFrame = current ? holdFrameOf(current, directive) : null;
   const aspect = current ? `${current.width} / ${current.height}` : "16 / 9";
 
   return (

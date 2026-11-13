@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ServerMessage } from "@asobiba/api";
 import { quizor, type QuizorView } from "@asobiba/game-quizor";
-import { presetDocument } from "@asobiba/sdk";
+import { presetDocument, videoDirective } from "@asobiba/sdk";
 import {
   compileVideo,
   INTERACTIVE_SNAPSHOT_FORMAT,
@@ -189,5 +189,41 @@ describe("Douga snapshots", () => {
     expect((await t.app.inject({ method: "GET", url: `/files/video/${PNG_HASH}.png`, headers: { cookie: stranger.cookie } })).statusCode).toBe(403);
     const range = await t.app.inject({ method: "GET", url: `/files/video/${PNG_HASH}.png`, headers: { cookie: player.cookie, range: "bytes=0-3" } });
     expect(range.statusCode).toBe(206);
+
+    // Rights to files live in memory. After a restart the file names its slice and the
+    // server checks the slice again; a stranger or an unknown key still gets nothing.
+    (t.services.lobbies as unknown as { videoFiles: Map<string, Set<string>> }).videoFiles.clear();
+    const file403 = await t.app.inject({ method: "GET", url: `/files/video/${PNG_HASH}.png`, headers: { cookie: player.cookie } });
+    expect(file403.statusCode).toBe(403);
+    const via = (who: TestUser, k: string) =>
+      t.app.inject({ method: "GET", url: `/files/video/${PNG_HASH}.png?lobby=${lobby.id}&key=${k}`, headers: { cookie: who.cookie } });
+    expect((await via(player, key)).statusCode).toBe(200);
+    expect((await via(stranger, key)).statusCode).toBe(403);
+    (t.services.lobbies as unknown as { videoFiles: Map<string, Set<string>> }).videoFiles.clear();
+    expect((await via(player, "0".repeat(32))).statusCode).toBe(403);
+  });
+
+  it("cuts a slice at the scene of its hold: later scenes never reach a waiting viewer", async () => {
+    const host = await signUp(t, "host");
+    const { snapshot: imported } = (await post(host, "/api/video/snapshots", { token: TOKEN })).body;
+    const play = { sceneIds: ["question-scene/pick", "result-scene/c"] };
+    const waiting = await t.services.videoRuntime.slice(videoDirective({ snapshot: imported.id, play, startedAt: 0, hold: { momentId: "wait" } }));
+    expect(waiting.plan.scenes.map((s) => s.id)).toEqual(["question-scene/pick"]);
+    const whole = await t.services.videoRuntime.slice(videoDirective({ snapshot: imported.id, play, startedAt: 0 }));
+    expect(whole.plan.scenes.map((s) => s.id)).toEqual(["question-scene/pick", "result-scene/c"]);
+    const reveal = await t.services.videoRuntime.slice(videoDirective({ snapshot: imported.id, play: { segmentId: "result" }, startedAt: 0 }));
+    expect(reveal.plan.scenes.every((s) => s.segmentId === "result")).toBe(true);
+    await expect(
+      t.services.videoRuntime.slice(videoDirective({ snapshot: imported.id, play, startedAt: 0, hold: { momentId: "nope" } })),
+    ).rejects.toMatchObject({ code: "video_moment" });
+  });
+
+  it("refuses a snapshot whose media sources are not its own files", async () => {
+    const owner = await signUp(t, "owner");
+    const content = await makeSnapshot();
+    const { hash: _hash, ...rest } = content;
+    rest.manifest.a = { ...rest.manifest.a, src: "../../secret.png" };
+    snapshot = { ...rest, hash: await interactiveSnapshotHash(rest) } as InteractiveSnapshot;
+    expect((await post(owner, "/api/video/snapshots", { token: TOKEN })).body.error.code).toBe("bad_snapshot");
   });
 });

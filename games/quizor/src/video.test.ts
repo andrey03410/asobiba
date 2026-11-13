@@ -183,6 +183,19 @@ describe("Quizor video directives", () => {
     expect(validateConfig(catalog, { ...base, rules: rules() }, { videoSnapshots: {} }).issues.map((i) => i.code)).toContain("video_snapshot");
   });
 
+  it("warns when the reveal begins in the scene the question waits in", () => {
+    const catalog = createCatalog([quizor]);
+    const base = presetDocument(quizor);
+    const same = rules();
+    same.rounds[0].questions[0].reveal.unshift({ type: "scene", play: { segmentId: "question" }, start: "wait" } as never);
+    const issues = validateConfig(catalog, { ...base, rules: same }, { videoSnapshots: { [SNAPSHOT]: summary } }).issues;
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: "video_reveal_scene", severity: "warning", path: "rules.rounds[0].questions[0].reveal[0].start" }),
+    );
+    const apart = validateConfig(catalog, { ...base, rules: rules() }, { videoSnapshots: { [SNAPSHOT]: summary } }).issues;
+    expect(apart.map((i) => i.code)).not.toContain("video_reveal_scene");
+  });
+
   it("refuses self pacing and scenes without a snapshot", () => {
     const r = rules({ defaults: { pacing: "self", judge: "poll" } });
     const codes = checkRules(r).map((i) => i.code);

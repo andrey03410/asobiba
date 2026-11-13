@@ -93,7 +93,7 @@ export class ConfigService {
       if (!value || typeof value !== "object") return;
       const node = value as Record<string, unknown>;
       if (node.type === "scene" && node.play && typeof node.play === "object") {
-        const timing = sceneTiming(summary, { play: node.play as VideoPlay, from: node.start as string | undefined, hold: node.hold as string | undefined }, path);
+        const timing = sceneTiming(summary, { play: node.play as VideoPlay, start: node.start as string | undefined, hold: node.hold as string | undefined }, path);
         if ("code" in timing) issues.push(timing);
         else {
           node.startSeconds = timing.startSeconds;

@@ -10,7 +10,10 @@ export function loadSlice(lobbyId: string, key: string): Promise<CompiledVideo> 
   if (!pending) {
     pending = fetch(`/api/lobbies/${encodeURIComponent(lobbyId)}/video/${key}`, { credentials: "same-origin" }).then(async (res) => {
       if (!res.ok) throw new Error(`video ${res.status}`);
-      return ((await res.json()) as { plan: CompiledVideo }).plan;
+      // Each file names its slice: the server can check the right again after a restart.
+      const via = `?lobby=${encodeURIComponent(lobbyId)}&key=${key}`;
+      const text = (await res.text()).replace(/\/files\/video\/[a-f0-9]{64}\.[a-z0-9]{1,8}(?=")/g, (src) => src + via);
+      return (JSON.parse(text) as { plan: CompiledVideo }).plan;
     });
     pending.catch(() => cache.delete(id));
     if (cache.size >= LIMIT) cache.delete(cache.keys().next().value!);

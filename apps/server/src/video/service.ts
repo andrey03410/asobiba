@@ -67,7 +67,12 @@ export function snapshotSummary(id: string, snapshot: InteractiveSnapshot): Vide
  * playing when Douga is stopped.
  */
 export class VideoService {
-  private readonly imports = new Map<string, Promise<unknown>>();
+  /**
+   * Files are shared between owners by hash, so imports and removals of every owner take
+   * turns: a removal never deletes a file an import is linking, and an import never skips
+   * a download for a file a removal is deleting. Small load (owner and friends) keeps it cheap.
+   */
+  private files: Promise<unknown> = Promise.resolve();
   private readonly manifests = new Map<string, InteractiveSnapshot>();
 
   constructor(
@@ -143,14 +148,13 @@ export class VideoService {
 
   async importSnapshot(ownerId: string, token: string): Promise<VideoSnapshotDto & { reused: boolean }> {
     if (!TOKEN.test(token)) throw new HttpError(400, "bad_token", "Токен douga — строка base64url из video_interactive_publish");
-    const previous = this.imports.get(ownerId) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(() => this.importNow(ownerId, token));
-    this.imports.set(ownerId, run);
-    try {
-      return await run;
-    } finally {
-      if (this.imports.get(ownerId) === run) this.imports.delete(ownerId);
-    }
+    return this.withFiles(() => this.importNow(ownerId, token));
+  }
+
+  private withFiles<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.files.catch(() => undefined).then(fn);
+    this.files = run.catch(() => undefined);
+    return run;
   }
 
   private async fetchDouga(path: string, timeoutMs: number): Promise<Response> {
@@ -196,6 +200,10 @@ export class VideoService {
     if (existing) return { ...snapshotDto(existing), reused: true };
 
     const files = new Map(parsed.files.map((file) => [`${file.hash}${file.ext}`, file]));
+    // Sources become /files/video/<src> in the browser: only files of this snapshot.
+    for (const asset of Object.values(parsed.manifest))
+      for (const src of [asset.src, asset.posterSrc])
+        if (src !== undefined && !files.has(src)) throw new HttpError(422, "bad_snapshot", "Источник медиа снимка не из его файлов");
     for (const file of files.values())
       if (file.bytes > MAX_MEDIA_BYTES) throw new HttpError(413, "too_big", "Файл снимка больше 1 ГиБ");
     const total = [...files.values()].reduce((sum, file) => sum + file.bytes, 0);
@@ -212,18 +220,20 @@ export class VideoService {
     if ((assets._sum.bytes ?? 0) + (await this.poolBytes(ownerId)) + added > MAX_USER_ASSET_BYTES)
       throw conflict("asset_quota", "Пул превышает 10 ГиБ: удалите ненужные файлы или снимки");
 
-    for (const [name, file] of files) {
-      const target = this.abs(join("video", "files", name));
-      const present = await stat(target).then((s) => s.size === file.bytes, () => false);
-      if (present) continue;
-      await this.download(`${base}/files/${name}`, target, file.hash, file.bytes);
-    }
-
+    // Files this import brought: a failed import takes them away again.
+    const fresh: string[] = [];
     const id = newId("vsn");
     const path = join("video", "snapshots", `${id}.json`);
-    await mkdir(dirname(this.abs(path)), { recursive: true });
-    await writeFile(this.abs(path), JSON.stringify(parsed));
     try {
+      for (const [name, file] of files) {
+        const target = this.abs(join("video", "files", name));
+        const present = await stat(target).then((s) => s.size === file.bytes, () => false);
+        if (present) continue;
+        await this.download(`${base}/files/${name}`, target, file.hash, file.bytes);
+        fresh.push(target);
+      }
+      await mkdir(dirname(this.abs(path)), { recursive: true });
+      await writeFile(this.abs(path), JSON.stringify(parsed));
       const row = await this.db.$transaction(async (tx) => {
         for (const file of files.values())
           await tx.videoFile.upsert({
@@ -251,6 +261,7 @@ export class VideoService {
       return { ...snapshotDto(row), reused: false };
     } catch (error) {
       await rm(this.abs(path), { force: true });
+      for (const target of fresh) await rm(target, { force: true });
       throw error;
     }
   }
@@ -285,7 +296,11 @@ export class VideoService {
   }
 
   /** Snapshots in a saved config or an open lobby cannot go. */
-  async remove(ownerId: string, id: string): Promise<{ removed: true }> {
+  remove(ownerId: string, id: string): Promise<{ removed: true }> {
+    return this.withFiles(() => this.removeNow(ownerId, id));
+  }
+
+  private async removeNow(ownerId: string, id: string): Promise<{ removed: true }> {
     const row = await this.owned(ownerId, id);
     const needle = `"${id}"`;
     const configs = await this.db.gameConfig.findMany({ where: { ownerId }, select: { document: true } });
@@ -306,7 +321,7 @@ export class VideoService {
       select: { hash: true, ext: true },
     });
     for (const file of orphans) {
-      await this.db.videoFile.delete({ where: { hash: file.hash } }).catch(() => undefined);
+      await this.db.videoFile.delete({ where: { hash: file.hash } });
       await rm(this.abs(join("video", "files", `${file.hash}${file.ext}`)), { force: true });
     }
     return { removed: true };

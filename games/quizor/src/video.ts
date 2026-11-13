@@ -5,6 +5,7 @@ import {
   type VideoDirective,
   type VideoMatchData,
   type VideoSnapshotSummary,
+  sliceWindow,
   videoDirective,
 } from "@asobiba/sdk";
 import type { Block, Field, Question, QuizorRules } from "./rules";
@@ -74,6 +75,7 @@ function directive(snapshot: string, block: Block, startedAt: number, view: Vide
     snapshot,
     play: block.play,
     startedAt: Math.round(startedAt - (block.startSeconds ?? 0) * 1000),
+    start: block.start ? { momentId: block.start } : null,
     hold: block.hold ? { momentId: block.hold } : null,
     data: sceneData(view, block),
   });
@@ -81,7 +83,8 @@ function directive(snapshot: string, block: Block, startedAt: number, view: Vide
 
 /**
  * Sets `video` (what plays now) and `videoPreload` (scenes the game will show next and
- * may load early) on a view. Only blocks the view already shows, so nothing secret leaks.
+ * may load early) on a view. A slice ends with the scene of its hold, so a reveal kept in
+ * its own scene stays secret until the reveal (see sliceWindow).
  */
 export function attachVideo(view: VideoViewPart, rules: QuizorRules, upcoming: Block[]): void {
   view.video = null;
@@ -159,6 +162,11 @@ export function checkQuizorVideo(
   const issue = (path: string, code: string, message: string, hint?: string) =>
     issues.push({ path, code, message, hint, severity: "error" });
   const questionScenes = new Map<Question, VideoSnapshotSummary["scenes"]>();
+  // Scenes a question waits in, and where its reveal blocks begin: they must differ.
+  const holdScenes = new Map<Question, Set<string>>();
+  const revealStarts: { question: Question; scene: string; path: string }[] = [];
+  const sceneAt = (scenes: VideoSnapshotSummary["scenes"], frame: number) =>
+    scenes.find((s) => s.from <= frame && frame < s.to)?.id;
   for (const { block, path, part, question } of sceneBlocks(rules)) {
     const scenes = sliceOf(summary, block.play!);
     if (!scenes) {
@@ -180,7 +188,27 @@ export function checkQuizorVideo(
     if (block.data === "poll" && question && !question.fields.some((f) => f.settings?.judge === "poll" || rules.defaults.judge === "poll"))
       issue(`${path}.data`, "video_data", "data: poll требует поля с судьёй poll в этом вопросе");
     if (question && part === "blocks") questionScenes.set(question, [...(questionScenes.get(question) ?? []), ...scenes]);
+    const window = sliceWindow(scenes, block.start, block.hold);
+    if (question && !("missing" in window)) {
+      if (part === "blocks" && window.holdFrame !== null) {
+        const id = sceneAt(scenes, window.holdFrame);
+        if (id) holdScenes.set(question, new Set([...(holdScenes.get(question) ?? []), id]));
+      }
+      if (part === "reveal" && block.start) {
+        const id = sceneAt(scenes, window.startFrame);
+        if (id) revealStarts.push({ question, scene: id, path });
+      }
+    }
   }
+  for (const { question, scene, path } of revealStarts)
+    if (holdScenes.get(question)?.has(scene))
+      issues.push({
+        path: `${path}.start`,
+        code: "video_reveal_scene",
+        message: "Раскрытие начинается в той же сцене, где вопрос ждёт ответа: кадры этой сцены после ожидания игроки получают заранее",
+        hint: "Если там ответ, вынесите раскрытие в отдельную сцену douga и начните reveal с неё",
+        severity: "warning",
+      });
   rules.rounds.forEach((round, r) =>
     round.questions.forEach((q, i) => {
       const scenes = questionScenes.get(q) ?? [];
@@ -215,6 +243,9 @@ export const QUIZOR_VIDEO_GUIDE = `## Видео douga
   - \`hold\` — момент, на котором видео ждёт, пока открыт приём ответов. Последний блок
     вопроса со \`hold\` держит кадр весь вопрос.
   - \`start\` — момент, с которого блок продолжает тот же кусок (обычно в reveal: \`start\` = \`hold\`).
+  - Кусок блока кончается сценой его \`hold\`: следующие сцены игроки до раскрытия не получают.
+    Всё, что в сцене ожидания идёт после момента, уходит вместе с ней, поэтому ответ держите
+    в отдельной сцене (иначе предупреждение video_reveal_scene).
   - \`data\`: \`none\` (по умолчанию), \`scores\` (счёт игроков как players), \`poll\` (итог
     голосования вопроса: votes, rank, pickedBy по \`card\` вариантов; только в reveal).
   - Длительность блока сервер считает по кадрам снимка, durationSeconds задавать не нужно.
