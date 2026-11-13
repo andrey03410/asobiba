@@ -22,6 +22,17 @@
         "dev:server"
       ],
       "port": 8787
+    },
+    {
+      "name": "douga-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "../douga",
+        "run",
+        "dev"
+      ],
+      "port": 3000
     }
   ]
 }
