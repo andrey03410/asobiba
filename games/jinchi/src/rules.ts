@@ -37,15 +37,15 @@ export const rulesSchema = z.strictObject({
     roll: z.enum(["auto", "manual"]).default("auto").meta({ title: "Бросок кубиков", enumNames: ["Автоматически", "По кнопке"], description: "auto — бросок в начале хода, manual — по кнопке «Бросить»" }),
   }).prefault({}).meta({ description: "Два кубика с независимо настраиваемыми гранями" }),
   flags: z.strictObject({
-    mode: z.enum(["off", "primary", "bonus"]).default("off"),
-    value: z.int().min(1).max(100_000).default(25),
-    target: z.int().min(0).max(1000).default(0),
-    positions: z.array(cellPositionSchema).max(1000).default([]),
-  }).prefault({}).meta({ description: "Одноразовые флаги: выключены, главный критерий или очковый бонус. target — немедленная цель только primary (0 отключает)" }),
+    mode: z.enum(["off", "primary", "bonus"]).default("off").meta({ title: "Как учитывать флаги", enumNames: ["Выключены", "Главный критерий", "Очки к территории"], description: "Флаги могут определять победителя или приносить очки за каждый одноразовый захват" }),
+    value: z.int().min(1).max(100_000).default(25).meta({ title: "Цена одного флага", description: "Бонус к территории за захват флага в очковом режиме, от 1 до 100 000 очков" }),
+    target: z.int().min(0).max(1000).default(0).meta({ title: "Захватов для победы", description: "Немедленная цель в главном режиме; 0 отключает её, тогда действуют сбор всех флагов и общие лимиты" }),
+    positions: z.array(cellPositionSchema).max(1000).default([]).meta({ title: "Флаги на карте", description: "До 1000 клеток с флагами. Добавляйте и убирайте их кистью в редакторе карты" }),
+  }).prefault({}).meta({ title: "Флаги", description: "Одноразовые цели на карте: главный критерий победы или очки к территории" }),
   effects: z.strictObject({
-    cells: z.array(effectCellSchema).max(1000).default([]),
-    mysteryPool: z.array(weightedEffectSchema).max(100).default(() => DEFAULT_MYSTERY_POOL.map(effect => ({ ...effect }))),
-  }).prefault({}).meta({ description: "Одноразовые спецклетки и общий взвешенный пул неизвестных исходов. cache/trap меняют очки, reroll даёт заряд до 3, lock запрещает поворот следующего собственного хода" }),
+    cells: z.array(effectCellSchema).max(1000).default([]).meta({ title: "Спецклетки на карте", description: "До 1000 одноразовых спецклеток. Добавляйте и убирайте их кистью в редакторе карты" }),
+    mysteryPool: z.array(weightedEffectSchema).max(100).default(() => DEFAULT_MYSTERY_POOL.map(effect => ({ ...effect }))).meta({ title: "Возможные исходы неизвестной клетки", description: "До 100 исходов: тайник, ловушка, запасной бросок или скованность. Вес 0 выключает исход; вероятности считаются по сумме весов" }),
+  }).prefault({}).meta({ title: "Спецклетки и сюрпризы", description: "Настройте возможные бонусы, штрафы, перебросы и помехи. Конкретный исход неизвестной клетки раскрывается при захвате" }),
   placement: z.strictObject({
     adjacency: z.enum(["side", "corner"]).default("side").meta({ title: "Соседство", enumNames: ["Стороной", "Стороной или углом"], description: "side — фигура касается своей территории стороной; corner — также углом" }),
     overlapOwn: z.boolean().default(false).meta({ title: "Разрешить накрывать свою территорию", description: "Разрешить накрывать свои клетки, если хотя бы одна клетка фигуры свободна. Чужие клетки и стены накрывать нельзя" }),

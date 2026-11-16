@@ -69,7 +69,10 @@ export function MapGenerator({ rules, onChange, generate }: Props) {
       setDiagnostics(result.diagnostics);
     } catch (cause) {
       if (cause instanceof GenerationError) setError([cause.message, ...cause.issues.map(issue => issue.message), ...cause.suggestions].join(' '));
-      else setError(cause instanceof Error ? cause.message : 'Не удалось сгенерировать карту');
+      else {
+        const issues = cause && typeof cause === 'object' && 'issues' in cause && Array.isArray(cause.issues) ? cause.issues : [];
+        setError([cause instanceof Error ? cause.message : 'Не удалось сгенерировать карту', ...issues.map(issue => typeof issue?.message === 'string' ? issue.message : '')].filter(Boolean).join(' '));
+      }
     } finally { setBusy(false); }
   };
 

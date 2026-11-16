@@ -138,7 +138,9 @@ describe('MapViewport shared surface', () => {
     expect(html).toContain('Кисть');
     expect(html).toContain('data-ghost="true"');
     expect(html).toContain('aria-label="Миникарта"');
-    expect((html.match(/<path/g) ?? []).length).toBeLessThan(10);
+    // Navigation icons and bounded overlays are allowed; cells must not become
+    // one SVG node each as the board grows.
+    expect((html.match(/<path/g) ?? []).length).toBeLessThan(40);
     expect(html).toContain('Полный экран');
   });
 });

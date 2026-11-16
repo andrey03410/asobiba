@@ -12,6 +12,7 @@ export { MapViewport, MapArtwork } from './MapViewport';
 export type { MapViewportProps } from './MapViewport';
 export { MapEditor } from './MapEditor';
 export { MapGenerator, DiceSettings } from './MapGenerator';
+export { FlagSettings, EffectSettings } from './ObjectSettings';
 export { JINCHI_CSS } from './css';
 
 /** Seeded sample positions use the engine, including manual dice rolls. */

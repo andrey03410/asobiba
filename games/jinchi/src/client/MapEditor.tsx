@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { jinchi, DEFAULT_COLORS } from '../index';
 import type { JinchiRules } from '../rules';
 import { MapViewport } from './MapViewport';
-import { floodMap, historyStep, paintMap, paintObject, resizeLosses, resizeMap, strokePoints, type EditorEffect, type EditorHistory, type MapData, type Symmetry } from './editor-model';
+import { floodMap, historyStep, paintMap, paintObject, resizeLosses, resizeMap, rulesFromEditorMap, strokePoints, type EditorEffect, type EditorHistory, type MapData, type Symmetry } from './editor-model';
 
 type Tool = 'brush' | 'rectangle' | 'fill' | 'pan';
 interface Props { value: MapData; onChange: (map: MapData) => void; rules?: JinchiRules; onRulesChange?: (rules: JinchiRules) => void; generator?: ReactNode }
@@ -42,10 +42,11 @@ export function MapEditor({ value, onChange, rules, onRulesChange, generator }: 
   const emit = useCallback((next: MapData) => {
     live.current = next;
     const clean = { width: next.width, height: next.height, rows: next.rows };
-    emitted.current = clean;
     if (rules && onRulesChange) {
-      onRulesChange({ ...rules, map: clean, flags: { ...rules.flags, positions: next.objects?.flags ?? [] }, effects: { ...rules.effects, cells: next.objects?.effects ?? [] } });
-    } else onChange(clean);
+      const nextRules = rulesFromEditorMap(rules, next);
+      emitted.current = nextRules.map;
+      onRulesChange(nextRules);
+    } else { emitted.current = clean; onChange(clean); }
   }, [onChange, rules, onRulesChange]);
   const commit = useCallback((next: MapData, before = live.current) => {
     const h = historyStep({ ...historyRef.current, present: before }, { type: 'commit', map: next });

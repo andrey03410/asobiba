@@ -8,6 +8,24 @@ import * as sdk from "./index";
 const catalog = sdk.createCatalog([ticTacToe, russkoePole, quizor, jinchi]);
 
 describe("game and match information", () => {
+  it('does not warn about unused random outcomes on a map with only a known reroll', () => {
+    const config = sdk.presetDocument(jinchi);
+    config.rules = jinchi.rulesSchema.parse({ map: { width: 5, height: 5, rows: ['1....', '.....', '.....', '.....', '....2'] }, effects: { cells: [{ x: 2, y: 2, kind: 'reroll' }] } });
+    const information = sdk.describeConfig(jinchi, config);
+    expect(information.summary.highlights.join(' ')).not.toContain('10 %');
+    expect(information.summary.sections.some(section => section.id === 'random')).toBe(false);
+  });
+
+  it('does not advertise a strict composition after balance certification is disabled', () => {
+    const config = sdk.presetDocument(jinchi);
+    const rules = config.rules as any;
+    const rows = [...rules.map.rows]; rows[7] = '.3' + '.'.repeat(14);
+    config.rules = { ...rules, map: { ...rules.map, rows, expectedPlayers: 3, generation: { version: 1, seed: 1, balanced: false, players: 3, shape: 'rectangle', wallDensity: 0 } } };
+    const information = sdk.describeConfig(jinchi, config);
+    expect(information.summary.players).toEqual({ min: 2, max: 3 });
+    expect(information.summary.sections.find(section => section.id === 'starts')?.items.join(' ')).not.toContain('Требуется полный состав');
+  });
+
   it("keeps old documents without author information and validates its limits", () => {
     const input = { sdk: 1, game: "tic-tac-toe", gameVersion: 1 };
     const legacy = sdk.validateConfig(catalog, input);

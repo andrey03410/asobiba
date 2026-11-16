@@ -428,6 +428,13 @@ export function MapViewport({ width, height, cells, colors, wallColor = '#293d45
   const visibleW = Math.max(0, Math.min(width, camera.x + camera.width) - visibleX);
   const visibleH = Math.max(0, Math.min(height, camera.y + camera.height) - visibleY);
 
+  const controls = <nav className="jinchi-map-controls" aria-label="Навигация по карте">
+      <div className="jinchi-control-group"><button type="button" onClick={() => zoom(1.25)} aria-label="Уменьшить масштаб" title="Уменьшить (−)">−</button><output aria-label="Масштаб">{zoomPercent}%</output><button type="button" onClick={() => zoom(.8)} aria-label="Увеличить масштаб" title="Увеличить (+)">+</button></div>
+      <div className="jinchi-control-group"><button type="button" onClick={fit} title="Вся карта (0)"><SvgIcon kind="fit" /><span>Вся карта</span></button><button type="button" onClick={() => focus(focusCells)} disabled={!focusCells.length} title="К моей территории (M)" aria-label="К моей территории"><SvgIcon kind="focus" /><span>К себе</span></button><button type="button" onClick={() => focus(lastCells)} disabled={!lastCells.length} title="К последнему ходу (L)" aria-label="К последнему ходу"><SvgIcon kind="last" /><span>Последний</span></button></div>
+      {objects.some(object => object.kind === 'flag') && <button type="button" title="Ближайший флаг (G)" onClick={() => { const cx = camera.x + camera.width / 2, cy = camera.y + camera.height / 2; const flag = objects.filter(o => o.kind === 'flag').sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0]; if (flag) focus([flag.y * width + flag.x]); }}>⚑<span>К флагу</span></button>}
+      {(!externalFullscreen || externalFullscreen.available) && <button type="button" className="jinchi-fullscreen" onClick={() => { void toggleFullscreen(); }} title="Полный экран (F)" aria-label={shownFullscreen ? 'Выйти из полного экрана' : 'Полный экран'}><SvgIcon kind="fullscreen" /><span>{shownFullscreen ? 'Свернуть' : 'Полный экран'}</span></button>}
+    </nav>;
+
   return <div className={`jinchi-viewport${fullscreen && !externalFullscreen ? ' is-fullscreen' : ''}${fill ? ' is-fill' : ''}${panning ? ' is-panning' : ''}${drawing ? ' is-drawing' : ''}${externalFullscreen ? ' has-external-fullscreen' : ''}`} ref={rootRef} tabIndex={0} onKeyDown={keyDown} onKeyUp={event => { if (event.key === ' ') spaceDown.current = false; }} onBlur={() => { spaceDown.current = false; }} aria-label="Карта Jinchi. Стрелки — перемещение, плюс и минус — масштаб, F — полный экран">
     {toolbar && <div className="jinchi-viewport-toolbar">{toolbar}</div>}
     <div className="jinchi-map-stage">
@@ -443,13 +450,9 @@ export function MapViewport({ width, height, cells, colors, wallColor = '#293d45
           <rect x={visibleX} y={visibleY} width={visibleW} height={visibleH} fill="none" stroke="#152d32" strokeWidth={Math.max(width, height) / 190} />
         </svg></div>}
       </aside>}
+      <details className="jinchi-mobile-navigation"><summary aria-label="Навигация по карте"><SvgIcon kind="map" /><span>Карта</span></summary>{controls}</details>
       <div className="jinchi-map-caption"><span>{width} × {height}</span><span>陣地 · JINCHI</span></div>
     </div>
-    <nav className="jinchi-map-controls" aria-label="Навигация по карте">
-      <div className="jinchi-control-group"><button type="button" onClick={() => zoom(1.25)} aria-label="Уменьшить масштаб" title="Уменьшить (−)">−</button><output aria-label="Масштаб">{zoomPercent}%</output><button type="button" onClick={() => zoom(.8)} aria-label="Увеличить масштаб" title="Увеличить (+)">+</button></div>
-      <div className="jinchi-control-group"><button type="button" onClick={fit} title="Вся карта (0)"><SvgIcon kind="fit" /><span>Вся карта</span></button><button type="button" onClick={() => focus(focusCells)} disabled={!focusCells.length} title="К моей территории (M)" aria-label="К моей территории"><SvgIcon kind="focus" /><span>К себе</span></button><button type="button" onClick={() => focus(lastCells)} disabled={!lastCells.length} title="К последнему ходу (L)" aria-label="К последнему ходу"><SvgIcon kind="last" /><span>Последний</span></button></div>
-      {objects.some(object => object.kind === 'flag') && <button type="button" title="Ближайший флаг (G)" onClick={() => { const cx = camera.x + camera.width / 2, cy = camera.y + camera.height / 2; const flag = objects.filter(o => o.kind === 'flag').sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0]; if (flag) focus([flag.y * width + flag.x]); }}>⚑<span>К флагу</span></button>}
-      {(!externalFullscreen || externalFullscreen.available) && <button type="button" className="jinchi-fullscreen" onClick={() => { void toggleFullscreen(); }} title="Полный экран (F)" aria-label={shownFullscreen ? 'Выйти из полного экрана' : 'Полный экран'}><SvgIcon kind="fullscreen" /><span>{shownFullscreen ? 'Свернуть' : 'Полный экран'}</span></button>}
-    </nav>
+    <div className="jinchi-desktop-navigation">{controls}</div>
   </div>;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { resizeMap, paintMap, floodMap, historyStep, paintObject, resizeLosses, type MapData } from './editor-model';
+import { resizeMap, paintMap, floodMap, historyStep, paintObject, resizeLosses, rulesFromEditorMap, type MapData } from './editor-model';
+import { rulesSchema } from '../rules';
 
 const map: MapData = { width: 3, height: 3, rows: ['1..', '.#.', '..2'] };
 describe('map editor operations', () => {
@@ -54,5 +55,12 @@ describe('map editor operations', () => {
   it('reports cropped base cells and objects before applying a smaller map', () => {
     const original = { width: 5, height: 3, rows: ['1....', '....2', '.....'], objects: { flags: [{ x: 4, y: 2 }], effects: [{ x: 1, y: 1, kind: 'mystery' as const }] } };
     expect(resizeLosses(original, 3, 3)).toEqual({ bases: 1, flags: 1, effects: 0 });
+  });
+  it('enables the bonus criterion when the first flag is deliberately painted', () => {
+    const rules = rulesSchema.parse({ flags: { mode: 'off', value: 75 } });
+    const next = rulesFromEditorMap(rules, { ...rules.map, objects: { flags: [{ x: 8, y: 8 }], effects: [] } });
+    expect(next.flags).toEqual({ mode: 'bonus', value: 75, target: 0, positions: [{ x: 8, y: 8 }] });
+    expect(next.effects.mysteryPool).toEqual(rules.effects.mysteryPool);
+    expect(rules.flags.mode).toBe('off');
   });
 });

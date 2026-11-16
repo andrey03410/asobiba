@@ -1,4 +1,4 @@
-import { DiceSettings, MapEditor, MapGenerator } from "@asobiba/game-jinchi/client";
+import { DiceSettings, EffectSettings, FlagSettings, MapEditor, MapGenerator } from "@asobiba/game-jinchi/client";
 import { rulesSchema as jinchiRulesSchema, type JinchiRules } from '@asobiba/game-jinchi';
 import type { ConfigDto, CreateLobbyRequest } from "@asobiba/api";
 import {
@@ -418,6 +418,8 @@ export function NewLobbyPage() {
                       ...(gameId === "jinchi"
                         ? {
                             'rules.dice.sides': ({ value, onChange }) => <DiceSettings value={value} onChange={onChange} />,
+                            'rules.flags': ({ value, onChange }) => <FlagSettings value={value as JinchiRules['flags']} onChange={onChange} />,
+                            'rules.effects': ({ value, onChange }) => <EffectSettings value={value as JinchiRules['effects']} onChange={onChange} />,
                             "rules.map": ({ value, onChange }) => {
                               const map =
                                 isPlainObject(value) &&

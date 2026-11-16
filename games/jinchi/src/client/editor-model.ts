@@ -1,8 +1,15 @@
+import type { JinchiRules } from '../rules';
+
 export interface EditorPosition { x: number; y: number }
 export interface EditorEffect extends EditorPosition { kind: 'cache' | 'trap' | 'reroll' | 'lock' | 'mystery'; value?: number }
 export interface MapData { width: number; height: number; rows: string[]; objects?: { flags: EditorPosition[]; effects: EditorEffect[] } }
 export type Symmetry = 'off' | 'horizontal' | 'vertical' | 'quarters' | 'rotate';
 export interface EditorHistory { past: MapData[]; present: MapData; future: MapData[] }
+export function rulesFromEditorMap(rules: JinchiRules, map: MapData): JinchiRules {
+  const positions = map.objects?.flags ?? [];
+  const mode = rules.flags.mode === 'off' && positions.length > 0 ? 'bonus' : rules.flags.mode;
+  return { ...rules, map: { width: map.width, height: map.height, rows: map.rows }, flags: { ...rules.flags, mode, target: mode === 'primary' ? rules.flags.target : 0, positions }, effects: { ...rules.effects, cells: map.objects?.effects ?? [] } };
+}
 export function resizeLosses(map: MapData, width: number, height: number): { bases: number; flags: number; effects: number } {
   let bases = 0;
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if ((x >= width || y >= height) && /^[1-8]$/.test(map.rows[y]?.[x] ?? '.')) bases++;
