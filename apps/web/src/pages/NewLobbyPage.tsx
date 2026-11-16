@@ -1,4 +1,5 @@
-import { MapEditor } from "@asobiba/game-jinchi/client";
+import { DiceSettings, MapEditor, MapGenerator } from "@asobiba/game-jinchi/client";
+import { rulesSchema as jinchiRulesSchema, type JinchiRules } from '@asobiba/game-jinchi';
 import type { ConfigDto, CreateLobbyRequest } from "@asobiba/api";
 import {
   type ConfigDocument,
@@ -22,6 +23,7 @@ import { ConfigPreview } from "../components/ConfigPreview";
 import { IssueList } from "../components/IssueList";
 import { SchemaForm } from "../components/SchemaForm";
 import { QuizSummary } from "../components/QuizSummary";
+import { AuthorInformationFields, GameInformation } from "../components/GameInformation";
 import { catalog } from "../games";
 import { isPlainObject } from "../jsonSchema";
 import { useToast } from "../toast";
@@ -189,6 +191,11 @@ export function NewLobbyPage() {
     if (result?.ok) setLastValid(result.config);
   }, [result]);
   const issues = result?.issues ?? [];
+  const jinchiEditorRules = useMemo(() => {
+    if (gameId !== 'jinchi' || !isPlainObject(doc)) return undefined;
+    const parsed = jinchiRulesSchema.safeParse(doc.rules);
+    return parsed.success ? parsed.data : undefined;
+  }, [gameId, doc]);
   const ok = localCheck ? result?.ok === true : doc !== null;
 
   const docTitle =
@@ -368,7 +375,15 @@ export function NewLobbyPage() {
             className={`card create-editor${gameId === "jinchi" ? " create-editor-jinchi" : ""}`}
           >
             {gameId === "quizor" ? (
-              <QuizSummary rules={isPlainObject(doc) ? doc.rules : null} />
+              <>
+                <QuizSummary rules={isPlainObject(doc) ? doc.rules : null} />
+                <AuthorInformationFields value={isPlainObject(doc) ? doc.info : undefined} onChange={(info) => {
+                  if (!isPlainObject(doc)) return;
+                  const next = { ...doc };
+                  if (info) next.info = info; else delete next.info;
+                  setDoc(next);
+                }} />
+              </>
             ) : (
               <>
                 <div className="tabs" role="tablist">
@@ -398,9 +413,11 @@ export function NewLobbyPage() {
                     value={doc}
                     onChange={setDoc}
                     issues={issues}
-                    overrides={
-                      gameId === "jinchi"
+                    overrides={{
+                      info: ({ value, onChange }) => <AuthorInformationFields value={value} onChange={onChange} />,
+                      ...(gameId === "jinchi"
                         ? {
+                            'rules.dice.sides': ({ value, onChange }) => <DiceSettings value={value} onChange={onChange} />,
                             "rules.map": ({ value, onChange }) => {
                               const map =
                                 isPlainObject(value) &&
@@ -420,13 +437,17 @@ export function NewLobbyPage() {
                                       height: 16,
                                       rows: Array(16).fill(".".repeat(16)),
                                     };
-                              return (
-                                <MapEditor value={map} onChange={onChange} />
-                              );
+                              const rules = jinchiEditorRules;
+                              const updateRules = (next: JinchiRules) => setDoc((current: unknown) => isPlainObject(current) ? { ...current, rules: next } : current);
+                              return <MapEditor value={map} onChange={onChange} rules={rules} onRulesChange={updateRules} generator={rules ? <MapGenerator rules={rules} onChange={updateRules} generate={async request => {
+                                const response = await api.generateJinchi(request);
+                                const generated = response.config.rules as JinchiRules;
+                                return { map: generated.map, flags: generated.flags, effects: generated.effects, diagnostics: response.diagnostics };
+                              }} /> : undefined} />;
                             },
                           }
-                        : undefined
-                    }
+                        : {}),
+                    }}
                   />
                 ) : (
                   <div className="json-editor">
@@ -454,6 +475,9 @@ export function NewLobbyPage() {
           </section>
 
           <aside className="create-side">
+            {result?.ok && <section className="card">
+              <GameInformation information={{ game: caps.info, summary: result.summary, ...(result.config.info?.title || result.config.info?.text ? { author: result.config.info } : {}) }} />
+            </section>}
             <section className="card preview-card">
               <div className="preview-head">
                 <h2>Превью</h2>

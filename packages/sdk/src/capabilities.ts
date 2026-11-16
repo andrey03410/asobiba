@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { type ConfigDocument, documentSchema, type GameCatalog, presetDocument } from "./config";
 import type { AnyGame, SlotDescriptor, ThemeDescriptor } from "./game";
+import { gameInformation, type GameInformation, type TuningDirection } from "./info";
 
 /** Explains the parts of a config document that are the same for every game. */
-export const SDK_GUIDE = `Конфиг — JSON-документ { sdk, game, gameVersion, title, rules, series, timer, visual }.
+export const SDK_GUIDE = `Конфиг — JSON-документ { sdk, game, gameVersion, title, info?, rules, series, timer, visual }.
+- info — необязательное вступление автора: title до 80, text до 2000 символов; обычный текст, не правила.
 - rules — правила конкретной игры, детали описаны в configSchema и guide игры.
 - series — серия раундов: rounds, firstPlayer, stopWhenDecided. Общая для всех игр.
 - timer — таймер хода (только пошаговые игры): turnSeconds (0 — без таймера), onTimeout.
@@ -24,6 +26,8 @@ export interface GameSummary {
 }
 
 export interface GameCapabilities extends GameSummary {
+  info: GameInformation;
+  tuning: TuningDirection[];
   sdkGuide: string;
   guide: string;
   configSchema: unknown;
@@ -59,6 +63,8 @@ export function configJsonSchema(game: AnyGame): unknown {
 export function describeGame(game: AnyGame): GameCapabilities {
   return {
     ...summarizeGame(game),
+    info: gameInformation(game),
+    tuning: game.tuning ?? [],
     sdkGuide: SDK_GUIDE,
     guide: game.guide,
     configSchema: configJsonSchema(game),

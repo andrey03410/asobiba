@@ -1,5 +1,5 @@
 import type { ConfigDto } from "@asobiba/api";
-import { collectAssetRefs, type ConfigDocument, type ConfigIssue, type GameCatalog, validateConfig, type VideoPlay, type VideoSnapshotSummary } from "@asobiba/sdk";
+import { collectAssetRefs, describeConfig, type ConfigDocument, type ConfigIssue, type ConfigSummary, type GameCatalog, validateConfig, type VideoPlay, type VideoSnapshotSummary } from "@asobiba/sdk";
 import type { GameConfig, Prisma } from "../generated/prisma/client";
 import type { AssetService } from "../assets/service";
 import { MAX_CONFIG_MEDIA_BYTES } from "../assets/media";
@@ -12,7 +12,7 @@ import { newId } from "../ids";
 export const MAX_CONFIGS_PER_USER = 200;
 export const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 
-export type UserValidation = { ok: true; config: ConfigDocument; issues: ConfigIssue[] } | { ok: false; config: null; issues: ConfigIssue[] };
+export type UserValidation = { ok: true; config: ConfigDocument; issues: ConfigIssue[]; summary: ConfigSummary } | { ok: false; config: null; issues: ConfigIssue[] };
 
 export function configDto(row: GameConfig): ConfigDto {
   return {
@@ -80,7 +80,7 @@ export class ConfigService {
       const enrichedSize = documentSizeIssues(res.config);
       if (enrichedSize.length > 0) return { ok: false, config: null, issues: enrichedSize };
     }
-    return { ok: true, config: res.config, issues: res.issues };
+    return { ok: true, config: res.config, issues: res.issues, summary: describeConfig(game!, res.config).summary };
   }
 
   /** `scene` blocks get their start and length from the snapshot frames. */

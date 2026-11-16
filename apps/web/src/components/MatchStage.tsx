@@ -25,6 +25,7 @@ interface Props {
   busy: boolean;
   /** Lobby panel content: players, link, host actions, rules. */
   drawer: ReactNode;
+  information?: ReactNode;
 }
 
 interface HudSnapshot {
@@ -94,10 +95,12 @@ function FullscreenIcon({ active }: { active: boolean }) {
  * The match stage: once a match is on, the lobby steps aside and the board takes
  * the whole window. A slim bar keeps the turn, the clock and the way back.
  */
-export function MatchStage({ lobby, match, config, client, mySeat, seatName, clockOffset, online, onAction, onControl, controlRole, onPlayAgain, onLeave, busy, drawer }: Props) {
+export function MatchStage({ lobby, match, config, client, mySeat, seatName, clockOffset, online, onAction, onControl, controlRole, onPlayAgain, onLeave, busy, drawer, information }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(rootRef);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [informationOpen, setInformationOpen] = useState(false);
+  const boardHud = client.stageHud === 'board';
   const [resultHidden, setResultHidden] = useState(false);
   // While the board holds (a wheel still spinning), the HUD shows the match as it
   // was before the update that started the animation. The board reports the hold
@@ -141,29 +144,31 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
   }, [held]);
 
   useEffect(() => {
-    if (!drawerOpen) return;
+    if (!drawerOpen && !informationOpen) return;
     const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDrawerOpen(false);
+      if (event.key === "Escape") { setDrawerOpen(false); setInformationOpen(false); }
     };
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
-  }, [drawerOpen]);
+  }, [drawerOpen, informationOpen]);
 
   const playerNames = Array.from({ length: match.seats }, (_, seat) => seatName(seat));
   const { SeatIcon } = client;
+  const resultSummary = result ? client.resultSummary?.(match, config) : undefined;
 
   return (
-    <div className={`stage${fullscreen.active ? " is-fullscreen" : ""}`} ref={rootRef} data-game={lobby.gameId}>
+    <div className={`stage${fullscreen.active ? " is-fullscreen" : ""}${boardHud ? ' has-board-hud' : ''}`} ref={rootRef} data-game={lobby.gameId}>
       <header className="stage-bar">
         <button type="button" className="stage-btn stage-lobby" onClick={() => (shown.phase === "finished" ? onLeave() : setDrawerOpen(true))} title={shown.phase === "finished" ? "Вернуться в лобби" : "Игроки, ссылка и правила"}>
           <span aria-hidden="true">{shown.phase === "finished" ? "←" : "☰"}</span>
           <span className="stage-btn-text">Лобби</span>
         </button>
+        {information && <button type="button" className="stage-btn" onClick={() => setInformationOpen(true)}>Об игре</button>}
         <div className="stage-title">
           <b>{lobby.name}</b>
           <span>{lobby.gameTitle}</span>
         </div>
-        <div className="stage-status" aria-live="polite">
+        {!boardHud && <div className="stage-status" aria-live="polite">
           {series && (
             <span className="stage-chip">
               Раунд {match.round} из {match.rounds}
@@ -173,7 +178,7 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
           {shown.phase === "intermission" && <span className="stage-chip">Перерыв</span>}
           {shown.phase === "finished" && <span className="stage-chip">Партия окончена</span>}
           {shown.phase === "playing" && !held && match.turnDeadline !== null && <StageTimer deadline={match.turnDeadline} clockOffset={clockOffset} max={config.timer.turnSeconds || Infinity} />}
-        </div>
+        </div>}
         {series && (
           <ol className="stage-score" aria-label="Счёт серии">
             {match.scores.map((score, seat) => (
@@ -227,6 +232,7 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
                     : `Победу делят ${names(result.winners, seatName)}`}
               </h2>
               {match.lastRound?.summary && <p className="stage-result-why">{match.lastRound.summary}</p>}
+              {resultSummary && <dl className="stage-result-scores">{resultSummary.map(row => <div key={row.seat}><dt>{seatName(row.seat)} · {row.label}</dt><dd>{row.detail}</dd></div>)}</dl>}
               {series && <p className="stage-result-why">Счёт серии {result.scores.join(" : ")}</p>}
               <div className="stage-result-actions">
                 {onPlayAgain && (
@@ -259,6 +265,7 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
           </aside>
         </div>
       )}
+      {informationOpen && <div className="stage-drawer-backdrop" onClick={() => setInformationOpen(false)}><aside className="stage-drawer" role="dialog" aria-modal="true" aria-label="Об игре" onClick={event => event.stopPropagation()}><div className="stage-drawer-head"><b>Об игре</b><button type="button" className="stage-btn" onClick={() => setInformationOpen(false)} aria-label="Закрыть">✕</button></div>{information}</aside></div>}
     </div>
   );
 }

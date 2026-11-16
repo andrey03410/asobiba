@@ -71,6 +71,10 @@ export interface PreviewTarget {
 
 export interface GameClient<Component = unknown, Icon = unknown> {
   gameId: string;
+  /** The board owns the turn indicator and timer on the stage. */
+  stageHud?: "board";
+  /** Public breakdown rendered in the common result card. */
+  resultSummary?(match: MatchView, config: ConfigDocument): { seat: number; label: string; detail: string }[];
   Board: Component;
   SeatIcon: Icon;
   /** CSS for animations; inject once per page. */

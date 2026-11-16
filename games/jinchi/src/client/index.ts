@@ -1,7 +1,7 @@
 import { createRng, Match } from '@asobiba/sdk';
 import type { BoardProps, ConfigDocument, GameClient, MatchView, SeatIconProps } from '@asobiba/sdk';
 import type { ComponentType } from 'react';
-import { findPlacements, jinchi } from '../game';
+import { jinchi } from '../game';
 import type { JinchiView } from '../game';
 import { JinchiBoard, JinchiSeatIcon } from './Board';
 import { JINCHI_CSS } from './css';
@@ -11,6 +11,7 @@ export { JinchiBoard, JinchiSeatIcon } from './Board';
 export { MapViewport, MapArtwork } from './MapViewport';
 export type { MapViewportProps } from './MapViewport';
 export { MapEditor } from './MapEditor';
+export { MapGenerator, DiceSettings } from './MapGenerator';
 export { JINCHI_CSS } from './css';
 
 /** Seeded sample positions use the engine, including manual dice rolls. */
@@ -34,8 +35,8 @@ export function previewMatch(config: ConfigDocument, moment: 'start' | 'end', se
       if (!view.dice) {
         if (!match.dispatch(seat, { type: 'roll' }, turn).ok) break;
       } else {
-        const placements = findPlacements(view, seat);
-        if (!placements.length || !match.dispatch(seat, rng.pick(placements), turn).ok) break;
+        const action = jinchi.sampleAction?.(view, seat, { rules: view.rules, seats, rng, now: turn });
+        if (!action || !match.dispatch(seat, action, turn).ok) break;
       }
     }
   }
@@ -48,4 +49,9 @@ export const jinchiClient: GameClient<ComponentType<BoardProps>, ComponentType<S
   SeatIcon: JinchiSeatIcon,
   css: JINCHI_CSS + JINCHI_EDITOR_CSS,
   previewMatch,
+  stageHud: 'board',
+  resultSummary(match) {
+    const view = match.game as JinchiView;
+    return view.scores.map((cells, seat) => ({ seat, label: `${(view.points ?? view.scores)[seat]} очков${view.rules.flags?.mode === 'primary' ? ` · ${view.flagCounts?.[seat] ?? 0} флагов` : ''}`, detail: `${cells} клеток + ${view.flagCounts?.[seat] ?? 0} флагов${view.rules.flags?.mode === 'bonus' ? ` × ${view.rules.flags.value}` : ''} + ${view.effectPoints?.[seat] ?? 0} за эффекты${view.eliminated[seat] ? ' · выбыл' : ''}` }));
+  },
 };

@@ -6,6 +6,7 @@ import {
   type SetupContext,
   type VideoDirective,
 } from "@asobiba/sdk";
+import { QUIZOR_INFO, QUIZOR_TUNING, summarizeQuizorConfig } from "./info";
 import { z } from "zod";
 import {
   answersSchema,
@@ -3358,6 +3359,9 @@ export const quizor = defineGame<
   title: "Quizor",
   summary: "Гибкий квиз: тайные ответы, табло, медиа, ставки и финалы",
   kind: "turn",
+  info: QUIZOR_INFO,
+  tuning: QUIZOR_TUNING,
+  summarizeConfig: summarizeQuizorConfig,
   rulesSchema,
   visualSchema,
   actionSchema,

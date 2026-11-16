@@ -3,10 +3,12 @@ import { stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ClientMessage, CreateLobbyRequest, ServerMessage, UserDto } from "@asobiba/api";
 import { describeGame, listGames } from "@asobiba/sdk";
+import { packJinchiMatch } from "@asobiba/game-jinchi/wire";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Services } from "./app";
 import { FailureLimiter } from "./auth/rate-limit";
+import { generateJinchiConfiguration } from './games/generate-jinchi';
 import { SESSION_TTL_MS } from "./auth/service";
 import type { AssetBody } from "./assets/service";
 import { MAX_MEDIA_BYTES, parseFileRange } from "./assets/media";
@@ -176,6 +178,11 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     const game = s.catalog.get(parse(idParam, req.params).id);
     if (!game) throw notFound("Игра не найдена");
     return { game: describeGame(game) };
+  });
+  app.post('/api/games/jinchi/generate', async (req) => {
+    const user = requireAccount(req);
+    const body = parse(z.strictObject({ request: z.unknown() }), req.body);
+    return generateJinchiConfiguration(s, user.id, body.request);
   });
 
   // ---------- configs ----------
@@ -351,6 +358,10 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       return;
     }
     const send = (msg: ServerMessage) => {
+      if (msg.type === "match" && msg.match) {
+        const game = msg.match.game as { width?: number; height?: number } | null;
+        if (game && typeof game.width === "number" && typeof game.height === "number" && game.width * game.height > 200 * 200) msg = { ...msg, match: packJinchiMatch(msg.match) };
+      }
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
     };
     const sub: Subscriber = { userId: user.id, send, closed: () => socket.readyState === socket.CLOSING || socket.readyState === socket.CLOSED };

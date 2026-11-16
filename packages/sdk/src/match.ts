@@ -274,12 +274,21 @@ export class Match {
     } else {
       // random (also the fallback for games without passTurn): finish the turn with random moves
       for (let i = 0; i < 16 && this.phase === "playing"; i++) {
-        const legal = this.game.legalActions(this.state, seat, this.ctx(at));
-        if (legal.length === 0) {
+        let action: unknown;
+        let available: boolean;
+        if (this.game.sampleAction) {
+          action = this.game.sampleAction(this.state, seat, this.ctx(at));
+          available = action !== null;
+        } else {
+          const legal = this.game.legalActions(this.state, seat, this.ctx(at));
+          available = legal.length > 0;
+          if (available) action = this.rng.pick(legal);
+        }
+        if (!available) {
           if (this.game.passTurn) this.state = this.game.passTurn(this.state, seat, this.ctx(at));
           break;
         }
-        const next = this.game.applyAction(this.state, seat, this.rng.pick(legal), this.ctx(at));
+        const next = this.game.applyAction(this.state, seat, action, this.ctx(at));
         if (isActionError(next)) break;
         this.state = next;
         if (this.game.roundResult(this.state) || this.currentTurnKey() !== startKey) break;
@@ -385,7 +394,7 @@ export class Match {
     if (rr || this.game.kind !== "turn" || this.game.applyControl || this.game.nextWakeAt) return rr;
     const seats = this.game.currentSeats(this.state);
     const ctx = this.ctx(at);
-    if (seats.some((s) => this.game.legalActions(this.state, s, ctx).length > 0)) return null;
+    if (seats.some((s) => this.game.hasLegalAction ? this.game.hasLegalAction(this.state, s, ctx) : this.game.legalActions(this.state, s, ctx).length > 0)) return null;
     return { winners: [], losers: [], draw: true, reason: "no-moves", summary: "ходов нет" };
   }
 }

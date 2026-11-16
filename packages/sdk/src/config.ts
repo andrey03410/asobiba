@@ -3,6 +3,7 @@ import type { AnyGame, ConfigPreset } from "./game";
 import { type ConfigIssue, hasErrors, issuesFromZod, prefixIssues } from "./issues";
 import type { VideoSnapshotSummary } from "./video";
 import { ASSET_ID, type SeriesSettings, seriesSchema, type TimerSettings, timerSchema } from "./schema";
+import { describeConfig, type AuthorInformation, type ConfigSummary } from "./info";
 
 export const SDK_VERSION = 1;
 
@@ -11,6 +12,7 @@ export interface ConfigDocument<R = unknown, V = unknown> {
   game: string;
   gameVersion: number;
   title: string;
+  info?: AuthorInformation;
   rules: R;
   series: SeriesSettings;
   timer: TimerSettings;
@@ -36,6 +38,10 @@ export function documentSchema(game: AnyGame) {
       game: z.literal(game.id).meta({ description: "id игры" }),
       gameVersion: z.literal(game.version).meta({ description: "Версия схемы игры" }),
       title: z.string().trim().min(1).max(80).default(game.title).meta({ description: "Название конфига, видно в лобби" }),
+      info: z.strictObject({
+        title: z.string().trim().max(80).optional().meta({ title: "Заголовок вступления", description: "Необязательный авторский заголовок, до 80 символов" }),
+        text: z.string().trim().max(2000).optional().meta({ title: "Текст вступления", description: "Обычный текст с абзацами, до 2000 символов. Не меняет системные правила" }),
+      }).optional().meta({ title: "Вступление автора", description: "Необязательное обращение к друзьям. Обычный текст без вставок и медиа" }),
       rules: game.rulesSchema,
       series: seriesSchema,
       timer: timerSchema,
@@ -45,7 +51,7 @@ export function documentSchema(game: AnyGame) {
 }
 
 export type ValidationResult =
-  | { ok: true; config: ConfigDocument; issues: ConfigIssue[] }
+  | { ok: true; config: ConfigDocument; issues: ConfigIssue[]; summary: ConfigSummary }
   | { ok: false; issues: ConfigIssue[] };
 
 function issue(path: string, code: string, message: string, hint?: string): ConfigIssue {
@@ -109,7 +115,7 @@ export function validateConfig(catalog: GameCatalog, input: unknown, options: Va
     issues.push(issue("timer.turnSeconds", "timer_realtime", "Таймер хода есть только у пошаговых игр", "Поставьте 0"));
   }
   if (hasErrors(issues)) return { ok: false, issues };
-  return { ok: true, config, issues };
+  return { ok: true, config, issues, summary: describeConfig(game, config).summary };
 }
 
 /** Full normalized document for a preset (or schema defaults when no preset is given). */
@@ -119,6 +125,7 @@ export function presetDocument(game: AnyGame, preset?: ConfigPreset): ConfigDocu
     game: game.id,
     gameVersion: game.version,
     title: preset?.config.title ?? preset?.title ?? game.title,
+    ...(preset?.config.info ? { info: preset.config.info } : {}),
     rules: preset?.config.rules ?? {},
     series: preset?.config.series ?? {},
     timer: preset?.config.timer ?? {},

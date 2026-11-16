@@ -1,4 +1,5 @@
 import type { ConfigPreset } from "@asobiba/sdk";
+import { GENERATED_PRESETS } from './generated-presets';
 
 type Position = readonly [number, number];
 function map(width: number, height: number, starts: readonly Position[], walls: (x: number, y: number) => boolean = () => false) {
@@ -18,3 +19,7 @@ export const PRESETS: ConfigPreset[] = [
   { id: "mainland", title: "Материк", description: "120×80 на шестерых: огромная карта с озёрами", config: { title: "Jinchi: Материк", rules: { map: map(120, 80, [[1, 1], [117, 77], [117, 1], [1, 77], [59, 1], [59, 77]], (x, y) => ((x - 35) ** 2 / 100 + (y - 40) ** 2 / 49 < 1) || ((x - 85) ** 2 / 100 + (y - 40) ** 2 / 49 < 1)), end: { maxRounds: 100 } } } },
   { id: "octahedrons", title: "Восьмигранники", description: "80×60 на восьмерых, d8 и защищённые базы", config: { title: "Jinchi: Восьмигранники", rules: { map: map(80, 60, [[1, 1], [77, 57], [77, 1], [1, 57], [39, 1], [39, 57], [1, 29], [77, 29]]), dice: { sides: 8 }, capture: { opponents: "except-starts" }, placement: { adjacency: "corner" }, end: { maxRounds: 100 } } } },
 ];
+
+/** Legacy named presets keep their published rules and order; the catalogue
+ * recommends the new ordinary game first. */
+export const JINCHI_PRESETS: ConfigPreset[] = [...GENERATED_PRESETS, ...PRESETS];

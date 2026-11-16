@@ -1,4 +1,5 @@
 import { actionError, defineGame, type RoundResult, type Seat } from "@asobiba/sdk";
+import { TIC_TAC_TOE_INFO, TIC_TAC_TOE_TUNING, summarizeTicTacToeConfig } from "./info";
 import { z } from "zod";
 import { TIC_TAC_TOE_GUIDE } from "./guide";
 import { PRESETS } from "./presets";
@@ -103,6 +104,9 @@ export const ticTacToe = defineGame({
   title: "Крестики-нолики",
   summary: "Линии на поле до 15×15: 2–4 игрока, гравитация, мизер, несколько ходов за ход, свой визуал",
   kind: "turn",
+  info: TIC_TAC_TOE_INFO,
+  tuning: TIC_TAC_TOE_TUNING,
+  summarizeConfig: summarizeTicTacToeConfig,
   rulesSchema,
   visualSchema,
   actionSchema,

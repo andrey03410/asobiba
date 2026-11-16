@@ -15,6 +15,9 @@ function board(rows: string[], patch: Record<string, unknown> = {}): JinchiState
   return {
     width: r.map.width, height: r.map.height, rules: r, cells, bases: cells.map(() => -1), currentSeat: 0, turn: 0, cycle: 1,
     dice: [1, 1], scores: Array.from({ length: seats }, (_, seat) => cells.filter((n) => n === seat).length),
+    points: Array.from({ length: seats }, (_, seat) => cells.filter((n) => n === seat).length),
+    flagCounts: Array(seats).fill(0), effectPoints: Array(seats).fill(0), rerollCharges: Array(seats).fill(0),
+    rotationLocked: Array(seats).fill(false), turnRotationLocked: false, rerolled: false, impossibleRoll: false, flags: [], effects: [],
     eliminated: Array.from({ length: seats }, () => false), events: [], lastMove: null, result: null, area: cells.filter((n) => n !== -2).length,
   };
 }

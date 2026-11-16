@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { resizeMap, paintMap, floodMap, historyStep, type MapData } from './editor-model';
+import { resizeMap, paintMap, floodMap, historyStep, paintObject, resizeLosses, type MapData } from './editor-model';
 
 const map: MapData = { width: 3, height: 3, rows: ['1..', '.#.', '..2'] };
 describe('map editor operations', () => {
   it('preserves the upper left intersection when resizing', () => {
     expect(resizeMap(map, 4, 3).rows).toEqual(['1...', '.#..', '..2.']);
     expect(resizeMap(map, 3, 4).rows).toEqual(['1..', '.#.', '..2', '...']);
-    expect(resizeMap(map, 999, -1)).toMatchObject({ width: 200, height: 3 });
+    expect(resizeMap(map, 1000, -1)).toMatchObject({ width: 1000, height: 3 });
   });
   it('mirrors bases with successive numbers without overwriting a central cell', () => {
     const blank = { width: 5, height: 5, rows: Array(5).fill('.....') };
@@ -29,5 +29,30 @@ describe('map editor operations', () => {
     expect(historyStep(h, { type: 'redo' }).present.rows).toEqual(['1##', '.#.', '..2']);
     h = historyStep(h, { type: 'commit', map: resizeMap(map, 4, 3) });
     expect(h.future).toEqual([]);
+  });
+  it('keeps untouched rows shared when painting a million-cell map', () => {
+    const rows = Array(1000).fill('.'.repeat(1000));
+    const next = paintMap({ width: 1000, height: 1000, rows }, [[999, 999]], '#', 'off');
+    expect(next.rows[999].at(-1)).toBe('#');
+    expect(next.rows[0]).toBe(rows[0]);
+    expect(rows[999].at(-1)).toBe('.');
+  });
+  it('clips objects on resize and restores them with undo', () => {
+    const original = { width: 5, height: 3, rows: ['.....', '.....', '.....'], objects: { flags: [{ x: 4, y: 2 }], effects: [{ x: 1, y: 1, kind: 'mystery' as const }] } };
+    const resized = resizeMap(original, 3, 3) as typeof original;
+    expect(resized.objects.flags).toEqual([]);
+    expect(resized.objects.effects).toEqual([{ x: 1, y: 1, kind: 'mystery' }]);
+    const h = historyStep({ past: [], present: original, future: [] }, { type: 'commit', map: resized });
+    expect((historyStep(h, { type: 'undo' }).present as typeof original).objects.flags).toEqual([{ x: 4, y: 2 }]);
+  });
+  it('refuses an object on a base and removes an object when its cell becomes wall', () => {
+    expect(paintObject(map, 0, 0, 'flag')).toEqual(map);
+    const withFlag = paintObject(map, 1, 0, 'flag');
+    expect(withFlag.objects?.flags).toEqual([{ x: 1, y: 0 }]);
+    expect(paintMap(withFlag, [[1, 0]], '#', 'off').objects?.flags).toEqual([]);
+  });
+  it('reports cropped base cells and objects before applying a smaller map', () => {
+    const original = { width: 5, height: 3, rows: ['1....', '....2', '.....'], objects: { flags: [{ x: 4, y: 2 }], effects: [{ x: 1, y: 1, kind: 'mystery' as const }] } };
+    expect(resizeLosses(original, 3, 3)).toEqual({ bases: 1, flags: 1, effects: 0 });
   });
 });

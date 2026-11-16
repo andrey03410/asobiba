@@ -1,4 +1,5 @@
 import { actionError, defineGame, type RoundResult, type Seat } from "@asobiba/sdk";
+import { POLE_INFO, POLE_TUNING, summarizePoleConfig } from "./info";
 import { z } from "zod";
 import { alphabetChars, alphabetSet, canonChar, canonText, isVowel } from "./alphabet";
 import { getWordBank, type BankWord } from "./bank-slot";
@@ -757,6 +758,9 @@ export const russkoePole = defineGame({
   title: "Русское поле",
   summary: "Словесная игра с барабаном на 1–5 игроков: раунды, суперигра и Схватка",
   kind: "turn",
+  info: POLE_INFO,
+  tuning: POLE_TUNING,
+  summarizeConfig: summarizePoleConfig,
   rulesSchema,
   visualSchema,
   actionSchema,

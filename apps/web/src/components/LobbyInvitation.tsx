@@ -18,6 +18,8 @@ export function LobbyInvitation({ invitation: lobby, name, error, busy, onName, 
     <p className="muted small">Вас пригласили сыграть</p>
     <h1>{closed ? "Лобби закрыто" : lobby.name}</h1>
     <p>{lobby.gameTitle} · хозяин {lobby.host}</p>
+    <p>{lobby.description}</p>
+    {lobby.parameters?.length > 0 && <ul className="lobby-rules">{lobby.parameters.map((item, i) => <li key={i}>{item}</li>)}</ul>}
     <p><StatusBadge status={lobby.status} /> <span className="muted">Игроки: {lobby.players}/{lobby.seats}</span></p>
     {closed ? <p className="muted">Хозяин закрыл это лобби. Попросите у него новую ссылку.</p> : <form onSubmit={(event) => { event.preventDefault(); onJoin(canPlay ? "player" : "spectator"); }}>
       {!canPlay && <p className="notice">{lobby.status === "playing" ? "Партия уже идёт. Пока можно смотреть, а занять свободное место — после её окончания." : "Все места заняты. Можно смотреть и присоединиться, когда место освободится."}</p>}

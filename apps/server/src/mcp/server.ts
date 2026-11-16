@@ -9,6 +9,8 @@ import type { Services } from "../app";
 import { badRequest, HttpError, notFound } from "../http-errors";
 import { renderPreview } from "../preview/render";
 import { MCP_INSTRUCTIONS } from "./instructions";
+import { generationSchema } from '@asobiba/game-jinchi';
+import { generateJinchiConfiguration } from '../games/generate-jinchi';
 
 function json(value: unknown): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
@@ -29,7 +31,7 @@ async function run(fn: () => Promise<CallToolResult>): Promise<CallToolResult> {
   }
 }
 
-const configArg = z.record(z.string(), z.unknown()).describe("Документ конфига { sdk, game, gameVersion, title, rules, series, timer, visual }");
+const configArg = z.record(z.string(), z.unknown()).describe("Документ конфига { sdk, game, gameVersion, title, info?, rules, series, timer, visual }");
 
 /** One MCP server per request (stateless transport), acting as the token owner. */
 export function createMcpServer(user: UserDto, s: Services): McpServer {
@@ -40,6 +42,11 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     if (!res.ok) throw new HttpError(422, "invalid_config", "Конфиг не прошёл проверку — сначала исправьте его (config_validate)", res.issues);
     return res;
   };
+  const configSource = async ({ config, configId }: { config?: unknown; configId?: string }) => {
+    if ((config !== undefined) === (configId !== undefined)) throw badRequest('config_source', 'Передайте ровно одно: config или свой configId');
+    return configId !== undefined ? (await s.configs.get(user.id, configId)).document : config;
+  };
+  const referenceFields = { config: configArg.optional(), configId: z.string().min(1).max(80).optional().describe('Свой сохранённый конфиг; вместо config, удобно для большой карты') };
 
   server.registerTool(
     "games_list",
@@ -51,7 +58,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "game_capabilities",
     {
       title: "Возможности игры",
-      description: "Всё для сборки конфига: JSON Schema (configSchema), руководство (guide, sdkGuide), слоты для картинок, темы, каталог визуальных пресетов и готовые конфиги пресетов.",
+      description: "Знакомство с игрой (info), 5–7 направлений настройки с последствиями (tuning), JSON Schema (configSchema), guide/sdkGuide, слоты, темы, визуальный каталог и готовые конфиги. Доступно до создания конфига.",
       inputSchema: { gameId: z.string().describe("id из games_list") },
       annotations: { readOnlyHint: true },
     },
@@ -64,14 +71,31 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
   );
 
   server.registerTool(
+    'jinchi_generate',
+    {
+      title: 'Построить карту Jinchi',
+      description: 'Детерминированно строит карту под 2–8 игроков, до1000×1000, кубики до d100, препятствия, флаги и сюрпризы. Проверяет баланс и сохраняет свой конфиг. Возвращает компактный configId и метрики без миллиона строк. Этот configId принимают validate/simulate/preview/lobby_create. Лобби не создаёт.',
+      inputSchema: { request: generationSchema, title: z.string().trim().min(1).max(80).optional(), info: z.strictObject({ title: z.string().max(80).optional(), text: z.string().max(2000).optional() }).optional() },
+    },
+    ({ request, title, info }) => run(async () => {
+      const generated = await generateJinchiConfiguration(s, user.id, request, { title, info });
+      const saved = await s.configs.save(user.id, generated.config);
+      return json({ configId: saved.id, game: 'jinchi', summary: generated.summary, diagnostics: generated.diagnostics, issues: generated.issues });
+    }),
+  );
+
+  server.registerTool(
     "config_validate",
     {
       title: "Проверить конфиг",
-      description: "Проверяет конфиг и картинки. Возвращает нормализованный конфиг (с умолчаниями) или issues с path, message, hint.",
-      inputSchema: { config: configArg },
+      description: "Проверяет конфиг и картинки. Возвращает нормализованный конфиг и безопасную системную сводку summary или issues с path, message, hint. Авторское info не меняет правила.",
+      inputSchema: referenceFields,
       annotations: { readOnlyHint: true },
     },
-    ({ config }) => run(async () => json(await s.configs.validate(user.id, config))),
+    (args) => run(async () => {
+      const checked = await s.configs.validate(user.id, await configSource(args));
+      return json(args.configId && checked.ok ? { ok: true, configId: args.configId, summary: checked.summary, issues: checked.issues } : checked);
+    }),
   );
 
   server.registerTool(
@@ -79,12 +103,12 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     {
       title: "Прогнать случайные партии",
       description: "Играет раунды случайными ходами: доля ничьих, победы по местам (место 0 ходит первым), длина, проблемы never-ends / stuck / always-draw / first-seat-dominates. Работает синхронно: максимум 200 запрошенных раундов. Игра может ограничивать вычисления: rounds — начатые, skippedRounds — не начатые, requestedRounds — запрошенные. budget-exceeded означает предел вычислений, а не бесконечную партию.",
-      inputSchema: { config: configArg, rounds: z.int().min(1).max(200).optional().describe("Сколько раундов, по умолчанию 100") },
+      inputSchema: { ...referenceFields, rounds: z.int().min(1).max(200).optional().describe("Сколько раундов, по умолчанию 100") },
       annotations: { readOnlyHint: true },
     },
-    ({ config, rounds }) =>
+    ({ config, configId, rounds }) =>
       run(async () => {
-        const res = await validated(config);
+        const res = await validated(await configSource({ config, configId }));
         const game = s.catalog.get(res.config.game);
         if (!game) throw notFound("Игра не найдена");
         return json(simulate(game, res.config, { rounds: rounds ?? 100 }));
@@ -130,16 +154,16 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
       title: "Превью картинкой",
       description: "PNG поля без анимаций. Для Quizor target {kind: question|round|intro, id} выбирает вопрос, табло или заставку. start — стартовая позиция, end — пример случайной партии. На большой карте вычисления ограничены: partial=true означает промежуточную позицию, phase показывает состояние.",
       inputSchema: {
-        config: configArg,
+        ...referenceFields,
         moment: z.enum(["start", "end"]).optional().describe("По умолчанию end"),
         seed: z.int().min(0).max(1_000_000).optional().describe("Другое зерно — другая случайная партия"),
         target: z.object({ kind: z.enum(["question", "round", "intro"]), id: z.string().min(1).max(100) }).optional().describe("Quizor: конкретный вопрос, табло раунда или заставка (id раунда)"),
       },
       annotations: { readOnlyHint: true },
     },
-    ({ config, moment, seed, target }) =>
+    ({ config, configId, moment, seed, target }) =>
       run(async () => {
-        const res = await validated(config);
+        const res = await validated(await configSource({ config, configId }));
         const preview = await renderPreview(s.assets, res.config, moment ?? "end", seed ?? 1, target);
         const last = preview.match.lastRound;
         const partial = !target && (moment ?? "end") === "end" && preview.match.phase === "playing" && !last;
@@ -284,7 +308,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     ({ name, configId, config }) =>
       run(async () => {
         const lobby = await s.lobbies.create(user, { name, configId, config });
-        return json({ lobby: { id: lobby.id, url: lobby.url, name: lobby.name, status: lobby.status, seats: lobby.seats, configTitle: lobby.config.title } });
+        return json({ lobby: { id: lobby.id, url: lobby.url, name: lobby.name, status: lobby.status, seats: lobby.seats, configTitle: lobby.config.title, summary: lobby.information.summary } });
       }),
   );
 

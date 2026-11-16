@@ -2,7 +2,7 @@
  * HTTP and WebSocket contract between apps/server and apps/web. Types only.
  * Errors: non-2xx responses carry `ApiError`.
  */
-import type { ConfigDocument, ConfigIssue, GameCapabilities, GameSummary, MatchView, Seat } from "@asobiba/sdk";
+import type { ConfigDocument, ConfigInformation, ConfigIssue, ConfigSummary, GameCapabilities, GameSummary, MatchView, Seat } from "@asobiba/sdk";
 
 export interface ApiError {
   error: { code: string; message: string };
@@ -31,6 +31,9 @@ export interface LobbyInvitationDto {
   id: string;
   name: string;
   gameTitle: string;
+  /** Short public introduction; never includes the author's lobby introduction. */
+  description: string;
+  parameters: string[];
   host: string;
   status: LobbyStatus;
   players: number;
@@ -120,6 +123,8 @@ export interface ValidateResponse {
   ok: boolean;
   config: ConfigDocument | null;
   issues: ConfigIssue[];
+  /** Present only after successful validation of the original document. */
+  summary?: ConfigSummary;
 }
 /**
  * GET /api/configs → { configs }
@@ -197,6 +202,8 @@ export interface LobbyDto {
   /** Names captured at the start of the current/last match, even after a member leaves. */
   seatNames?: string[];
   config: ConfigDocument;
+  /** Safe system projection from the original config, not the displayed rules. */
+  information: ConfigInformation;
   /** Absolute link to the lobby page. */
   url: string;
   createdAt: string;
