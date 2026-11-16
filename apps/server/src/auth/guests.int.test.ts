@@ -54,7 +54,7 @@ describe("guest invitations", () => {
   it("shows only invitation metadata before identification", async () => {
     const res = await call("GET", `/api/lobbies/${lobbyId}/invitation`);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ invitation: { id: lobbyId, name: "Вечер", gameTitle: "Крестики-нолики", host: "host", status: "waiting", players: 1, seats: 2 } });
+    expect(res.json()).toEqual({ invitation: { id: lobbyId, name: "Вечер", gameTitle: "Крестики-нолики", description: expect.stringContaining("Линии на поле"), parameters: [expect.stringContaining("Поле 3×3"), expect.stringContaining("Линия из 3"), expect.any(String)], host: "host", status: "waiting", players: 1, seats: 2 } });
     expect((await call("GET", `/api/lobbies/${lobbyId}`)).statusCode).toBe(401);
   });
 

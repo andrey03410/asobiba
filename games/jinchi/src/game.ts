@@ -1,19 +1,25 @@
 import { actionError, defineGame, type GameContext, type RoundResult } from "@asobiba/sdk";
 import { z } from "zod";
 import { JINCHI_GUIDE } from "./guide";
-import { PRESETS } from "./presets";
-import { checkRules, EMPTY, MAX_SIDE, rulesSchema, startPositions, WALL, type JinchiRules } from "./rules";
+import { JINCHI_PRESETS } from "./presets";
+import { checkRules, diceSides, EMPTY, MAX_SIDE, rulesSchema, startPositions, WALL, type CellPosition, type EffectCell, type JinchiRules, type WeightedEffect } from "./rules";
+import { captureTerritory } from './capture';
+import { dimensions, findPlacements, hasPlacement, placementCapacity, placementError, samplePlacement, SIDES, CORNERS } from './placement';
+export { createPlacementProbe, findPlacements, placementError } from './placement';
 import { checkVisual, visualSchema } from "./visual";
+import { JINCHI_INFO, JINCHI_TUNING, summarizeJinchiConfig } from './info';
 
 export const actionSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("roll") }),
+  z.strictObject({ type: z.literal("reroll") }),
+  z.strictObject({ type: z.literal("skip-impossible") }),
   z.strictObject({ type: z.literal("place"), x: z.int().min(0).max(MAX_SIDE - 1), y: z.int().min(0).max(MAX_SIDE - 1), rotated: z.boolean().default(false) }),
 ]);
 export type JinchiAction = z.output<typeof actionSchema>;
 export interface JinchiEvent {
   id: number;
   seat: number;
-  type: "roll" | "place" | "skip" | "capture" | "eliminate";
+  type: "roll" | "place" | "skip" | "capture" | "eliminate" | "objects" | "reroll";
   text: string;
 }
 export interface JinchiState {
@@ -28,6 +34,18 @@ export interface JinchiState {
   cycle: number;
   dice: [number, number] | null;
   scores: number[];
+  points: number[];
+  flagCounts: number[];
+  effectPoints: number[];
+  rerollCharges: number[];
+  /** Pending lock for each player's next own turn. */
+  rotationLocked: boolean[];
+  /** Active lock of the current turn; a newly collected lock stays pending. */
+  turnRotationLocked: boolean;
+  rerolled: boolean;
+  impossibleRoll: boolean;
+  flags: CellPosition[];
+  effects: EffectCell[];
   eliminated: boolean[];
   events: JinchiEvent[];
   lastMove: { seat: number; indices: number[]; captured: number[]; turn: number } | null;
@@ -41,129 +59,65 @@ export interface JinchiState {
 }
 export interface JinchiView extends JinchiState {
   canAct: boolean;
+  canRotate: boolean;
+  canReroll: boolean;
+  canSkip: boolean;
 }
 
-type Placement = Extract<JinchiAction, { type: "place" }>;
-const SIDES: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-const CORNERS: ReadonlyArray<readonly [number, number]> = [...SIDES, [1, 1], [-1, 1], [1, -1], [-1, -1]];
 const AUTO_ROLL_LIMIT = 256;
-
-function dimensions(state: JinchiState, rotated: boolean): [number, number] | null {
-  if (!state.dice) return null;
-  return rotated ? [state.dice[1], state.dice[0]] : state.dice;
-}
-
 function activeSeat(state: JinchiState, seat: number): boolean {
   return Number.isInteger(seat) && seat >= 0 && seat < state.scores.length && !state.eliminated[seat];
 }
 
-/** Human-facing validation, shared by the server and rectangle ghost. */
-export function placementError(state: JinchiState, seat: number, x: number, y: number, rotated: boolean): string | null {
-  if (state.result) return "Партия окончена";
-  if (!activeSeat(state, seat) || state.currentSeat !== seat) return "Сейчас не ваш ход";
-  const size = dimensions(state, rotated);
-  if (!size) return "Сначала бросьте кубики";
-  const [width, height] = size;
-  if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x + width > state.width || y + height > state.height) return "Фигура выходит за край карты";
-  let empty = false;
-  let own = false;
-  const neighbors = state.rules.placement.adjacency === "side" ? SIDES : CORNERS;
-  for (let dy = 0; dy < height; dy++) {
-    for (let dx = 0; dx < width; dx++) {
-      const cell = state.cells[(y + dy) * state.width + x + dx];
-      if (cell === WALL) return "Фигура упирается в стену";
-      if (cell !== EMPTY && cell !== seat) return "Фигура задевает чужую территорию";
-      if (cell === seat) {
-        if (!state.rules.placement.overlapOwn) return "Фигура накрывает свою территорию";
-        own = true;
-      } else empty = true;
-      for (const [nx, ny] of neighbors) {
-        const px = x + dx + nx;
-        const py = y + dy + ny;
-        if (px >= 0 && py >= 0 && px < state.width && py < state.height && state.cells[py * state.width + px] === seat) own = true;
-      }
+/** Older renderer fixtures and restored v1 configs have no object bookkeeping. */
+function completeState(state: JinchiState): JinchiState {
+  if (state.points && state.flagCounts && state.rotationLocked) return state;
+  const zeros = () => state.scores.map(() => 0);
+  return { ...state, points: [...state.scores], flagCounts: zeros(), effectPoints: zeros(), rerollCharges: zeros(), rotationLocked: state.scores.map(() => false), turnRotationLocked: false, rerolled: false, impossibleRoll: false, flags: [], effects: [], ...Object.fromEntries(Object.entries(state).filter(([, value]) => value !== undefined)) };
+}
+function canReroll(state: JinchiState): boolean {
+  return Boolean(state.dice && !state.rerolled && state.rerollCharges[state.currentSeat]! > 0);
+}
+function recalculatePoints(state: JinchiState): JinchiState {
+  const points = state.scores.map((score, seat) => score + state.effectPoints[seat]! + (state.rules.flags.mode === 'bonus' ? state.flagCounts[seat]! * state.rules.flags.value : 0));
+  return { ...state, points };
+}
+
+function chooseEffect(pool: WeightedEffect[], ctx: GameContext<JinchiRules>): WeightedEffect {
+  let choice = ctx.rng.next() * pool.reduce((sum, effect) => sum + effect.weight, 0);
+  for (const effect of pool) {
+    if (choice < effect.weight) return effect;
+    choice -= effect.weight;
+  }
+  // A validated pool has a positive weight. Guard against rounding at its upper edge.
+  return pool.findLast(effect => effect.weight > 0)!;
+}
+
+function collectObjects(state: JinchiState, seat: number, ctx: GameContext<JinchiRules>): JinchiState {
+  const acquiredFlags = state.flags.filter(flag => state.cells[flag.y * state.width + flag.x] === seat);
+  const acquiredEffects = state.effects.filter(effect => state.cells[effect.y * state.width + effect.x] === seat).sort((a, b) => a.y - b.y || a.x - b.x);
+  if (!acquiredFlags.length && !acquiredEffects.length) return state;
+  const flagCounts = [...state.flagCounts], effectPoints = [...state.effectPoints], rerollCharges = [...state.rerollCharges], rotationLocked = [...state.rotationLocked];
+  flagCounts[seat]! += acquiredFlags.length;
+  const descriptions: string[] = acquiredFlags.length ? [`Захвачено флагов: ${acquiredFlags.length}`] : [];
+  for (const cell of acquiredEffects) {
+    const effect = cell.kind === 'mystery' ? chooseEffect(state.rules.effects.mysteryPool, ctx) : cell;
+    if (effect.kind === 'cache' || effect.kind === 'trap') {
+      const value = effect.value ?? (effect.kind === 'cache' ? 25 : 15);
+      effectPoints[seat]! += effect.kind === 'cache' ? value : -value;
+      descriptions.push(effect.kind === 'cache' ? `тайник +${value}` : `ловушка −${value}`);
+    } else if (effect.kind === 'reroll') {
+      const overflow = rerollCharges[seat] === 3;
+      rerollCharges[seat] = Math.min(3, rerollCharges[seat]! + 1);
+      descriptions.push(overflow ? 'запасной бросок: достигнут предел 3' : 'запасной бросок +1');
+    } else if (effect.kind === 'lock') {
+      rotationLocked[seat] = true;
+      descriptions.push('скованность на следующий собственный ход');
     }
   }
-  if (!empty) return "В фигуре должна быть хотя бы одна свободная клетка";
-  if (!own) return "Фигура не касается вашей территории";
-  return null;
-}
-
-interface Sums {
-  bad: Int32Array;
-  own: Int32Array;
-  empty: Int32Array;
-  stride: number;
-}
-
-/** Summed-area tables make a complete rectangle search O(map area), not O(area × dice area). */
-function sumsFor(state: JinchiState, seat: number): Sums {
-  const stride = state.width + 1;
-  const length = stride * (state.height + 1);
-  const bad = new Int32Array(length);
-  const own = new Int32Array(length);
-  const empty = new Int32Array(length);
-  for (let y = 0; y < state.height; y++) {
-    let rowBad = 0;
-    let rowOwn = 0;
-    let rowEmpty = 0;
-    for (let x = 0; x < state.width; x++) {
-      const cell = state.cells[y * state.width + x];
-      rowBad += cell !== EMPTY && !(cell === seat && state.rules.placement.overlapOwn) ? 1 : 0;
-      rowOwn += cell === seat ? 1 : 0;
-      rowEmpty += cell === EMPTY ? 1 : 0;
-      const i = (y + 1) * stride + x + 1;
-      bad[i] = bad[i - stride]! + rowBad;
-      own[i] = own[i - stride]! + rowOwn;
-      empty[i] = empty[i - stride]! + rowEmpty;
-    }
-  }
-  return { bad, own, empty, stride };
-}
-
-function rectangle(table: Int32Array, stride: number, x: number, y: number, width: number, height: number): number {
-  return table[(y + height) * stride + x + width]! - table[y * stride + x + width]! - table[(y + height) * stride + x]! + table[y * stride + x]!;
-}
-
-function search(state: JinchiState, sum: Sums, width: number, height: number, rotated: boolean, firstOnly = false): Placement[] {
-  const out: Placement[] = [];
-  for (let y = 0; y <= state.height - height; y++) {
-    for (let x = 0; x <= state.width - width; x++) {
-      if (rectangle(sum.bad, sum.stride, x, y, width, height) !== 0 || rectangle(sum.empty, sum.stride, x, y, width, height) === 0) continue;
-      let adjacent = rectangle(sum.own, sum.stride, x, y, width, height);
-      if (state.rules.placement.adjacency === "corner") {
-        const left = Math.max(0, x - 1);
-        const top = Math.max(0, y - 1);
-        adjacent = rectangle(sum.own, sum.stride, left, top, Math.min(state.width, x + width + 1) - left, Math.min(state.height, y + height + 1) - top);
-      } else {
-        if (y > 0) adjacent += rectangle(sum.own, sum.stride, x, y - 1, width, 1);
-        if (y + height < state.height) adjacent += rectangle(sum.own, sum.stride, x, y + height, width, 1);
-        if (x > 0) adjacent += rectangle(sum.own, sum.stride, x - 1, y, 1, height);
-        if (x + width < state.width) adjacent += rectangle(sum.own, sum.stride, x + width, y, 1, height);
-      }
-      if (adjacent === 0) continue;
-      out.push({ type: "place", x, y, rotated });
-      if (firstOnly) return out;
-    }
-  }
-  return out;
-}
-
-export function findPlacements(state: JinchiState, seat: number, rotated?: boolean): Placement[] {
-  if (state.result || !state.dice || !activeSeat(state, seat) || state.currentSeat !== seat) return [];
-  const sum = sumsFor(state, seat);
-  const rotations = rotated === undefined ? state.dice[0] === state.dice[1] ? [false] : [false, true] : [rotated];
-  return rotations.flatMap((rotation) => {
-    const [width, height] = dimensions(state, rotation)!;
-    return search(state, sum, width, height, rotation);
-  });
-}
-
-function hasPlacement(state: JinchiState): boolean {
-  if (!state.dice) return false;
-  const sum = sumsFor(state, state.currentSeat);
-  const [a, b] = state.dice;
-  return search(state, sum, a, b, false, true).length > 0 || (a !== b && search(state, sum, b, a, true, true).length > 0);
+  const flags = state.flags.filter(flag => state.cells[flag.y * state.width + flag.x] !== seat);
+  const effects = state.effects.filter(effect => state.cells[effect.y * state.width + effect.x] !== seat);
+  return event({ ...state, flagCounts, effectPoints, rerollCharges, rotationLocked, flags, effects }, seat, 'objects', descriptions.join('; '));
 }
 
 /** A single linear scan decides the unconditional end rule, independent of dice. */
@@ -190,8 +144,11 @@ function event(state: JinchiState, seat: number, type: JinchiEvent["type"], text
 }
 
 function finish(state: JinchiState, reason: string, summary: string, forcedWinners?: number[]): JinchiState {
-  const best = Math.max(...state.scores);
-  const winners = forcedWinners ?? state.scores.flatMap((score, seat) => score === best ? [seat] : []);
+  const active = state.scores.flatMap((_, seat) => !state.eliminated[seat] ? [seat] : []);
+  const bestFlags = Math.max(...active.map(seat => state.flagCounts[seat]!));
+  const contenders = state.rules.flags.mode === 'primary' ? active.filter(seat => state.flagCounts[seat] === bestFlags) : active;
+  const best = Math.max(...contenders.map(seat => state.points[seat]!));
+  const winners = forcedWinners ?? contenders.filter(seat => state.points[seat] === best);
   return { ...state, result: { winners, losers: state.scores.flatMap((_, seat) => winners.includes(seat) ? [] : [seat]), draw: winners.length > 1, reason, summary } };
 }
 
@@ -199,13 +156,18 @@ function outcome(state: JinchiState): JinchiState {
   if (state.result) return state;
   const active = state.scores.flatMap((_, seat) => !state.eliminated[seat] ? [seat] : []);
   if (active.length === 1) return finish(state, "last-player", "остался один игрок", active);
-  if (state.rules.end.targetPercent > 0) {
+  if (state.rules.flags.mode === 'primary' && state.rules.flags.target > 0) {
+    const winners = active.filter(seat => state.flagCounts[seat]! >= state.rules.flags.target);
+    if (winners.length) return finish(state, 'flag-target', 'достигнута цель по флагам', winners);
+  }
+  if (state.rules.flags.mode === 'off' && state.rules.end.targetPercent > 0) {
     const winners = active.filter((seat) => state.scores[seat]! * 100 >= state.rules.end.targetPercent * state.area);
     if (winners.length > 0) {
       const best = Math.max(...winners.map((seat) => state.scores[seat]!));
       return finish(state, "target-percent", "занята доля карты", winners.filter((seat) => state.scores[seat] === best));
     }
   }
+  if (state.rules.flags.mode === 'primary' && state.rules.flags.positions.length > 0 && state.flags.length === 0) return finish(state, 'flags-collected', 'все флаги собраны');
   if (!canAnyoneGrow(state)) return finish(state, "board-full", "карта поделена");
   return state;
 }
@@ -214,7 +176,7 @@ function completeTurn(state: JinchiState, placed: boolean): JinchiState {
   const active = state.scores.flatMap((_, seat) => !state.eliminated[seat] ? [seat] : []);
   const seen = [...new Set([...(state.cycleSeats ?? []), state.currentSeat])];
   const cyclePlaced = (state.cyclePlaced ?? false) || placed;
-  let next: JinchiState = { ...state, dice: null, turn: state.turn + 1, cycleSeats: seen, cyclePlaced };
+  let next: JinchiState = { ...state, dice: null, turn: state.turn + 1, cycleSeats: seen, cyclePlaced, rerolled: false, impossibleRoll: false, turnRotationLocked: false };
   if (active.every((seat) => seen.includes(seat))) {
     const skippedCycles = cyclePlaced ? 0 : (state.skippedCycles ?? 0) + 1;
     next = { ...next, skippedCycles };
@@ -224,7 +186,11 @@ function completeTurn(state: JinchiState, placed: boolean): JinchiState {
   }
   for (let offset = 1; offset <= state.scores.length; offset++) {
     const seat = (state.currentSeat + offset) % state.scores.length;
-    if (!state.eliminated[seat]) return { ...next, currentSeat: seat };
+    if (!state.eliminated[seat]) {
+      const locked = Boolean(next.rotationLocked[seat]);
+      const rotationLocked = locked ? next.rotationLocked.map((value, player) => player === seat ? false : value) : next.rotationLocked;
+      return { ...next, currentSeat: seat, rotationLocked, turnRotationLocked: locked };
+    }
   }
   return next;
 }
@@ -237,19 +203,22 @@ interface DiceModel {
 }
 
 function diceModel(state: JinchiState, seat: number): DiceModel {
-  const sum = sumsFor(state, seat);
   const viable: Array<[number, number]> = [];
   const blocked: Array<[number, number]> = [];
-  const hasGrowth = search(state, sum, 1, 1, false, true).length > 0;
-  for (let a = 1; a <= state.rules.dice.sides; a++) {
-    for (let b = a; b <= state.rules.dice.sides; b++) {
-      const legal = hasGrowth && (search(state, sum, a, b, false, true).length > 0 || (a !== b && search(state, sum, b, a, true, true).length > 0));
+  const capacity = placementCapacity(state, seat);
+  const [first, second] = diceSides(state.rules);
+  const locked = seat === state.currentSeat ? state.turnRotationLocked : state.rotationLocked[seat];
+  const fits = (a: number, b: number) => (capacity[b] ?? 0) >= a || (!locked && (capacity[a] ?? 0) >= b);
+  if (typeof state.rules.dice.sides === 'number' && !locked) {
+    // Preserve the v1 ordered-pair array order: old journal RNG indexes depend on it.
+    for (let a = 1; a <= first; a++) for (let b = a; b <= second; b++) {
+      const legal = fits(a, b);
       const list = legal ? viable : blocked;
       list.push([a, b]);
       if (a !== b) list.push([b, a]);
     }
-  }
-  return { seat, viable, blocked, probability: viable.length / state.rules.dice.sides ** 2 };
+  } else for (let a = 1; a <= first; a++) for (let b = 1; b <= second; b++) (fits(a, b) ? viable : blocked).push([a, b]);
+  return { seat, viable, blocked, probability: viable.length / (first * second) };
 }
 
 /**
@@ -303,10 +272,12 @@ function prepareTurn(state: JinchiState, ctx: GameContext<JinchiRules>, manualRo
       if (next.rules.dice.roll === "manual" && !manualRoll) return next;
       manualRoll = false;
       if (failedRolls >= AUTO_ROLL_LIMIT) return acceleratedRoll(next, ctx);
-      const dice: [number, number] = [ctx.rng.int(1, next.rules.dice.sides), ctx.rng.int(1, next.rules.dice.sides)];
+      const [first, second] = diceSides(next.rules);
+      const dice: [number, number] = [ctx.rng.int(1, first), ctx.rng.int(1, second)];
       next = event({ ...next, dice }, next.currentSeat, "roll", `Выпало ${dice[0]}:${dice[1]}`);
     }
-    if (hasPlacement(next)) return next;
+    if (hasPlacement(next)) return { ...next, impossibleRoll: false };
+    if (canReroll(next)) return { ...next, impossibleRoll: true };
     const [a, b] = next.dice!;
     next = event(next, next.currentSeat, "skip", `${a}×${b} — некуда поставить`);
     next = outcome(completeTurn(next, false));
@@ -315,87 +286,88 @@ function prepareTurn(state: JinchiState, ctx: GameContext<JinchiRules>, manualRo
   return next;
 }
 
-/** Flood components iteratively; walls are traversable in own-cells-only mode. */
-function captureCells(state: JinchiState, seat: number): { captured: number[]; enemies: number } {
-  const { width, height, cells, rules } = state;
-  const visited = new Uint8Array(cells.length);
-  const queue = new Int32Array(cells.length);
-  const neighbors = rules.capture.diagonal ? SIDES : CORNERS;
-  const components: Array<{ indices: number[]; touches: boolean; edge: boolean }> = [];
-  for (let i = 0; i < cells.length; i++) {
-    if (visited[i] || cells[i] === seat || (rules.capture.walls && cells[i] === WALL)) continue;
-    const component = { indices: [] as number[], touches: false, edge: false };
-    let head = 0;
-    let tail = 1;
-    queue[0] = i;
-    visited[i] = 1;
-    while (head < tail) {
-      const index = queue[head++]!;
-      component.indices.push(index);
-      const x = index % width;
-      const y = Math.floor(index / width);
-      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) component.edge = true;
-      for (const [dx, dy] of neighbors) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-        const ni = ny * width + nx;
-        if (cells[ni] === seat) component.touches = true;
-        else if (!visited[ni] && (!rules.capture.walls || cells[ni] !== WALL)) {
-          visited[ni] = 1;
-          queue[tail++] = ni;
-        }
-      }
-    }
-    components.push(component);
-  }
-  const largest = rules.capture.walls ? Math.max(0, ...components.filter((c) => c.touches).map((c) => c.indices.length)) : 0;
-  const captured: number[] = [];
-  let enemies = 0;
-  for (const component of components) {
-    if (!component.touches || (rules.capture.walls ? component.indices.length === largest : component.edge)) continue;
-    for (const index of component.indices) {
-      const owner = cells[index]!;
-      if (owner === WALL || owner === seat) continue;
-      if (owner >= 0 && (rules.capture.opponents === "none" || (rules.capture.opponents === "except-starts" && state.bases[index] !== EMPTY))) continue;
-      if (owner >= 0) enemies++;
-      cells[index] = seat;
-      captured.push(index);
-    }
-  }
-  return { captured, enemies };
-}
-
 export const jinchi = defineGame({
-  id: "jinchi", version: 1, title: "Jinchi", summary: "Территории, два кубика и захват кольцом на своей карте до 200×200 для 2–8 игроков", kind: "turn",
+  id: "jinchi", version: 1, title: "Jinchi", summary: "Территории, два кубика, флаги и сюрпризы на своей карте до 1000×1000 для 2–8 игроков", kind: "turn",
   rulesSchema, visualSchema, actionSchema,
-  seats: (rules) => ({ min: 2, max: startPositions(rules).length }),
+  seats: (rules) => ({ min: rules.map.generation?.balanced ? rules.map.expectedPlayers ?? startPositions(rules).length : 2, max: startPositions(rules).length }),
   checkRules, checkVisual,
   simulationBudget: (rules) => ({ maxTotalActions: Math.max(200, Math.floor(20_000_000 / (rules.map.width * rules.map.height))), maxDurationMs: 1000 }),
   setup: ({ rules, seats, firstSeat, rng, now }): JinchiState => {
+    rules = rulesSchema.parse(rules);
     const positions = startPositions(rules);
     const assigned = (rules.starts.assignment === "random" ? rng.shuffle(positions) : positions).slice(0, seats);
     const owners = new Map(assigned.map((position, seat) => [String(position), seat]));
-    const cells = rules.map.rows.join("").split("").map((c) => c === "#" ? WALL : c === "." ? EMPTY : owners.get(c) ?? (rules.starts.unused === "wall" ? WALL : EMPTY));
-    const bases = rules.map.rows.join("").split("").map((c) => owners.get(c) ?? EMPTY);
+    const cells: number[] = new Array(rules.map.width * rules.map.height);
+    const bases: number[] = new Array(cells.length);
+    let area = 0;
+    for (let y = 0; y < rules.map.height; y++) for (let x = 0; x < rules.map.width; x++) {
+      const c = rules.map.rows[y]![x]!;
+      const i = y * rules.map.width + x;
+      cells[i] = c === '#' ? WALL : c === '.' ? EMPTY : owners.get(c) ?? (rules.starts.unused === 'wall' ? WALL : EMPTY);
+      bases[i] = owners.get(c) ?? EMPTY;
+      if (cells[i] !== WALL) area++;
+    }
     const scores = Array.from({ length: seats }, () => 0);
     for (const cell of cells) if (cell >= 0) scores[cell]!++;
     const state: JinchiState = {
       width: rules.map.width, height: rules.map.height, cells, bases, currentSeat: firstSeat, turn: 0, cycle: 1,
       dice: null, scores, eliminated: scores.map(() => false), events: [], lastMove: null, result: null, rules,
-      area: cells.filter((cell) => cell !== WALL).length, cycleSeats: [], cyclePlaced: false, skippedCycles: 0,
+      points: [...scores], flagCounts: scores.map(() => 0), effectPoints: scores.map(() => 0), rerollCharges: scores.map(() => 0),
+      rotationLocked: scores.map(() => false), turnRotationLocked: false, rerolled: false, impossibleRoll: false,
+      flags: rules.flags.mode === 'off' ? [] : rules.flags.positions.map(flag => ({ ...flag })), effects: rules.effects.cells.map(effect => ({ ...effect })),
+      area, cycleSeats: [], cyclePlaced: false, skippedCycles: 0,
     };
     return prepareTurn(state, { rules, seats, rng, now });
   },
   currentSeats: (state: JinchiState) => state.result ? [] : [state.currentSeat],
   turnId: (state: JinchiState) => state.turn,
-  legalActions: (state: JinchiState, seat): JinchiAction[] => state.result || state.currentSeat !== seat || !activeSeat(state, seat) ? [] : state.dice ? findPlacements(state, seat) : [{ type: "roll" }],
+  hasLegalAction: (state: JinchiState, seat): boolean => {
+    state = completeState(state);
+    return !state.result && state.currentSeat === seat && activeSeat(state, seat) && (!state.dice || canReroll(state) || hasPlacement(state));
+  },
+  sampleAction: (state: JinchiState, seat, ctx): JinchiAction | null => {
+    state = completeState(state);
+    if (state.result || state.currentSeat !== seat || !activeSeat(state, seat)) return null;
+    if (!state.dice) {
+      // Legacy SDK picked the sole roll action before throwing the two dice.
+      ctx.rng.next();
+      return { type: 'roll' };
+    }
+    // Timer/random policy does not spend a person's stored charge for them.
+    return samplePlacement(state, seat, ctx.rng) ?? (canReroll(state) ? { type: 'skip-impossible' } : null);
+  },
+  legalActions: (state: JinchiState, seat): JinchiAction[] => {
+    state = completeState(state);
+    if (state.result || state.currentSeat !== seat || !activeSeat(state, seat)) return [];
+    if (!state.dice) return [{ type: 'roll' }];
+    const placements: JinchiAction[] = findPlacements(state, seat);
+    if (canReroll(state)) {
+      if (!placements.length) placements.push({ type: 'skip-impossible' });
+      placements.push({ type: 'reroll' });
+    }
+    return placements;
+  },
   applyAction: (state: JinchiState, seat, action: JinchiAction, ctx) => {
+    state = completeState(state);
     if (state.result) return actionError("round-over", "Партия окончена");
     if (seat !== state.currentSeat || !activeSeat(state, seat)) return actionError("not-your-turn", "Сейчас не ваш ход");
     if (action.type === "roll") {
       if (state.dice) return actionError("already-rolled", "Кубики уже брошены");
       return prepareTurn(state, ctx, true);
+    }
+    if (action.type === 'reroll') {
+      if (!canReroll(state)) return actionError('cannot-reroll', 'Переброс недоступен: нужен заряд и не более одного переброса за ход');
+      const rerollCharges = [...state.rerollCharges];
+      rerollCharges[seat]!--;
+      const [first, second] = diceSides(state.rules);
+      const dice: [number, number] = [ctx.rng.int(1, first), ctx.rng.int(1, second)];
+      const next = event({ ...state, dice, rerollCharges, rerolled: true }, seat, 'reroll', `Переброс: ${dice[0]}:${dice[1]}`);
+      return prepareTurn(next, ctx);
+    }
+    if (action.type === 'skip-impossible') {
+      if (!canReroll(state) || hasPlacement(state)) return actionError('cannot-skip', 'Пропустить можно только невозможный исходный бросок с доступным зарядом');
+      const next = event(state, seat, 'skip', 'Невозможный бросок пропущен, заряд сохранён');
+      return prepareTurn(completeTurn(next, false), ctx);
     }
     const error = placementError(state, seat, action.x, action.y, action.rotated);
     if (error) return actionError("bad-placement", error);
@@ -410,11 +382,17 @@ export const jinchi = defineGame({
       }
     }
     let next = event({ ...state, cells }, seat, "place", `Поставлен прямоугольник ${width}×${height}`);
-    const { captured, enemies } = captureCells(next, seat);
+    const { captured, enemies } = captureTerritory(next, seat);
     if (captured.length > 0) next = event(next, seat, "capture", `Окружено ${captured.length} клеток${enemies > 0 ? `, из них чужих — ${enemies}` : ""}`);
-    const scores = Array.from({ length: state.scores.length }, () => 0);
-    for (const cell of cells) if (cell >= 0) scores[cell]!++;
+    const scores = [...state.scores];
+    for (const index of [...indices, ...captured]) {
+      const previous = state.cells[index]!;
+      if (previous === seat) continue;
+      scores[seat]!++;
+      if (previous >= 0) scores[previous]!--;
+    }
     next = { ...next, scores, eliminated: [...state.eliminated], lastMove: { seat, indices, captured, turn: state.turn } };
+    next = recalculatePoints(collectObjects(next, seat, ctx));
     for (let player = 0; player < scores.length; player++) {
       if (scores[player] === 0 && !next.eliminated[player]) {
         next.eliminated[player] = true;
@@ -425,12 +403,19 @@ export const jinchi = defineGame({
     return next.result ? next : prepareTurn(completeTurn(next, true), ctx);
   },
   passTurn: (state: JinchiState, seat, ctx) => {
+    state = completeState(state);
     if (state.result || state.currentSeat !== seat) return state;
     const next = event(state, seat, "skip", "Время на ход вышло — ход пропущен");
     return prepareTurn(completeTurn(next, false), ctx);
   },
   roundResult: (state: JinchiState) => state.result,
-  view: (state: JinchiState, seat): JinchiView => ({ ...state, canAct: seat !== null && seat === state.currentSeat && !state.result && !state.eliminated[seat] }),
-  guide: JINCHI_GUIDE, presets: PRESETS, slots: [], themes: [],
+  view: (state: JinchiState, seat): JinchiView => {
+    state = completeState(state);
+    const canAct = seat !== null && seat === state.currentSeat && !state.result && !state.eliminated[seat];
+    const impossibleRoll = Boolean(state.dice && !state.result && !hasPlacement(state));
+    return { ...state, canAct, impossibleRoll, canRotate: !state.turnRotationLocked, canReroll: canAct && canReroll(state), canSkip: canAct && impossibleRoll && canReroll(state) };
+  },
+  info: JINCHI_INFO, tuning: JINCHI_TUNING, summarizeConfig: summarizeJinchiConfig,
+  guide: JINCHI_GUIDE, presets: JINCHI_PRESETS, slots: [], themes: [],
   visualCatalog: { placeAnimations: { pop: "Появление фигуры", none: "Без анимации" }, captureAnimations: { wave: "Волна захвата", none: "Без анимации" } },
 });

@@ -1,5 +1,5 @@
 import type { CreateLobbyRequest, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
-import { collectAssetRefs, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
+import { collectAssetRefs, describeConfig, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
 import type { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
 import type { Db } from "../db";
@@ -170,6 +170,7 @@ export class LobbyService {
         };
       }),
       config: this.shownConfig(config),
+      information: describeConfig(game, config),
       url: `${this.deps.env.publicUrl}/lobby/${row.id}`,
       createdAt: row.createdAt.toISOString(),
     };
@@ -183,7 +184,10 @@ export class LobbyService {
 
   async invitation(lobbyId: string): Promise<LobbyInvitationDto> {
     const row = await this.loadRow(lobbyId);
-    return { id: row.id, name: row.name, gameTitle: this.deps.catalog.get(row.gameId)?.title ?? row.gameId,
+    const game = this.deps.catalog.get(row.gameId);
+    const summary = game ? describeConfig(game, row.config as unknown as ConfigDocument).summary : null;
+    return { id: row.id, name: row.name, gameTitle: game?.title ?? row.gameId,
+      description: game?.summary ?? "Игра с друзьями", parameters: summary?.highlights.slice(0, 3) ?? [],
       host: row.host.login, status: row.status as LobbyStatus,
       players: row.members.filter((m) => m.role === "player").length, seats: row.seats };
   }

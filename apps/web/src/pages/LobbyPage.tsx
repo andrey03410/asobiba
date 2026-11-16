@@ -1,8 +1,3 @@
-import { rulesText, type JinchiRules } from "@asobiba/game-jinchi";
-import {
-  rulesText as poleRulesText,
-  type PoleRules,
-} from "@asobiba/game-russkoe-pole";
 import type { LobbyDto, LobbyMemberDto } from "@asobiba/api";
 import type { Seat } from "@asobiba/sdk";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -16,7 +11,7 @@ import { MatchHud } from "../components/MatchHud";
 import { MatchStage } from "../components/MatchStage";
 import { SessionActions } from "../components/SessionActions";
 import { StatusBadge } from "../components/StatusBadge";
-import { QuizSummary } from "../components/QuizSummary";
+import { GameInformation } from "../components/GameInformation";
 import { gameClient, type WebGameClient } from "../games";
 import { useToast } from "../toast";
 import { useLobbySocket } from "../useLobbySocket";
@@ -416,38 +411,9 @@ export function LobbyPage() {
         )}
       </section>
 
-      {lobby.gameId === "russkoe-pole" && (
-        <details className="card config-details">
-          <summary>Правила Русского поля</summary>
-          <ul className="lobby-rules">
-            {poleRulesText(lobby.config.rules as PoleRules).map((rule, i) => (
-              <li key={i}>{rule}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-      {lobby.gameId === "jinchi" && (
-        <details className="card config-details">
-          <summary>Правила Jinchi</summary>
-          <ul className="lobby-rules">
-            {rulesText(lobby.config.rules as JinchiRules).map((rule, i) => (
-              <li key={i}>{rule}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-      {lobby.gameId === "quizor" ? (
-        <section className="card">
-          <QuizSummary rules={lobby.config.rules} />
-        </section>
-      ) : (
-        <details className="card config-details">
-          <summary>Конфиг игры</summary>
-          <pre className="config-json">
-            {JSON.stringify(lobby.config, null, 2)}
-          </pre>
-        </details>
-      )}
+      <section className="card">
+        <GameInformation information={lobby.information} />
+      </section>
     </>
   );
 
@@ -478,6 +444,7 @@ export function LobbyPage() {
         }
         onLeave={() => setLeftStage(true)}
         busy={busy}
+        information={<GameInformation information={lobby.information} />}
         drawer={
           <div className="stage-drawer-body">
             <CopyButton

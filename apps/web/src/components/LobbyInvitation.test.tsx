@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { LobbyInvitation } from "./LobbyInvitation";
 
-const invitation: LobbyInvitationDto = { id: "lob_friend", name: "Вечер друзей", gameTitle: "Крестики-нолики", host: "ann", status: "waiting", players: 1, seats: 2 };
+const invitation: LobbyInvitationDto = { id: "lob_friend", name: "Вечер друзей", gameTitle: "Крестики-нолики", description: "Собирайте линии", parameters: ["Поле 3×3"], host: "ann", status: "waiting", players: 1, seats: 2 };
 const render = (patch: Partial<LobbyInvitationDto> = {}) => renderToStaticMarkup(
   <MemoryRouter><LobbyInvitation invitation={{ ...invitation, ...patch }} name="Саша" error={null} busy={false} onName={() => {}} onJoin={() => {}} /></MemoryRouter>,
 );

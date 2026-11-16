@@ -1817,6 +1817,16 @@ textarea:focus {
   display: grid;
   gap: 14px;
 }
+.stage.has-board-hud .stage-bar { min-height: 48px; padding: 2px 8px; flex-wrap: nowrap; gap: 6px; }
+.stage.has-board-hud .stage-title { margin-right: auto; font-size: .85rem; }
+.stage.has-board-hud .stage-title span { display: none; }
+.stage.has-board-hud .stage-btn { min-height: 44px; min-width: 44px; padding-inline: 9px; font-size: .8rem; }
+.stage.has-board-hud .stage-score { display: none; }
+.stage-result-scores { text-align: left; max-height: 38vh; overflow: auto; font-size: .8rem; }
+.stage-result-scores > div { padding: 6px 0; border-bottom: 1px solid var(--stage-line); }
+.stage-result-scores dt { font-weight: 650; }.stage-result-scores dd { margin: 3px 0 0; color: var(--stage-muted); }
+.stage.has-board-hud .stage-result-card { max-height: 100%; overflow: auto; }
+@media (max-height: 500px) and (min-width: 500px) { .stage.has-board-hud .stage-bar { min-height: 44px; padding-block: 0; } .stage.has-board-hud .stage-title { font-size: .75rem; } }
 @keyframes stage-fade {
   from {
     opacity: 0;
@@ -1866,3 +1876,13 @@ textarea:focus {
   .header-user { flex-wrap: wrap; }
   .session-actions-compact .btn { padding-inline: .5rem; }
 }
+
+.jn-generator { padding:12px; border:1px solid var(--border,#d6e1db); border-radius:12px; margin:8px 0; background:var(--surface,#fffdf5); color:inherit; }
+.jn-generator>summary { cursor:pointer; font-weight:700; }
+.jn-generator p,.jn-dice-settings small { font-size:12px; line-height:1.45; }
+.jn-generator-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:12px 0; }
+.jn-generator-grid label { display:flex; flex-direction:column; gap:5px; font-size:12px; }
+.jn-generator-grid input,.jn-generator-grid select { width:100%; min-height:40px; padding:6px 8px; box-sizing:border-box; }
+.jn-generator-presets,.jn-generator-structures { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+.jn-generator input[type=checkbox],.jn-dice-settings input[type=checkbox] { width:auto; }
+.jn-generator button { min-height:44px; }

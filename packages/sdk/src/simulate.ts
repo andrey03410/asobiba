@@ -81,6 +81,13 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
     const rng = createRng((options.seed ?? 1) * 7919 + r);
     const ctx = { rules: config.rules, seats, rng, now: 0 };
     let state = game.setup({ ...ctx, round: 1, firstSeat: 0 });
+    // A sampled action is already random; do not consume RNG a second time.
+    const actionsFor = (seat: Seat): unknown[] => {
+      if (!game.sampleAction) return game.legalActions(state, seat, ctx);
+      const action = game.sampleAction(state, seat, ctx);
+      return action === null ? [] : [action];
+    };
+    const pickAction = (legal: unknown[]) => game.sampleAction ? legal[0] : rng.pick(legal);
     let actions = 0;
     let tick = 0;
     const step = 1000 / (game.tickRate ?? 20);
@@ -108,10 +115,10 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
       if (game.kind === "realtime") {
         for (let seat = 0; seat < seats; seat++) {
           if (rng.next() < 0.3) {
-            const legal = game.legalActions(state, seat, ctx);
+            const legal = actionsFor(seat);
             if (durationExpired()) continue roundLoop;
             if (legal.length > 0) {
-              const next = game.applyAction(state, seat, rng.pick(legal), ctx);
+              const next = game.applyAction(state, seat, pickAction(legal), ctx);
               if (!isActionError(next)) state = next;
             }
           }
@@ -124,10 +131,10 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
       }
       const actors = game.currentSeats(state);
       let seat: Seat | undefined = actors[0];
-      let legal = seat === undefined ? [] : game.legalActions(state, seat, ctx);
+      let legal = seat === undefined ? [] : actionsFor(seat);
       for (const actor of actors.slice(1)) {
         if (legal.length > 0) break;
-        const candidate = game.legalActions(state, actor, ctx);
+        const candidate = actionsFor(actor);
         if (candidate.length > 0) { seat = actor; legal = candidate; }
       }
       if (legal.length === 0 && game.wake && game.nextWakeAt) {
@@ -151,7 +158,7 @@ export function simulate(game: AnyGame, config: ConfigDocument, options: Simulat
         }
         state = game.passTurn(state, seat, ctx);
       } else {
-        const next = game.applyAction(state, seat, rng.pick(legal), ctx);
+        const next = game.applyAction(state, seat, pickAction(legal), ctx);
         if (isActionError(next)) {
           illegal++;
           break;

@@ -1,5 +1,6 @@
 import type { ClientMessage, LobbyDto, ServerMessage } from "@asobiba/api";
 import type { MatchView, Seat } from "@asobiba/sdk";
+import { createJinchiDecoder } from "@asobiba/game-jinchi/wire";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAuth } from "./auth";
@@ -69,6 +70,7 @@ export function useLobbySocket(
 
   useEffect(() => {
     let stopped = false;
+    const decodeMatch = createJinchiDecoder();
     let attempt = 0;
     let reconnectTimer: number | undefined;
     let pingTimer: number | undefined;
@@ -132,8 +134,14 @@ export function useLobbySocket(
             break;
           case "match":
             if (msg.lobbyId !== lobbyId) break;
+            try {
+              const next = msg.match === null ? null : decodeMatch(msg.match);
+              setMatch(next);
+            } catch {
+              onErrorRef.current?.("bad_snapshot", "Не удалось прочитать состояние партии. Переподключитесь к лобби.");
+              break;
+            }
             setClockOffset(msg.serverTime - Date.now());
-            setMatch(msg.match);
             setSeat(msg.seat);
             setControlRole(msg.controlRole);
             break;

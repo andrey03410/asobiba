@@ -20,7 +20,7 @@
 
 ## Как устроено
 
-- **Документ конфига** `{ sdk: 1, game, gameVersion, title, rules, series, timer, visual }`. Все объекты строгие (`z.strictObject`): лишнее поле — ошибка `unrecognized_keys` с подсказкой. Вложенные объекты с умолчаниями используют `.prefault({})`, иначе Zod 4 не применит умолчания полей.
+- **Документ конфига** `{ sdk: 1, game, gameVersion, title, info?, rules, series, timer, visual }`. Все объекты строгие (`z.strictObject`): лишнее поле — ошибка `unrecognized_keys` с подсказкой. Вложенные объекты с умолчаниями используют `.prefault({})`, иначе Zod 4 не применит умолчания полей.
 - **Проверка** `validateConfig`: игра и версии (`unknown_game`, `sdk_version`, `game_version` с подсказкой перечитать возможности) → разбор схемой → `checkRules` и `checkVisual` игры (пути относительно раздела, SDK добавляет префикс) → у игр реального времени таймер хода запрещён. Предупреждения (`severity: "warning"`) не блокируют. Владение картинками проверяет сервер.
 - **Игра** — чистые функции над обычным JSON: `setup`, `currentSeats`, `turnId?`, `legalActions`, `applyAction` (возвращает новое состояние или `actionError`), `passTurn?`, `tick?`, `roundResult`, `view(state, seat|null)`. Вся случайность — из `ctx.rng`. Необязательный `presentRules` возвращает копию правил без секретов: её показывает лобби, партия идёт по документу из базы.
 - **Движок `Match`**:
@@ -30,10 +30,30 @@
   - реальное время: фиксированный шаг `1000 / tickRate` от начала раунда, действия применяются сразу, тики — в `advance`;
   - журнал хранит действия игроков и доверенные control-события с временем; у control `seat: -1`, `controlRole: host|presenter|system`. Таймауты, паузы и тики выводятся из времени, поэтому `restore` по журналу даёт то же состояние, что и у живой партии.
   - итог серии: `winners` — места с наибольшим числом побед в раундах, `draw` = победителей не ровно один.
-  - страховка от зависания: в пошаговой игре, если ни у кого из ходящих нет `legalActions`, а `roundResult` пуст, раунд без `applyControl`/`nextWakeAt` заканчивается ничьей `no-moves` («ходов нет»). Проверка идёт после `setup` каждого раунда и после каждого изменения. Пас, если игра его допускает, должен быть действием.
+  - страховка от зависания: в пошаговой игре, если ни у кого из ходящих нет `hasLegalAction` (или `legalActions` у игр без hook), а `roundResult` пуст, раунд без `applyControl`/`nextWakeAt` заканчивается ничьей `no-moves` («ходов нет»). Проверка идёт после `setup` каждого раунда и после каждого изменения. Пас, если игра его допускает, должен быть действием.
   - отклонённое действие (`actionError`) не попадает в журнал, поэтому движок откатывает генератор (`rng.state()`/`restore()`) — повтор по журналу совпадает с живой партией.
 - **Прогоны** `simulate` (синхронно, в MCP — до 200 раундов): независимые раунды, место 0 всегда ходит первым. Проблемы: `never-ends`, `stuck`, `illegal-legal-action`, `always-draw` (≥95 % ничьих при ≥10 раундах), `first-seat-dominates` (≥90 % результативных раундов).
 - **Возможности** `describeGame`: JSON Schema документа (`z.toJSONSchema`, `io: "input"`), `guide` игры, `sdkGuide`, слоты, темы, `visualCatalog`, полные документы пресетов.
+
+## Информация об игре и партии
+
+[`info.ts`](../../packages/sdk/src/info.ts): `GameInformation` объясняет цель/ход/пример,
+`TuningDirection` даёт варианты с последствиями (у всех4 игр по7), `ConfigSummary`
+описывает фактический конфиг. `describeConfig(game, config)` принимает **проверенный оригинал**,
+вызывает whitelist `summarizeConfig`, добавляет общие timer/series и необязательное
+`config.info:{title?,text?}` (80/2000 символов). Не обходить произвольный JSON ради сводки:
+Quizor/Pole содержат ответы и будущие вопросы. `presentRules` недостаточно для formatter.
+Capabilities включает info/tuning, успешная validation — summary, LobbyDto — information.
+Авторский текст — plain text, отдельно от системных правил; invitation его не показывает.
+
+## Поиск действия без перечисления
+
+Необязательные `hasLegalAction(state,seat,ctx)` и `sampleAction(state,seat,ctx)` ускоряют
+проверку отсутствия ходов/таймаут random/симуляцию. Для игр без hooks остаётся прежний
+`legalActions`. Sample обязан вернуть допустимое действие, учитывать RNG и не менять state;
+пустой результат при доступном действии — ошибка. Не менять число RNG draws старых журналов.
+`GameClient.stageHud:'board'` оставляет чей ход/таймер внутри доски; `resultSummary`
+возвращает публичное разложение результата для итоговой карточки сцены.
 
 ## Управление и часы Quizor
 
@@ -116,3 +136,5 @@ skippedRounds — не запущенные. Исчерпание бюджета
 
 - [задача 06](../features/06-quizor/README.md) — control/wake, ведущий и восстановление журнала
 - [задача 07](../features/07-video-games/README.md) — контракт видео `GameVideoSupport`, `VideoDirective`, `videoKey`
+
+- [задача 08](../features/08-jinchi-playtest/README.md) — безопасные info/tuning/summary, hooks поиска действия и HUD результата

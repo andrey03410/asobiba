@@ -2,8 +2,8 @@ import { Resvg } from '@resvg/resvg-js';
 import type { BoardProps, ConfigDocument, MatchView } from '@asobiba/sdk';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { JinchiBoard, JinchiSeatIcon } from './Board';
-import { MapArtwork, MapViewport } from './MapViewport';
+import { JinchiBoard, JinchiSeatIcon, readScoreMode, writeScoreMode } from './Board';
+import { MapArtwork, MapViewport, resizeCamera, clusterObjects, turnCueKey, consumeTurnCue } from './MapViewport';
 
 const rules = {
   map: { width: 4, height: 3, rows: ['1#..', '....', '...2'] },
@@ -71,7 +71,8 @@ describe('Jinchi board', () => {
     expect(html).toContain('2 × 3');
     expect(html).toContain('Правила');
     expect(html).toContain('d6');
-    expect(html).toContain('окружил 3 клетки');
+    expect(html).toContain('aria-label="События"');
+    expect(html).not.toContain('окружил 3 клетки');
     expect(html).toContain('Повернуть');
     expect(html).toContain('Поставить');
   });
@@ -98,6 +99,44 @@ describe('Jinchi board', () => {
     expect(html).not.toContain('data-action="place"');
     expect(html).not.toContain('data-action="roll"');
   });
+  it('uses Canvas for interaction and exposes public objectives without hidden outcomes', () => {
+    const objective = { ...match, game: { ...game, points: [77, 1], flagCounts: [2, 0], effectPoints: [25, 0], rerollCharges: [1, 0], canReroll: true, canRotate: false, turnRotationLocked: true, flags: [{ x: 2, y: 1 }], effects: [{ x: 3, y: 0, kind: 'mystery' }], rules: { ...rules, flags: { mode: 'bonus', value: 25, target: 0, positions: [] } } } };
+    const html = board({ match: objective });
+    expect(html).toContain('<canvas');
+    expect(html).toContain('Перебросить');
+    expect(html).toContain('Поворот недоступен');
+    expect(html).toContain('77');
+    expect(html).toContain('Неизвестная клетка');
+    expect(html).not.toContain('jinchi-game-title');
+  });
+  it('offers only reroll and skip for an impossible roll instead of unusable placement controls', () => {
+    const html = board({ match: { ...match, game: { ...game, impossibleRoll: true, canReroll: true, canSkip: true, rerollCharges: [3, 0] } } });
+    expect(html).not.toContain('jinchi-placement-actions');
+    expect(html).not.toContain('data-action="place"');
+    expect(html).toContain('data-action="reroll"');
+    expect(html).toContain('data-action="skip-impossible"');
+    expect(html).toMatch(/aria-label="Перебросить оба кубика[^\"]*"/);
+    expect(html).toContain('aria-label="Пропустить невозможный бросок"');
+  });
+  it('keeps placement and reroll together when the rolled figure is playable', () => {
+    const html = board({ match: { ...match, game: { ...game, impossibleRoll: false, canReroll: true, canSkip: false, rerollCharges: [1, 0] } } });
+    expect(html).toContain('data-action="place"');
+    expect(html).toContain('aria-label="Повернуть"');
+    expect(html).toContain('data-action="reroll"');
+    expect(html).not.toContain('data-action="skip-impossible"');
+  });
+  it('does not offer reroll or impossible-roll skip to a spectator', () => {
+    const html = board({ seat: null, match: { ...match, game: { ...game, impossibleRoll: true, canReroll: true, canSkip: true, rerollCharges: [3, 0] } } });
+    expect(html).not.toContain('data-action="place"');
+    expect(html).not.toContain('data-action="reroll"');
+    expect(html).not.toContain('data-action="skip-impossible"');
+  });
+  it('shows a complete score breakdown after a finished round', () => {
+    const html = board({ match: { ...match, phase: 'finished', game: { ...game, points: [77, 1], flagCounts: [2, 0], effectPoints: [25, 0], rules: { ...rules, flags: { mode: 'bonus', value: 25 } } } } });
+    expect(html).toContain('Клетки');
+    expect(html).toContain('Эффекты');
+    expect(html).toContain('Очки');
+  });
 
   it('renders the seat icon in its configured color', () => {
     const html = renderToStaticMarkup(<JinchiSeatIcon seat={1} config={config} assetUrl={() => ''} />);
@@ -106,14 +145,49 @@ describe('Jinchi board', () => {
 });
 
 describe('MapViewport shared surface', () => {
+  it('preserves the logical center and cell scale across orientation changes', () => {
+    const camera = resizeCamera({ x: 10, y: 20, width: 80, height: 40 }, { width: 800, height: 400 }, { width: 400, height: 800 });
+    expect(camera).toEqual({ x: 30, y: 0, width: 40, height: 80 });
+  });
+  it('bounds a dense overlay without dropping objects from the overview', () => {
+    const objects = Array.from({ length: 1000 }, (_, i) => ({ x: i % 100, y: Math.floor(i / 100), kind: 'flag' }));
+    const result = clusterObjects(objects, { x: 0, y: 0, width: 100, height: 100 }, 100);
+    expect(result.length).toBeLessThanOrEqual(100);
+    expect(result.reduce((sum, item) => sum + item.count, 0)).toBe(1000);
+  });
   it('renders SVG overlays, editor toolbar and minimap using grouped paths', () => {
     const html = renderToStaticMarkup(<MapViewport width={200} height={200} cells={Array(40_000).fill(0)} colors={colors} toolbar={<button>Кисть</button>}><rect data-ghost="true" width={2} height={3} /></MapViewport>);
     expect(html).toContain('Кисть');
     expect(html).toContain('data-ghost="true"');
     expect(html).toContain('aria-label="Миникарта"');
-    expect((html.match(/<path/g) ?? []).length).toBeLessThan(10);
+    // Navigation icons and bounded overlays are allowed; cells must not become
+    // one SVG node each as the board grows.
+    expect((html.match(/<path/g) ?? []).length).toBeLessThan(40);
     expect(html).toContain('Полный экран');
   });
+});
+
+it('does not replay a turn cue when dice are rolled again', () => {
+  const first = turnCueKey(1, 3, 0);
+  expect(first).toBe('1:3:0');
+  expect(turnCueKey(1, 4, 0)).not.toBe(first);
+});
+
+it('signals only an unseen visible own turn, including returning from a hidden tab', () => {
+  const seen = new Set<string>();
+  const signal = (visible: boolean, turn: number) => consumeTurnCue(seen, 1, turn, 0, visible);
+  expect(signal(false, 3)).toBe(false);
+  expect(signal(true, 3)).toBe(true);
+  expect(signal(true, 3)).toBe(false);
+  expect(signal(true, 4)).toBe(true);
+});
+
+it('keeps a hidden score preference for the next match and tolerates unavailable storage', () => {
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+  writeScoreMode('hidden', storage);
+  expect(readScoreMode(storage)).toBe('hidden');
+  expect(() => writeScoreMode('hidden', { setItem() { throw new Error('disabled'); } })).not.toThrow();
 });
 
 it.each(['#101a2b', '#fff8e9'])('keeps cell boundaries visible on %s maps', (background) => {

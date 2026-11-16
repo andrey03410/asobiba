@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it } from 'vitest';
 import { SchemaForm } from './SchemaForm';
+import { z } from 'zod';
+import { rulesSchema } from '@asobiba/game-jinchi';
+import { FlagSettings, EffectSettings } from '@asobiba/game-jinchi/client';
 
 it('replaces only the requested nested field with its custom editor', () => {
   const html = renderToStaticMarkup(<SchemaForm
@@ -19,4 +22,21 @@ it('shows human-readable enum labels while retaining machine values', () => {
   expect(html).toContain('Автоматически');
   expect(html).toContain('По кнопке');
   expect(html).toContain('&quot;manual&quot;');
+});
+
+
+it.each([undefined, null, {}, { mode: 'bonus' }])('opens legacy or partial Jinchi object settings without changing source %j', raw => {
+  const source = { rules: { flags: raw, effects: raw } };
+  const before = JSON.stringify(source);
+  const html = renderToStaticMarkup(<SchemaForm
+    schema={{ type: 'object', properties: { rules: z.toJSONSchema(rulesSchema, { io: 'input' }) } }}
+    value={source} onChange={() => { throw new Error('render must not mutate source'); }}
+    overrides={{
+      'rules.flags': ({ value, onChange }) => <FlagSettings value={value} onChange={onChange} />,
+      'rules.effects': ({ value, onChange }) => <EffectSettings value={value} onChange={onChange} />,
+    }}
+  />);
+  expect(html).toContain('Как учитывать флаги');
+  expect(html).toContain('Возможные исходы неизвестной клетки');
+  expect(JSON.stringify(source)).toBe(before);
 });

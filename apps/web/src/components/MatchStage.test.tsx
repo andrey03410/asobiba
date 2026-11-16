@@ -75,6 +75,11 @@ function render(match: MatchView) {
 }
 
 describe("MatchStage", () => {
+  it("lets a board own its turn HUD without duplicating the turn", () => {
+    const html = renderToStaticMarkup(<MatchStage lobby={lobby} match={view({})} config={config} client={{ ...client, stageHud: 'board' } as WebGameClient} mySeat={0} seatName={() => 'Аня'} clockOffset={0} online onLeave={() => {}} busy={false} drawer={null} information={<p>Правила этой партии</p>} />);
+    expect(html).not.toContain('stage-turn');
+    expect(html).toContain('Об игре');
+  });
   it("tells the board when transport is disconnected so drafts can be resynchronized", () => {
     const html = renderToStaticMarkup(
       <MatchStage

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent, ReactElement, ReactNode } from 'react';
 
 export interface MapViewportProps {
@@ -25,10 +25,87 @@ export interface MapViewportProps {
   fill?: boolean;
   /** Fullscreen owned by the page: the button and F drive it instead of the viewport's own. */
   externalFullscreen?: { active: boolean; available: boolean; toggle(): void };
+  objects?: MapObject[];
+  /** Game placement needs distinguishable cells; editor strokes keep their own precision. */
+  minimumPickSize?: number;
+  onTooSmall?: () => void;
 }
 
-type Box = { x: number; y: number; width: number; height: number };
+export type Box = { x: number; y: number; width: number; height: number };
 type Point = { x: number; y: number };
+export function resizeCamera(box: Box, before: { width: number; height: number }, after: { width: number; height: number }): Box {
+  const scale = box.width / Math.max(1, before.width);
+  const width = after.width * scale, height = after.height * scale;
+  return { x: box.x + (box.width - width) / 2, y: box.y + (box.height - height) / 2, width, height };
+}
+export function turnCueKey(round: number, turn: number, seat: number): string { return `${round}:${turn}:${seat}`; }
+export function consumeTurnCue(seen: Set<string>, round: number, turn: number, seat: number, visible: boolean): boolean {
+  const key = turnCueKey(round, turn, seat);
+  if (!visible || seen.has(key)) return false;
+  seen.add(key); return true;
+}
+export interface MapObject extends Point { kind: string }
+export function clusterObjects(objects: MapObject[], box: Box, pixels: number): (MapObject & { count: number })[] {
+  const bins = new Map<string, MapObject & { count: number }>();
+  const size = Math.max(1, box.width / Math.max(1, pixels) * 20);
+  for (const object of objects) {
+    if (object.x + 1 < box.x || object.y + 1 < box.y || object.x > box.x + box.width || object.y > box.y + box.height) continue;
+    const key = `${Math.floor(object.x / size)}:${Math.floor(object.y / size)}`;
+    const previous = bins.get(key);
+    if (previous) { previous.count++; if (previous.kind !== object.kind) previous.kind = 'mixed'; }
+    else bins.set(key, { ...object, count: 1 });
+  }
+  return [...bins.values()];
+}
+
+export const OBJECT_LABELS: Record<string, string> = { flag: 'Флаг', cache: 'Тайник', trap: 'Ловушка', reroll: 'Запасной бросок', lock: 'Скованность', mystery: 'Неизвестная клетка', mixed: 'Объекты' };
+export function ObjectsArtwork({ objects, box, pixels = 1000 }: { objects: MapObject[]; box: Box; pixels?: number }): ReactElement {
+  const clustered = clusterObjects(objects, box, pixels);
+  const radius = Math.max(.38, box.width / pixels * 8);
+  const paths: Record<string, string> = { flag: 'M-.3 .5V-.5H.4L.2-.2.4.1H-.3', cache: 'M-.4 0H.4M0-.4V.4', trap: 'M-.4 0H.4', reroll: 'M-.4-.1A.42.42 0 1 1-.2.4M-.4-.5V-.1H0', lock: 'M-.35.45V-.05H.35V.45ZM-.2-.05V-.3A.2.2 0 0 1 .2-.3V-.05', mystery: 'M-.2-.2Q-.2-.5.1-.4T.1 0L0 .1M0 .35v.08', mixed: 'M0-.5L.5 0 0 .5-.5 0Z' };
+  return <g className="jinchi-objects" pointerEvents="none">{clustered.map((object, i) => <g key={i} transform={`translate(${object.x + .5} ${object.y + .5})`}><title>{`${OBJECT_LABELS[object.kind]}${object.count > 1 ? `: ${object.count}` : ''}`}</title><circle r={radius} fill={object.kind === 'trap' ? '#7e302f' : '#143d43'} stroke={object.kind === 'flag' ? '#f8cc62' : '#fff9df'} strokeWidth={radius * .14} />{object.count > 1 ? <text dominantBaseline="central" textAnchor="middle" fill="#fff9df" fontSize={radius * 1.5} fontWeight="800">{object.count}</text> : <path transform={`scale(${radius * 1.25})`} d={paths[object.kind] ?? paths.mystery} fill="none" stroke="#fff9df" strokeWidth=".15" strokeLinecap="round" strokeLinejoin="round" />}</g>)}</g>;
+}
+
+const RasterSurface = memo(function RasterSurface({ source, box, size, background, grid = false }: { source: HTMLCanvasElement | null; box: Box; size: { width: number; height: number }; background: string; grid?: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || !source) return;
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.max(1, Math.round(size.width * ratio)); canvas.height = Math.max(1, Math.round(size.height * ratio));
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, size.width, size.height);
+    context.imageSmoothingEnabled = false;
+    const scale = size.width / box.width;
+    context.fillStyle = background;
+    context.fillRect(-box.x * scale, -box.y * scale, source.width * scale, source.height * scale);
+    context.drawImage(source, -box.x * scale, -box.y * scale, source.width * scale, source.height * scale);
+    if (grid && scale >= 6) {
+      context.strokeStyle = '#71847c66'; context.lineWidth = .6; context.beginPath();
+      for (let x = Math.max(0, Math.ceil(box.x)); x <= Math.min(source.width, box.x + box.width); x++) { const px = (x - box.x) * scale; context.moveTo(px, Math.max(0, -box.y * scale)); context.lineTo(px, Math.min(size.height, (source.height - box.y) * scale)); }
+      for (let y = Math.max(0, Math.ceil(box.y)); y <= Math.min(source.height, box.y + box.height); y++) { const py = (y - box.y) * scale; context.moveTo(Math.max(0, -box.x * scale), py); context.lineTo(Math.min(size.width, (source.width - box.x) * scale), py); }
+      context.stroke();
+    }
+  }, [source, box, size, background, grid]);
+  return <canvas className="jinchi-raster" ref={ref} aria-hidden="true" />;
+});
+
+function mapTexture(width: number, height: number, cells: number[], colors: string[], wallColor: string, background: string): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  const palette = new Map<number, number[]>();
+  for (const [value, color] of [[-2, wallColor], [-1, background], ...colors.map((c, i) => [i, c])] as [number, string][]) {
+    context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1); palette.set(value, [...context.getImageData(0, 0, 1, 1).data]);
+  }
+  const image = context.createImageData(width, height);
+  for (let i = 0; i < cells.length; i++) image.data.set(palette.get(cells[i]) ?? palette.get(-1)!, i * 4);
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
 type Gesture = { start: Point; previous: Point; moved: boolean; drawing: boolean; lastCell: Point | null };
 
 /** Horizontal runs keep a 40,000 cell map to at most nine painted SVG nodes. */
@@ -92,19 +169,25 @@ function SvgIcon({ kind }: { kind: 'fit' | 'focus' | 'last' | 'fullscreen' | 'ma
 }
 
 /** The editor and game use the same camera. Incoming cells never move it. */
-export function MapViewport({ width, height, cells, colors, wallColor, background, grid = true, children, onCellHover, onCellClick, onStrokeStart, onStrokeMove, onStrokeEnd, onStrokeCancel, drawing = false, focusCells = [], lastCells = [], toolbar, fill = false, externalFullscreen }: MapViewportProps): ReactElement {
+export function MapViewport({ width, height, cells, colors, wallColor = '#293d45', background = '#f7f3e8', grid = true, children, onCellHover, onCellClick, onStrokeStart, onStrokeMove, onStrokeEnd, onStrokeCancel, drawing = false, focusCells = [], lastCells = [], toolbar, fill = false, externalFullscreen, objects = [], minimumPickSize = 0, onTooSmall }: MapViewportProps): ReactElement {
   const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const aspectRef = useRef(1.6);
+  const [size, setSize] = useState({ width: 800, height: 500 });
+  const sizeRef = useRef(size);
+  const measured = useRef(false);
+  const texture = useMemo(() => mapTexture(width, height, cells, colors, wallColor, background), [width, height, cells, colors, wallColor, background]);
   const navigated = useRef(false);
   const [camera, setCamera] = useState<Box>(() => fitBox(width, height, aspectRef.current));
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
   const [fullscreen, setFullscreen] = useState(false);
-  const [miniOpen, setMiniOpen] = useState(true);
+  const [miniOpen, setMiniOpen] = useState(() => { try { return localStorage.getItem('jinchi.minimap') !== 'hidden'; } catch { return true; } });
   const [panning, setPanning] = useState(false);
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<Gesture | null>(null);
+  const strokeCancelRef = useRef(onStrokeCancel);
+  strokeCancelRef.current = onStrokeCancel;
   const pinching = useRef(false);
   const pinchDistance = useRef(0);
   const spaceDown = useRef(false);
@@ -132,7 +215,13 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
       if (!w || !h) return;
       const aspect = w / h;
       aspectRef.current = aspect;
-      setCamera(old => navigated.current ? { ...old, y: old.y + (old.height - old.width / aspect) / 2, height: old.width / aspect } : fitBox(widthRef.current, heightRef.current, aspect));
+      const before = sizeRef.current, after = { width: w, height: h };
+      const alreadyMeasured = measured.current;
+      measured.current = true;
+      setCamera(old => alreadyMeasured ? resizeCamera(old, before, after) : fitBox(widthRef.current, heightRef.current, aspect));
+      sizeRef.current = after; setSize(after);
+      if (gesture.current?.drawing) strokeCancelRef.current?.();
+      gesture.current = null; pointers.current.clear(); pinching.current = false; setPanning(false);
     });
     observer.observe(svg);
     return () => observer.disconnect();
@@ -233,6 +322,11 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
     else if (key === '0') fit();
     else if (key === 'm') focus(focusCells);
     else if (key === 'l') focus(lastCells);
+    else if (key === 'g') {
+      const center = { x: cameraRef.current.x + cameraRef.current.width / 2, y: cameraRef.current.y + cameraRef.current.height / 2 };
+      const flag = objects.filter(object => object.kind === 'flag').sort((a, b) => Math.hypot(a.x - center.x, a.y - center.y) - Math.hypot(b.x - center.x, b.y - center.y))[0];
+      if (flag) focus([flag.y * width + flag.x]);
+    }
     else if (key === 'f') void toggleFullscreen();
     else return;
     event.preventDefault();
@@ -304,7 +398,10 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
       if (g.drawing && (position ?? g.lastCell)) {
         const end = position ?? g.lastCell!;
         onStrokeEnd?.(end.x, end.y);
-      } else if (!g.moved && event.button === 0 && position) onCellClick?.(position.x, position.y);
+      } else if (!g.moved && event.button === 0 && position) {
+        if (sizeRef.current.width / cameraRef.current.width < minimumPickSize) { zoom(Math.max(.05, sizeRef.current.width / cameraRef.current.width / minimumPickSize), { x: position.x + .5, y: position.y + .5 }); onTooSmall?.(); }
+        else onCellClick?.(position.x, position.y);
+      }
     }
     gesture.current = null;
     if (pointers.current.size === 0) { pinching.current = false; setPanning(false); }
@@ -330,28 +427,32 @@ export function MapViewport({ width, height, cells, colors, wallColor, backgroun
   const visibleY = Math.max(0, Math.min(height, camera.y));
   const visibleW = Math.max(0, Math.min(width, camera.x + camera.width) - visibleX);
   const visibleH = Math.max(0, Math.min(height, camera.y + camera.height) - visibleY);
-  const pixelPerCell = (svgRef.current?.clientWidth ?? 800) / camera.width;
 
-  return <div className={`jinchi-viewport${fullscreen && !externalFullscreen ? ' is-fullscreen' : ''}${fill ? ' is-fill' : ''}${panning ? ' is-panning' : ''}${drawing ? ' is-drawing' : ''}`} ref={rootRef} tabIndex={0} onKeyDown={keyDown} onKeyUp={event => { if (event.key === ' ') spaceDown.current = false; }} onBlur={() => { spaceDown.current = false; }} aria-label="Карта Jinchi. Стрелки — перемещение, плюс и минус — масштаб, F — полный экран">
-    {toolbar && <div className="jinchi-viewport-toolbar">{toolbar}</div>}
-    <div className="jinchi-map-stage">
-      <svg ref={svgRef} className="jinchi-map" viewBox={`${camera.x} ${camera.y} ${camera.width} ${camera.height}`} role="img" aria-label={`Карта ${width}×${height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer}>
-        <MapArtwork width={width} height={height} cells={cells} colors={colors} wallColor={wallColor} background={background} grid={grid && pixelPerCell >= 6}>{children}</MapArtwork>
-      </svg>
-      {showMini && <aside className={`jinchi-minimap${miniOpen ? '' : ' is-collapsed'}`}>
-        <button type="button" className="jinchi-minimap-toggle" onClick={() => setMiniOpen(old => !old)} aria-expanded={miniOpen}><SvgIcon kind="map" /><span>Обзор</span><span aria-hidden="true">{miniOpen ? '−' : '+'}</span></button>
-        {miniOpen && <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Миникарта" style={{ aspectRatio: `${width}/${height}` }} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); miniDragging.current = true; miniNavigate(event); }} onPointerMove={event => { if (miniDragging.current) miniNavigate(event); }} onPointerUp={() => { miniDragging.current = false; }} onPointerCancel={() => { miniDragging.current = false; }}>
-          <MapArtwork width={width} height={height} cells={cells} colors={colors} wallColor={wallColor} background={background} grid={false}>{children}</MapArtwork>
-          <rect x={visibleX} y={visibleY} width={visibleW} height={visibleH} fill="#fff" fillOpacity=".12" stroke="#fff" strokeWidth={Math.max(width, height) / 90} />
-          <rect x={visibleX} y={visibleY} width={visibleW} height={visibleH} fill="none" stroke="#152d32" strokeWidth={Math.max(width, height) / 190} />
-        </svg>}
-      </aside>}
-      <div className="jinchi-map-caption"><span>{width} × {height}</span><span>陣地 · JINCHI</span></div>
-    </div>
-    <nav className="jinchi-map-controls" aria-label="Навигация по карте">
+  const controls = <nav className="jinchi-map-controls" aria-label="Навигация по карте">
       <div className="jinchi-control-group"><button type="button" onClick={() => zoom(1.25)} aria-label="Уменьшить масштаб" title="Уменьшить (−)">−</button><output aria-label="Масштаб">{zoomPercent}%</output><button type="button" onClick={() => zoom(.8)} aria-label="Увеличить масштаб" title="Увеличить (+)">+</button></div>
       <div className="jinchi-control-group"><button type="button" onClick={fit} title="Вся карта (0)"><SvgIcon kind="fit" /><span>Вся карта</span></button><button type="button" onClick={() => focus(focusCells)} disabled={!focusCells.length} title="К моей территории (M)" aria-label="К моей территории"><SvgIcon kind="focus" /><span>К себе</span></button><button type="button" onClick={() => focus(lastCells)} disabled={!lastCells.length} title="К последнему ходу (L)" aria-label="К последнему ходу"><SvgIcon kind="last" /><span>Последний</span></button></div>
+      {objects.some(object => object.kind === 'flag') && <button type="button" title="Ближайший флаг (G)" onClick={() => { const cx = camera.x + camera.width / 2, cy = camera.y + camera.height / 2; const flag = objects.filter(o => o.kind === 'flag').sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0]; if (flag) focus([flag.y * width + flag.x]); }}>⚑<span>К флагу</span></button>}
       {(!externalFullscreen || externalFullscreen.available) && <button type="button" className="jinchi-fullscreen" onClick={() => { void toggleFullscreen(); }} title="Полный экран (F)" aria-label={shownFullscreen ? 'Выйти из полного экрана' : 'Полный экран'}><SvgIcon kind="fullscreen" /><span>{shownFullscreen ? 'Свернуть' : 'Полный экран'}</span></button>}
-    </nav>
+    </nav>;
+
+  return <div className={`jinchi-viewport${fullscreen && !externalFullscreen ? ' is-fullscreen' : ''}${fill ? ' is-fill' : ''}${panning ? ' is-panning' : ''}${drawing ? ' is-drawing' : ''}${externalFullscreen ? ' has-external-fullscreen' : ''}`} ref={rootRef} tabIndex={0} onKeyDown={keyDown} onKeyUp={event => { if (event.key === ' ') spaceDown.current = false; }} onBlur={() => { spaceDown.current = false; }} aria-label="Карта Jinchi. Стрелки — перемещение, плюс и минус — масштаб, F — полный экран">
+    {toolbar && <div className="jinchi-viewport-toolbar">{toolbar}</div>}
+    <div className="jinchi-map-stage">
+      <RasterSurface source={texture} box={camera} size={size} background={background} grid={grid} />
+      <svg ref={svgRef} className="jinchi-map" viewBox={`${camera.x} ${camera.y} ${camera.width} ${camera.height}`} role="img" aria-label={`Карта ${width}×${height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer}>
+        <ObjectsArtwork objects={objects} box={camera} pixels={size.width} />{children}
+      </svg>
+      {showMini && <aside className={`jinchi-minimap${miniOpen ? '' : ' is-collapsed'}`}>
+        <button type="button" className="jinchi-minimap-toggle" onClick={() => setMiniOpen(old => { try { localStorage.setItem('jinchi.minimap', old ? 'hidden' : 'visible'); } catch { /* Storage can be disabled. */ } return !old; })} aria-expanded={miniOpen}><SvgIcon kind="map" /><span>Обзор</span><span aria-hidden="true">{miniOpen ? '−' : '+'}</span></button>
+        {miniOpen && <div className="jinchi-mini-surface" style={{ aspectRatio: `${width}/${height}` }}><RasterSurface source={texture} box={{ x: 0, y: 0, width, height }} size={{ width: 160, height: 160 * height / width }} background={background} /><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Миникарта" onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); miniDragging.current = true; miniNavigate(event); }} onPointerMove={event => { if (miniDragging.current) miniNavigate(event); }} onPointerUp={() => { miniDragging.current = false; }} onPointerCancel={() => { miniDragging.current = false; }}>
+          <ObjectsArtwork objects={objects} box={{ x: 0, y: 0, width, height }} pixels={160} />
+          <rect x={visibleX} y={visibleY} width={visibleW} height={visibleH} fill="#fff" fillOpacity=".12" stroke="#fff" strokeWidth={Math.max(width, height) / 90} />
+          <rect x={visibleX} y={visibleY} width={visibleW} height={visibleH} fill="none" stroke="#152d32" strokeWidth={Math.max(width, height) / 190} />
+        </svg></div>}
+      </aside>}
+      <details className="jinchi-mobile-navigation"><summary aria-label="Навигация по карте"><SvgIcon kind="map" /><span>Карта</span></summary>{controls}</details>
+      <div className="jinchi-map-caption"><span>{width} × {height}</span><span>陣地 · JINCHI</span></div>
+    </div>
+    <div className="jinchi-desktop-navigation">{controls}</div>
   </div>;
 }

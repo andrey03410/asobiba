@@ -2,3 +2,9 @@ export { actionSchema, findPlacements, jinchi, placementError, type JinchiAction
 export { checkRules, rulesSchema, rulesText, type JinchiRules, EMPTY, WALL, MAX_SIDE } from "./rules";
 export { checkVisual, DEFAULT_COLORS, visualSchema, type JinchiVisual } from "./visual";
 export { PRESETS } from "./presets";
+export { diceSides } from './rules';
+export type { CellPosition, EffectKind, EffectCell, WeightedEffect } from './rules';
+export { generationSchema, generateMap, GenerationError } from './generator';
+export type { GenerationRequest, GeneratedMap } from './generator';
+export { analyzeMap } from './balance';
+export type { BaseAnalysis, MapAnalysis } from './balance';

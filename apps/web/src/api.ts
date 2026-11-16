@@ -29,6 +29,8 @@ import type {
   VideoSnapshotDto,
 } from "@asobiba/api";
 import type { ConfigIssue } from "@asobiba/sdk";
+import type { ConfigDocument } from '@asobiba/sdk';
+import type { GenerationRequest, MapAnalysis } from '@asobiba/game-jinchi';
 import { forgetGuestAttempt, guestAttempt, withIdentityLock } from "./guestIdentity";
 
 export class ApiRequestError extends Error {
@@ -169,6 +171,7 @@ export const api = {
   // configs
   configs: () => request<ConfigsResponse>("GET", "/api/configs"),
   validateConfig: (config: unknown) => request<ValidateResponse>("POST", "/api/configs/validate", { body: { config } }),
+  generateJinchi: (generation: GenerationRequest) => request<{ config: ConfigDocument; diagnostics: MapAnalysis }>('POST', '/api/games/jinchi/generate', { body: { request: generation } }),
   createConfig: (config: unknown) => request<ConfigResponse>("POST", "/api/configs", { body: { config } }),
   updateConfig: (id: string, config: unknown) => request<ConfigResponse>("PUT", `/api/configs/${enc(id)}`, { body: { config } }),
   deleteConfig: (id: string) => request<void>("DELETE", `/api/configs/${enc(id)}`),

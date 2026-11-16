@@ -3,10 +3,10 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactElement } from 'react';
 import { findPlacements, placementError } from '../game';
 import type { JinchiView } from '../game';
-import { rulesText } from '../rules';
+import { diceSides, rulesText } from '../rules';
 import { DEFAULT_COLORS } from '../visual';
 import type { JinchiVisual } from '../visual';
-import { MapArtwork, MapViewport } from './MapViewport';
+import { MapArtwork, MapViewport, ObjectsArtwork, OBJECT_LABELS, consumeTurnCue } from './MapViewport';
 
 type Props = BoardProps;
 type Cell = { x: number; y: number };
@@ -54,17 +54,19 @@ const LastMove = memo(function LastMove({ view, visual, round }: { view: JinchiV
   const move = view.lastMove;
   if (!move) return null;
   const duration = visual.animations.durationMs;
-  const centerIndex = move.indices[Math.floor(move.indices.length / 2)] ?? move.captured[0] ?? 0;
+  const drawn = move.indices.slice(0, 1000);
+  const captured = move.captured.slice(0, 1500);
+  const centerIndex = drawn[Math.floor(drawn.length / 2)] ?? captured[0] ?? 0;
   const centerX = centerIndex % view.width, centerY = Math.floor(centerIndex / view.width);
   const buckets = Array.from({ length: 8 }, () => [] as number[]);
   let maxDistance = 1;
-  for (const index of move.captured) maxDistance = Math.max(maxDistance, Math.hypot(index % view.width - centerX, Math.floor(index / view.width) - centerY));
-  for (const index of move.captured) {
+  for (const index of captured) maxDistance = Math.max(maxDistance, Math.hypot(index % view.width - centerX, Math.floor(index / view.width) - centerY));
+  for (const index of captured) {
     const distance = Math.hypot(index % view.width - centerX, Math.floor(index / view.width) - centerY);
     buckets[Math.min(7, Math.floor(distance / maxDistance * 7))].push(index);
   }
   return <g key={`${round}-${move.turn}`} pointerEvents="none" style={{ '--jinchi-duration': `${duration}ms` } as Vars}>
-    <path className={visual.animations.place === 'pop' ? 'jinchi-last-place has-pop' : 'jinchi-last-place'} d={indicesPath(move.indices, view.width)} fill="none" stroke="#fff6c8" strokeWidth=".09" strokeLinejoin="round" />
+    <path className={visual.animations.place === 'pop' ? 'jinchi-last-place has-pop' : 'jinchi-last-place'} d={indicesPath(drawn, view.width)} fill="none" stroke="#fff6c8" strokeWidth=".09" strokeLinejoin="round" />
     {buckets.map((indices, i) => indices.length ? <path key={i} className={visual.animations.capture === 'wave' ? 'jinchi-capture has-wave' : 'jinchi-capture'} d={indicesPath(indices, view.width)} fill="#fff6c8" fillOpacity=".18" style={{ animationDelay: `${i * duration / 12}ms` }} /> : null)}
   </g>;
 });
@@ -79,12 +81,54 @@ export function JinchiBoard(props: Props): ReactElement {
     <rect x="-.7" y="-.7" width={view.width + 1.4} height={view.height + 1.4} fill={visual.background} />
     <MapArtwork width={view.width} height={view.height} cells={view.cells} colors={colors} wallColor={visual.wallColor} background={visual.background} grid={visual.grid}>
       <BaseLabels bases={view.bases} width={view.width} colors={colors} />
+      <ObjectsArtwork objects={[...(view.flags ?? []).map(p => ({ ...p, kind: "flag" })), ...(view.effects ?? [])]} box={{ x: 0, y: 0, width: view.width, height: view.height }} pixels={1400} />
     </MapArtwork>
   </svg>;
   return <InteractiveBoard {...props} />;
 }
 
-function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRemainingMs, clockOffset = 0, stage, fullscreen }: Props): ReactElement {
+type ScoreMode = 'compact' | 'hidden';
+export function readScoreMode(storage?: Pick<Storage, 'getItem'>): ScoreMode {
+  try { return (storage ?? localStorage).getItem('jinchi.score') === 'hidden' ? 'hidden' : 'compact'; } catch { return 'compact'; }
+}
+export function writeScoreMode(mode: ScoreMode, storage?: Pick<Storage, 'setItem'>): void {
+  try { (storage ?? localStorage).setItem('jinchi.score', mode); } catch { /* Local state still applies when storage is disabled. */ }
+}
+function remember(key: string, value: string): void { try { localStorage.setItem(`jinchi.${key}`, value); } catch { /* Preferences also work without storage. */ } }
+
+function Countdown({ match, config, clockOffset, supplied }: { match: Props['match']; config: Props['config']; clockOffset: number; supplied?: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (supplied !== undefined || match.turnDeadline === null) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [supplied, match.turnDeadline]);
+  const remaining = supplied !== undefined ? supplied : match.turnDeadline === null ? null : Math.max(0, Math.min((config.timer?.turnSeconds || Infinity) * 1000, match.turnDeadline - now - clockOffset));
+  if (remaining === null || match.phase !== 'playing') return null;
+  return <output className={`jinchi-timer${remaining <= 10_000 ? ' is-urgent' : ''}`} aria-label={remaining <= 10_000 ? 'Осталось менее десяти секунд' : 'Осталось времени на ход'}>{Math.ceil(remaining / 1000)} с</output>;
+}
+
+function Panel({ title, close, children }: { title: string; close(): void; children: ReactElement }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    ref.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+      if (event.key === 'Tab') {
+        const buttons = [...ref.current!.querySelectorAll<HTMLElement>('button,a,input,select,textarea,[tabindex="0"]')];
+        const first = buttons[0], last = buttons.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    document.addEventListener('keydown', keyboard);
+    return () => { document.removeEventListener('keydown', keyboard); previous?.focus({ preventScroll: true }); };
+  }, [close]);
+  return <div className="jinchi-panel-backdrop" onPointerDown={event => event.stopPropagation()} onClick={close}><div ref={ref} className="jinchi-panel" role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}><header><h3>{title}</h3><button type="button" onClick={close} aria-label="Закрыть">✕</button></header>{children}</div></div>;
+}
+
+function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRemainingMs, clockOffset = 0, stage, fullscreen, connected = true }: Props): ReactElement {
   const view = match.game as JinchiView;
   const visual = config.visual as JinchiVisual;
   const colors = visual.colors ?? DEFAULT_COLORS;
@@ -93,89 +137,116 @@ function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRema
   const [rotated, setRotated] = useState(false);
   const [hints, setHints] = useState(true);
   const [error, setError] = useState('');
-  const [touch, setTouch] = useState(false);
+  const [scoreMode, setScoreMode] = useState<ScoreMode>(() => readScoreMode());
+  const [panel, setPanel] = useState<'scores' | 'rules' | 'events' | null>(null);
+  const closePanel = useMemo(() => () => setPanel(null), []);
+  const [sound, setSound] = useState(() => { try { return localStorage.getItem('jinchi.sound') === 'on'; } catch { return false; } });
+  const audioRef = useRef<AudioContext | null>(null);
+  const enableAudio = () => { if (sound) { try { audioRef.current ??= new AudioContext(); void audioRef.current.resume().catch(() => {}); } catch { /* The visual cue is always available. */ } } };
+  useEffect(() => () => { void audioRef.current?.close().catch(() => {}); }, []);
+  const [cue, setCue] = useState(false);
+  const seenTurns = useRef(new Set<string>());
   const touchRef = useRef(false);
   const [pending, setPending] = useState(false);
   const pendingTurn = useRef<string | null>(null);
-  const turnKey = `${match.round}:${view.turn}:${view.currentSeat}:${view.dice?.join(':') ?? 'roll'}`;
-  const [now, setNow] = useState(() => Date.now());
+  const turnKey = `${match.round}:${view.turn}:${view.currentSeat}:${view.dice?.join(':') ?? 'roll'}:${view.rerolled ?? false}`;
+  const canAct = connected && match.phase === 'playing' && seat !== null && view.canAct && view.currentSeat === seat;
+  const ready = canAct && view.dice !== null;
+  const canPlace = ready && !view.impossibleRoll;
+  const canRotate = canPlace && view.canRotate !== false && !view.turnRotationLocked;
+  const actualRotated = canRotate && rotated;
+  const dice = diceSides(view.rules);
+  const diceW = view.dice?.[actualRotated ? 1 : 0] ?? 0;
+  const diceH = view.dice?.[actualRotated ? 0 : 1] ?? 0;
   useEffect(() => {
-    if (turnRemainingMs !== undefined || match.turnDeadline === null || match.phase !== 'playing') return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(timer);
-  }, [turnRemainingMs, match.turnDeadline, match.phase]);
-  const remaining = turnRemainingMs !== undefined ? turnRemainingMs : match.turnDeadline === null ? null : Math.max(0, Math.min((config.timer?.turnSeconds ?? Infinity) * 1000, match.turnDeadline - now - clockOffset));
+    pendingTurn.current = null; setPending(false); setError(''); setGhost(null);
+  }, [turnKey]);
   useEffect(() => {
     if (!pending) return;
     const timer = window.setTimeout(() => { pendingTurn.current = null; setPending(false); }, 3500);
     return () => window.clearTimeout(timer);
   }, [pending]);
   useEffect(() => {
-    pendingTurn.current = null;
-    setPending(false);
-    setError('');
-    setGhost(null);
-  }, [turnKey]);
-  const canAct = match.phase === 'playing' && seat !== null && view.canAct && view.currentSeat === seat;
-  const ready = canAct && view.dice !== null;
-  const ownCells = useMemo(() => seat === null ? [] : view.cells.flatMap((value, index) => value === seat ? [index] : []), [seat, view.cells]);
+    if (!canAct || seat === null) { setCue(false); return; }
+    let timer: number | undefined;
+    const signal = () => {
+      if (!consumeTurnCue(seenTurns.current, match.round, view.turn, seat, document.visibilityState !== 'hidden')) return;
+      setCue(true);
+      timer = window.setTimeout(() => setCue(false), 2500);
+      if (sound && audioRef.current?.state === 'running') {
+        const context = audioRef.current, oscillator = context.createOscillator(), gain = context.createGain();
+        oscillator.frequency.value = 660; gain.gain.setValueAtTime(.08, context.currentTime); gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + .17);
+        oscillator.connect(gain); gain.connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime + .18);
+      }
+    };
+    signal(); document.addEventListener('visibilitychange', signal);
+    return () => { document.removeEventListener('visibilitychange', signal); if (timer) window.clearTimeout(timer); setCue(false); };
+  }, [canAct, match.round, view.turn, seat, sound]);
+  const ownCells = useMemo(() => {
+    if (seat === null) return [];
+    let min = -1, max = -1, left = -1, right = -1;
+    for (let i = 0; i < view.cells.length; i++) if (view.cells[i] === seat) {
+      if (min < 0) min = i; max = i;
+      if (left < 0 || i % view.width < left % view.width) left = i;
+      if (right < 0 || i % view.width > right % view.width) right = i;
+    }
+    return min < 0 ? [] : [min, max, left, right];
+  }, [seat, view.cells, view.width]);
   const hintPath = useMemo(() => {
-    if (!ready || !hints || seat === null) return '';
-    const placements = findPlacements(view, seat, rotated);
-    return placements.filter(action => action.type === 'place').map(action => `M${action.x + .5} ${action.y + .5}h.001`).join('');
-  }, [view, seat, ready, hints, rotated]);
-  const ghostError = ghost && ready && seat !== null ? placementError(view, seat, ghost.x, ghost.y, rotated) : null;
-  const diceW = view.dice ? view.dice[rotated ? 1 : 0] : 0;
-  const diceH = view.dice ? view.dice[rotated ? 0 : 1] : 0;
+    if (!ready || !hints || seat === null || view.impossibleRoll) return '';
+    return findPlacements(view, seat, actualRotated, 700).filter(action => action.type === 'place').map(action => `M${action.x + .5} ${action.y + .5}h.001`).join('');
+  }, [view, seat, ready, hints, actualRotated]);
+  const objects = useMemo(() => [...(view.flags ?? []).map(position => ({ ...position, kind: 'flag' })), ...(view.effects ?? [])], [view.flags, view.effects]);
+  const lastCells = useMemo(() => view.lastMove ? [...view.lastMove.indices.slice(0, 1000), ...view.lastMove.captured.slice(0, 1500)] : [], [view.lastMove]);
+  const ghostError = ghost && canPlace && seat !== null ? placementError(view, seat, ghost.x, ghost.y, actualRotated) : null;
+  const dispatch = (action: unknown) => {
+    if (!canAct || pendingTurn.current === turnKey || !onAction) return;
+    pendingTurn.current = turnKey; setPending(true); setError(''); onAction(action);
+  };
   const place = (position: Cell | null) => {
-    if (!ready || seat === null || !position || pendingTurn.current === turnKey) return;
-    const reason = placementError(view, seat, position.x, position.y, rotated);
+    if (!canPlace || seat === null || !position) return;
+    const reason = placementError(view, seat, position.x, position.y, actualRotated);
     if (reason) { setError(reason); return; }
-    if (!onAction) return;
-    pendingTurn.current = turnKey;
-    setPending(true);
-    setError('');
-    onAction({ type: 'place', x: position.x, y: position.y, rotated });
+    dispatch({ type: 'place', ...position, rotated: actualRotated });
   };
-  const rotate = () => { if (ready) { setRotated(old => !old); setError(''); } };
-  const roll = () => {
-    if (!canAct || view.dice || pendingTurn.current === turnKey || !onAction) return;
-    pendingTurn.current = turnKey; setPending(true); onAction({ type: 'roll' });
-  };
-  const status = match.phase === 'finished' || view.result ? 'Территории поделены' : canAct ? 'Ваш ход' : seat === null ? 'Наблюдение' : `Ходит ${name(view.currentSeat)}`;
+  const rotate = () => { if (canRotate && !pending) { setRotated(old => !old); setError(''); } };
+  const status = match.phase === 'finished' || view.result ? 'Территории поделены' : canAct ? 'Ваш ход' : `Ходит ${name(view.currentSeat)}`;
   const currentColor = colors[view.currentSeat] ?? colors[0];
-  const eventIcon = { roll: '⚄', place: '▰', skip: '↷', capture: '◎', eliminate: '×' };
-  const rules = rulesText(view.rules);
-  const hud = <div className="jinchi-hud">
-    <div className="jinchi-hud-top"><div className="jinchi-game-title"><span className="jinchi-monogram" aria-hidden="true">陣</span><div><strong>Jinchi</strong><span>Занимайте. Окружайте. Побеждайте.</span></div></div><div className="jinchi-round"><span>КРУГ</span><b>{view.cycle}</b></div></div>
-    <div className="jinchi-scoreboard" aria-label="Территории игроков">{view.scores.map((score, index) => <div key={index} className={`jinchi-player${view.currentSeat === index && match.phase === 'playing' ? ' is-current' : ''}${view.eliminated[index] ? ' is-eliminated' : ''}`} style={{ '--seat-color': colors[index] } as Vars}>
-      <span className="jinchi-player-marker">{index + 1}</span><div className="jinchi-player-info"><strong>{name(index)}{seat === index && <span className="jinchi-you">вы</span>}</strong><span>{view.eliminated[index] ? 'Выбыл' : `${(view.area ? score / view.area * 100 : 0).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}% карты`}</span></div><b className="jinchi-player-score">{score.toLocaleString('ru-RU')}<small>клеток</small></b>
-    </div>)}</div>
-    <div className="jinchi-turnbar" style={{ '--seat-color': currentColor } as Vars}>
-      <div className="jinchi-turn-status" aria-live="polite"><i /><div><strong>{status}</strong><span>{pending ? 'Ход отправлен…' : ready ? touch ? 'Выберите место и подтвердите' : 'Поставьте прямоугольник рядом со своей территорией' : canAct ? 'Бросьте кубики, чтобы узнать размер фигуры' : match.phase === 'playing' ? 'Продумайте следующий ход' : 'Можно осмотреть карту'}</span></div></div>
-      {remaining !== null && match.phase === 'playing' && <output className={`jinchi-timer${remaining <= 10_000 ? ' is-urgent' : ''}`} aria-label="Осталось времени на ход">{Math.ceil(Math.max(0, remaining) / 1000)} с</output>}
-      <div className="jinchi-dice-pair"><Die value={view.dice?.[rotated ? 1 : 0] ?? null} sides={view.rules.dice.sides} color={currentColor} /><span aria-hidden="true">×</span><Die value={view.dice?.[rotated ? 0 : 1] ?? null} sides={view.rules.dice.sides} color={currentColor} /><span className="jinchi-dice-size">{view.dice ? `${diceW} × ${diceH}` : `d${view.rules.dice.sides}`}</span></div>
-      {canAct && !view.dice && <button type="button" className="jinchi-primary" data-action="roll" onClick={roll} disabled={pending}>Бросить кубики</button>}
-      {ready && <div className="jinchi-placement-actions"><button type="button" onClick={rotate} disabled={pending} title="Повернуть (R или правая кнопка)"><span aria-hidden="true">↻</span> Повернуть</button><button type="button" className="jinchi-primary" data-action="place" disabled={!ghost || ghostError !== null || pending} onClick={() => place(ghost)}>Поставить</button></div>}
-    </div>
-    <div className="jinchi-utilitybar"><div className="jinchi-utility-start"><button type="button" className={hints ? 'is-active' : ''} aria-pressed={hints} onClick={() => setHints(old => !old)} title="Подсказки (H)"><span aria-hidden="true">✦</span> Подсказки <kbd>H</kbd></button><span className="jinchi-placement-message" role="status">{error || (ready && ghost ? ghostError || `${diceW} × ${diceH} · можно поставить` : `${view.area.toLocaleString('ru-RU')} игровых клеток`)}</span></div>
-      <div className="jinchi-details"><details className="jinchi-rules"><summary>Правила</summary><div className="jinchi-details-panel"><h4>Правила этой карты</h4><ul>{rules.map((text, i) => <li key={i}>{text}</li>)}</ul><p className="jinchi-key-help">R — поворот · H — подсказки · F — полный экран<br />M — к себе · L — последний ход · 0 — вся карта<br />Стрелки / WASD — перемещение · + / − — масштаб</p></div></details><details className="jinchi-events"><summary>События <span>{view.events.length}</span></summary><div className="jinchi-details-panel"><h4>Последние события</h4>{view.events.length ? <ol>{[...view.events].reverse().slice(0, 24).map(event => <li key={event.id}><i style={{ color: colors[event.seat] }} aria-hidden="true">{eventIcon[event.type]}</i><span><b>{name(event.seat)}</b>: {event.text.replace(/Игрок \d+\s*/g, '')}</span></li>)}</ol> : <p>История партии появится здесь.</p>}</div></details></div>
+  const finished = match.phase === 'finished';
+  const [resultHidden, setResultHidden] = useState(false);
+  useEffect(() => { if (!finished) setResultHidden(false); }, [finished]);
+  const points = view.points ?? view.scores;
+  const primary = view.rules.flags?.mode === 'primary';
+  const scoreTable = <div className="jinchi-score-table-wrap"><table className="jinchi-score-table"><thead><tr><th>Игрок</th><th>Клетки</th><th>Флаги</th><th>Эффекты</th><th>Перебросы</th><th>Поворот</th><th>Очки</th></tr></thead><tbody>{view.scores.map((score, i) => <tr key={i}><th><i style={{ background: colors[i] }} />{name(i)}{view.eliminated[i] ? ' · выбыл' : ''}</th><td>{score.toLocaleString('ru-RU')}</td><td>{view.flagCounts?.[i] ?? 0}{view.rules.flags?.mode === 'bonus' ? ` × ${view.rules.flags.value}` : ''}</td><td>{view.effectPoints?.[i] ?? 0}</td><td>{view.rerollCharges?.[i] ?? 0} / 3</td><td>{i === view.currentSeat && view.turnRotationLocked ? 'Запрещён до конца хода' : view.rotationLocked?.[i] ? 'Запрещён в следующем ходу' : 'Доступен'}</td><td><b>{points[i].toLocaleString('ru-RU')}</b></td></tr>)}</tbody></table><p>{primary ? 'Победитель: сначала флаги, при равенстве — очки.' : 'Очки = клетки + бонусы флагов + эффекты.'}</p></div>;
+  const toolButtons = <><button type="button" aria-pressed={hints} onClick={() => setHints(old => !old)} title="Подсказки (H)" aria-label="Подсказки">✦</button><button type="button" onClick={() => setPanel('rules')} title="Правила и легенда" aria-label="Правила и легенда">?</button><button type="button" onClick={() => setPanel('events')} title="События" aria-label="События">☷</button></>;
+  const hud = <div className={`jinchi-hud${scoreMode === 'hidden' ? ' is-score-hidden' : ''}`}>
+    <div className="jinchi-score-toolbar"><button type="button" className="jinchi-score-open" onClick={() => setPanel('scores')} title="Подробный счёт">Счёт</button>{scoreMode === 'compact' && <><div className="jinchi-score-strip" aria-label="Счёт игроков">{view.scores.map((score, index) => <button key={index} type="button" title={`${name(index)}: ${points[index]} очков, ${score} клеток, ${(view.area ? score / view.area * 100 : 0).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}% карты`} className={`jinchi-score-chip${view.currentSeat === index ? ' is-current' : ''}${view.eliminated[index] ? ' is-eliminated' : ''}`} style={{ '--seat-color': colors[index] } as Vars} onClick={() => setPanel('scores')}><i>{index + 1}</i><span>{name(index)}</span><b>{primary ? `⚑ ${view.flagCounts?.[index] ?? 0}` : points[index].toLocaleString('ru-RU')}</b>{primary && <small>{points[index]}</small>}</button>)}</div><button type="button" onClick={() => { setScoreMode('hidden'); writeScoreMode('hidden'); }} aria-label="Скрыть счёт" title="Скрыть счёт">−</button></>}</div>
+    <div className={`jinchi-turnbar${cue ? ' has-cue' : ''}`} style={{ '--seat-color': currentColor } as Vars}>
+      <div className="jinchi-turn-status"><i aria-hidden="true">{canAct ? '▶' : '◷'}</i><strong>{status}</strong>{seat === null && <small>Наблюдение</small>}<small>Круг {view.cycle}</small><Countdown match={match} config={config} clockOffset={clockOffset} supplied={turnRemainingMs} /></div>
+      <div className="jinchi-turn-actions"><div className="jinchi-dice-pair"><Die value={view.dice?.[0] ?? null} sides={dice[0]} color={currentColor} /><span aria-hidden="true">×</span><Die value={view.dice?.[1] ?? null} sides={dice[1]} color={currentColor} /><span className="jinchi-dice-size">{view.dice ? `${diceW} × ${diceH}` : `d${dice[0]} + d${dice[1]}`}</span></div>
+      {canAct && !view.dice && <button type="button" className="jinchi-primary" data-action="roll" onClick={() => dispatch({ type: 'roll' })} disabled={pending}>Бросить кубики</button>}
+      {canPlace && <div className="jinchi-placement-actions"><button type="button" onClick={rotate} disabled={pending || !canRotate} title={canRotate ? 'Повернуть (R или правая кнопка)' : 'Поворот недоступен до конца этого хода'} aria-label={canRotate ? 'Повернуть' : 'Поворот недоступен'}>↻<span>Повернуть</span></button><button type="button" className="jinchi-primary" data-action="place" disabled={!ghost || ghostError !== null || pending} onClick={() => place(ghost)}>Поставить</button></div>}
+      {canAct && view.canReroll && <button type="button" className="jinchi-dice-action" data-action="reroll" aria-label={`Перебросить оба кубика. Зарядов: ${view.rerollCharges?.[seat!] ?? 0}`} title="Перебросить оба кубика" disabled={pending} onClick={() => dispatch({ type: 'reroll' })}><span className="jinchi-action-label">Перебросить ({view.rerollCharges?.[seat!] ?? 0})</span><span className="jinchi-action-short" aria-hidden="true">↻ {view.rerollCharges?.[seat!] ?? 0}</span></button>}
+      {canAct && view.canSkip && <button type="button" className="jinchi-dice-action" data-action="skip-impossible" aria-label="Пропустить невозможный бросок" title="Пропустить невозможный бросок" disabled={pending} onClick={() => dispatch({ type: 'skip-impossible' })}><span className="jinchi-action-label">Пропустить невозможный бросок</span><span className="jinchi-action-short" aria-hidden="true">Пропуск</span></button>}
+      <div className="jinchi-tools">{toolButtons}</div><details className="jinchi-more-tools"><summary aria-label="Ещё">⋯</summary><div>{toolButtons}</div></details></div>
+      <div className="jinchi-placement-message" role="status">{pending ? 'Ход отправлен…' : !connected ? 'Нет связи…' : error || (view.impossibleRoll ? 'Фигура не помещается. Перебросьте или пропустите.' : view.turnRotationLocked ? 'Поворот недоступен до конца хода' : ready && ghost ? ghostError || '' : '')}</div>
     </div>
   </div>;
-
-  return <section className={`jinchi-board${stage ? ' is-stage' : ''}`} onPointerDownCapture={event => { const isTouch = event.pointerType === 'touch'; touchRef.current = isTouch; setTouch(isTouch); }} onContextMenu={event => { if ((event.target as Element).closest('.jinchi-map') && ready) { event.preventDefault(); rotate(); } }} onKeyDown={event => {
-    if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key.toLowerCase() === 'r' && ready) { event.preventDefault(); rotate(); }
+  return <section className={`jinchi-board${stage ? ' is-stage' : ''}`} onPointerDownCapture={event => { touchRef.current = event.pointerType === 'touch'; enableAudio(); }} onContextMenu={event => { if ((event.target as Element).closest('.jinchi-map') && ready) { event.preventDefault(); rotate(); } }} onKeyDown={event => {
+    if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey || panel) return;
+    if (event.key.toLowerCase() === 'r') { event.preventDefault(); rotate(); }
     if (event.key.toLowerCase() === 'h') { event.preventDefault(); setHints(old => !old); }
   }}>
-    <MapViewport width={view.width} height={view.height} cells={view.cells} colors={colors} wallColor={visual.wallColor} background={visual.background} grid={visual.grid} focusCells={ownCells} lastCells={view.lastMove ? [...view.lastMove.indices, ...view.lastMove.captured] : []} toolbar={hud} fill={Boolean(stage)} externalFullscreen={fullscreen} onCellHover={(x, y) => { if (ready && !touchRef.current) setGhost({ x, y }); }} onCellClick={(x, y) => { if (!ready) return; setGhost({ x, y }); setError(''); if (!touchRef.current) place({ x, y }); }}>
+    <MapViewport width={view.width} height={view.height} cells={view.cells} colors={colors} wallColor={visual.wallColor} background={visual.background} grid={visual.grid} focusCells={ownCells} lastCells={lastCells} toolbar={hud} fill={Boolean(stage)} externalFullscreen={fullscreen} objects={objects} minimumPickSize={12} onTooSmall={() => setError('Область приближена. Выберите клетку ещё раз.')} onCellHover={(x, y) => { if (canPlace && !touchRef.current) setGhost({ x, y }); }} onCellClick={(x, y) => { if (!canPlace) return; setGhost({ x, y }); setError(''); if (!touchRef.current) place({ x, y }); }}>
       <BaseLabels bases={view.bases} width={view.width} colors={colors} />
       {hintPath && <path className="jinchi-hints" d={hintPath} fill="none" stroke="#b4fbd2" strokeWidth=".19" strokeLinecap="round" pointerEvents="none" />}
       <LastMove view={view} visual={visual} round={match.round} />
-      {ghost && ready && <g className={`jinchi-ghost${ghostError ? ' is-invalid' : ''}`} pointerEvents="none"><rect x={ghost.x + .04} y={ghost.y + .04} width={Math.max(0, diceW - .08)} height={Math.max(0, diceH - .08)} rx=".1" fill={ghostError ? '#f27474' : '#89f2b6'} fillOpacity=".48" stroke={ghostError ? '#f74949' : '#effff1'} strokeWidth=".1" strokeDasharray={ghostError ? '.22 .1' : undefined} /><text x={ghost.x + diceW / 2} y={ghost.y + diceH / 2} dominantBaseline="central" textAnchor="middle" fontSize={Math.min(.8, diceW / 2)} fontWeight="800" fill="#143a31">{diceW}×{diceH}</text></g>}
+      {ghost && canPlace && <g className={`jinchi-ghost${ghostError ? ' is-invalid' : ''}`} pointerEvents="none"><rect x={ghost.x + .04} y={ghost.y + .04} width={Math.max(0, diceW - .08)} height={Math.max(0, diceH - .08)} rx=".1" fill={ghostError ? '#f27474' : '#89f2b6'} fillOpacity=".48" stroke={ghostError ? '#f74949' : '#effff1'} strokeWidth=".1" /><text x={ghost.x + diceW / 2} y={ghost.y + diceH / 2} dominantBaseline="central" textAnchor="middle" fontSize={Math.min(.8, diceW / 2)} fontWeight="800" fill="#143a31">{diceW}×{diceH}</text></g>}
     </MapViewport>
-    <p className="jinchi-board-help">Тяните карту для перемещения. Колесо или щипок — масштаб. <span>R — поворот · H — подсказки · F — полный экран</span></p>
+    {cue && <div className="jinchi-turn-cue" role="status">▶ Ваш ход</div>}
+    {(panel || (finished && !stage && !resultHidden)) && <Panel title={panel === 'rules' ? 'Правила и легенда' : panel === 'events' ? 'События' : finished ? 'Итоговый счёт' : 'Подробный счёт'} close={() => { closePanel(); if (finished) setResultHidden(true); }}>
+      {panel === 'rules' ? <div><ul>{rulesText(view.rules).map((text, i) => <li key={i}>{text}</li>)}</ul><ul>{Object.entries(OBJECT_LABELS).filter(([key]) => key !== 'mixed').map(([key, text]) => <li key={key}>{text}</li>)}</ul><p>R — поворот · H — подсказки · F — полный экран · M — к себе · G — к флагу · L — последний ход · 0 — вся карта.</p></div> : panel === 'events' ? <ol className="jinchi-event-list">{[...view.events].reverse().slice(0, 100).map(event => <li key={event.id}><b>{name(event.seat)}</b>: {event.text}</li>)}</ol> : <div>{scoreTable}{!finished && <div className="jinchi-score-preferences"><button type="button" onClick={() => { setScoreMode(scoreMode === 'hidden' ? 'compact' : 'hidden'); writeScoreMode(scoreMode === 'hidden' ? 'compact' : 'hidden'); }}>{scoreMode === 'hidden' ? 'Показать компактный счёт' : 'Скрыть компактный счёт'}</button><button type="button" aria-pressed={sound} onClick={() => { const enabled = !sound; setSound(enabled); remember('sound', enabled ? 'on' : 'off'); if (enabled) { try { audioRef.current ??= new AudioContext(); void audioRef.current.resume().catch(() => {}); } catch { /* Visual cue remains sufficient. */ } } }}>Звук: {sound ? 'включён' : 'выключен'}</button></div>}{finished && <button type="button" onClick={() => { setResultHidden(true); closePanel(); }}>Посмотреть карту</button>}</div>}
+    </Panel>}
   </section>;
 }
 
