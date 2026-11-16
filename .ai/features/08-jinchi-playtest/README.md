@@ -2,7 +2,7 @@
 id: 08
 title: Jinchi после пробной партии и знакомство со всеми играми
 track: product
-stage: tech
+stage: plan
 branch: feat/08-jinchi-playtest
 pr:
 started: 2026-11-16
@@ -18,7 +18,7 @@ merged:
 
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [product.md](product.md), принят 16 ноября 2026
-- [ ] Техника — ещё не начата
+- [x] Техника — [tech.md](tech.md), решения приняты агентом в автономном режиме
 - [ ] План — ещё не начат
 - [ ] Реализация и QG — ещё не начаты
 - [ ] Проверка владельцем
