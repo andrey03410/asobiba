@@ -2,11 +2,11 @@
 id: 08
 title: Jinchi после пробной партии и знакомство со всеми играми
 track: product
-stage: review
+stage: merged
 branch: feat/08-jinchi-playtest
 pr: https://github.com/andrey03410/asobiba/pull/8
 started: 2026-11-16
-merged:
+merged: 2026-11-16
 ---
 
 # 08. Jinchi после пробной партии и знакомство со всеми играми
@@ -22,12 +22,12 @@ merged:
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md), 562/60 → build → tsc PASS, живая приёмка и свежее ревью
 - [x] Приёмка — агентом в разрешённом автономном режиме; ограничения поверхности записаны в verify.md
-- [ ] Влито
+- [x] Влито — [PR #8](https://github.com/andrey03410/asobiba/pull/8)
 
 ## Следующий шаг
 
 Автономный режим. Реализация, QG, живая приёмка и свежее ревью завершены.
-[PR #8](https://github.com/andrey03410/asobiba/pull/8) создан; следующий шаг — merge в main.
+[PR #8](https://github.com/andrey03410/asobiba/pull/8) — вливание в main после зелёного QG и ревью.
 Разрешение владельца записано дословно в [brief.md](brief.md).
 Текущий ход работ — [progress.md](progress.md).
 

@@ -17,7 +17,7 @@
 - [x] 4. Интерфейс — 35 targeted tests; общий QG после интеграции зелёный
 - [x] 5. Интеграция — compact MCP refs, HTTP, SDK hooks, WS упаковка (84 targeted tests)
 - [x] 6. QG и приёмка — 562/60, build, tsc; 3WS+spectator, MCP, браузер, fresh review
-- [ ] 7. Знания и merge
+- [x] 7. Знания и merge — карточки5зон, PR8, main
 
 ## Решения по ходу
 
@@ -67,3 +67,6 @@
 - Ошибочно напечатанный root тестовый MCP-токен отозван, old401/newtools-list200
   подтверждены. Новый секрет только в storage; в Git секретов нет.
 - Карточки SDK/games/server/mcp/web обновлены; следующий шаг commit/push/PR/merge.
+
+- PR8 создан; stage review записана отдельным коммитом72ab8e0. QG/review зелёные,
+  stage merged и история записаны перед разрешённым автономным merge.

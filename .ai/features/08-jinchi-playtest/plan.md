@@ -170,7 +170,7 @@ MapEditor optional rules/onRulesChange/generator slot для общей форм
 - [x] Обновить карточки SDK/games/mcp/server/web реальным поведением и проверками.
 - [x] Проверить локальные ссылки, отметить выполненные задачи/доказательства.
 - [x] После готовности PR поставить stage:review; автономная приёмка записана в verify.
-- [ ] Записать историю и stage:merged, push, merge PR в main, switch main/pull.
+- [x] Записать историю и stage:merged, push, merge PR в main, switch main/pull.
   Подтвердить SHA main и чистое рабочее дерево. Коммит `docs(08): merged`.
 
 ## Проверка интерфейсов до старта
