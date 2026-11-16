@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { generateMap, generationSchema } from './generator';
+import { generateMap, generationSchema, GenerationError } from './generator';
 import { analyzeMap } from './balance';
-import { rulesSchema } from './rules';
+import { checkRules, rulesSchema } from './rules';
 
 describe('Jinchi map generation', () => {
   it('builds the requested circle for three players without changing radius or dice', () => {
@@ -38,6 +38,19 @@ describe('Jinchi map generation', () => {
     expect(() => generateMap({ width: 15, height: 15, players: 3, dice: [100, 100], balanced: true })).toThrow();
     expect(generationSchema.safeParse({ width: 1001, height: 1000, players: 3 }).success).toBe(false);
     expect(generationSchema.safeParse({ width: 101, height: 101, players: 3, dice: [101, 6] }).success).toBe(false);
+  });
+
+  it('does not certify the nine-cell seed that brings different starting bases into contact', () => {
+    let generated;
+    try {
+      generated = generateMap({ players: 3, width: 9, height: 9, shape: 'rectangle', dice: [2, 2], wallDensity: 0, effects: { count: 0 }, seed: 0 });
+    } catch (error) {
+      // A structured impossible-map rejection is allowed; silently certifying contact is not.
+      expect(error).toBeInstanceOf(GenerationError);
+      return;
+    }
+    const rules = rulesSchema.parse({ map: generated.map, dice: { sides: [2, 2] }, effects: generated.effects, flags: generated.flags });
+    expect(checkRules(rules).filter(issue => issue.code === 'starts-touch')).toEqual([]);
   });
 
   it('does not certify a hand edited blocked base from stale metadata', () => {

@@ -27,6 +27,8 @@ export interface MapAnalysis {
 }
 
 const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+// Each undirected side/corner contact is checked once while reading cells in row order.
+const PREVIOUS_START_NEIGHBORS = [[-1, 0], [-1, -1], [0, -1], [1, -1]] as const;
 const analysisCache = new WeakMap<JinchiRules, MapAnalysis>();
 
 export function insideShape(x: number, y: number, width: number, height: number, shape: 'rectangle' | 'circle'): boolean {
@@ -120,6 +122,7 @@ export function analyzeMap(rules: JinchiRules): MapAnalysis {
   }
   const cells = new Array<number>(width * height);
   const starts = new Map<number, number[]>();
+  const touchingStarts = new Set<string>();
   let playableArea = 0, interior = 0, walls = 0;
   const shape = generation?.shape ?? 'rectangle';
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -129,8 +132,17 @@ export function analyzeMap(rules: JinchiRules): MapAnalysis {
     cells[index] = value;
     if (value !== -2) playableArea++;
     if (insideShape(x, y, width, height, shape)) { interior++; if (value === -2) walls++; }
-    if (value >= 0) { const list = starts.get(value) ?? []; list.push(index); starts.set(value, list); }
+    if (value >= 0) {
+      const list = starts.get(value) ?? []; list.push(index); starts.set(value, list);
+      for (const [dx, dy] of PREVIOUS_START_NEIGHBORS) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= width) continue;
+        const other = cells[ny * width + nx]!;
+        if (other >= 0 && other !== value) touchingStarts.add(`${Math.min(value, other) + 1}:${Math.max(value, other) + 1}`);
+      }
+    }
   }
+  if (touchingStarts.size) issue('balance-starts-touch', `Стартовые зоны касаются стороной или углом: ${[...touchingStarts].join(', ')}`, 'Разделите разные базы свободными клетками или стенами; пересоберите карту под нужный состав');
   const immutableBases = cells.map(value => value >= 0 ? value : -1);
   const sides = Array.isArray(rules.dice.sides) ? rules.dice.sides : [rules.dice.sides, rules.dice.sides];
   const pair: [number, number] = [sides[0]!, sides[1]!];

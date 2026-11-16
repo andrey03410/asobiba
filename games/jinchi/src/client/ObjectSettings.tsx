@@ -1,4 +1,4 @@
-import type { JinchiRules, WeightedEffect } from '../rules';
+import { rulesSchema, type JinchiRules, type WeightedEffect } from '../rules';
 
 type Flags = JinchiRules['flags'];
 type Effects = JinchiRules['effects'];
@@ -11,7 +11,9 @@ function integer(value: string, min: number, max: number): number {
   return Math.max(min, Math.min(max, Number.isFinite(number) ? Math.round(number) : min));
 }
 
-export function FlagSettings({ value, onChange }: { value: Flags; onChange: (value: Flags) => void }) {
+export function FlagSettings({ value: input, onChange }: { value: unknown; onChange: (value: Flags) => void }) {
+  const parsed = rulesSchema.unwrap().shape.flags.safeParse(input);
+  const value: Flags = parsed.success ? { ...parsed.data, positions: (input as Partial<Flags> | undefined)?.positions ?? parsed.data.positions } : rulesSchema.unwrap().shape.flags.parse(undefined);
   return <div className="jn-object-settings">
     <label>Как учитывать флаги<select aria-label="Как учитывать флаги" value={value.mode} onChange={event => {
       const mode = event.target.value as Flags['mode'];
@@ -25,7 +27,10 @@ export function FlagSettings({ value, onChange }: { value: Flags; onChange: (val
   </div>;
 }
 
-export function EffectSettings({ value, onChange }: { value: Effects; onChange: (value: Effects) => void }) {
+export function EffectSettings({ value: input, onChange }: { value: unknown; onChange: (value: Effects) => void }) {
+  const parsed = rulesSchema.unwrap().shape.effects.safeParse(input);
+  const raw = input as Partial<Effects> | undefined;
+  const value: Effects = parsed.success ? { ...parsed.data, cells: raw?.cells ?? parsed.data.cells, mysteryPool: raw?.mysteryPool ?? parsed.data.mysteryPool } : rulesSchema.unwrap().shape.effects.parse(undefined);
   const pool = value.mysteryPool;
   const total = pool.reduce((sum, effect) => sum + effect.weight, 0);
   const update = (index: number, patch: Partial<WeightedEffect>) => onChange({ ...value, mysteryPool: pool.map((effect, i) => i === index ? { ...effect, ...patch } : effect) });

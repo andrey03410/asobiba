@@ -1,10 +1,10 @@
 #!/usr/bin/env -S node --import tsx
 // Live task 08 verification. Credentials stay in storage; browser-lobbies.json is public evidence.
-// --prepare: join the task's waiting UI lobby and start the maximum lobby at turn 0.
+// --prepare: join the waiting UI lobby and start the maximum lobby at turn 0.
 // --independent / --stress: disposable protocol and heavy-capture scenarios.
-// --prepare-info: three waiting classic lobbies for the owner's visual check.
+// --prepare-info: three waiting classic lobbies for the visual check.
 // --snapshot-browser / --restore-check: read-only observations of prepared lobbies.
-// --play-browser: continue both prepared games only after the owner's UI check.
+// --play-browser: continue both prepared games only after the UI check.
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';

@@ -109,6 +109,28 @@ describe('Jinchi board', () => {
     expect(html).toContain('Неизвестная клетка');
     expect(html).not.toContain('jinchi-game-title');
   });
+  it('offers only reroll and skip for an impossible roll instead of unusable placement controls', () => {
+    const html = board({ match: { ...match, game: { ...game, impossibleRoll: true, canReroll: true, canSkip: true, rerollCharges: [3, 0] } } });
+    expect(html).not.toContain('jinchi-placement-actions');
+    expect(html).not.toContain('data-action="place"');
+    expect(html).toContain('data-action="reroll"');
+    expect(html).toContain('data-action="skip-impossible"');
+    expect(html).toMatch(/aria-label="Перебросить оба кубика[^\"]*"/);
+    expect(html).toContain('aria-label="Пропустить невозможный бросок"');
+  });
+  it('keeps placement and reroll together when the rolled figure is playable', () => {
+    const html = board({ match: { ...match, game: { ...game, impossibleRoll: false, canReroll: true, canSkip: false, rerollCharges: [1, 0] } } });
+    expect(html).toContain('data-action="place"');
+    expect(html).toContain('aria-label="Повернуть"');
+    expect(html).toContain('data-action="reroll"');
+    expect(html).not.toContain('data-action="skip-impossible"');
+  });
+  it('does not offer reroll or impossible-roll skip to a spectator', () => {
+    const html = board({ seat: null, match: { ...match, game: { ...game, impossibleRoll: true, canReroll: true, canSkip: true, rerollCharges: [3, 0] } } });
+    expect(html).not.toContain('data-action="place"');
+    expect(html).not.toContain('data-action="reroll"');
+    expect(html).not.toContain('data-action="skip-impossible"');
+  });
   it('shows a complete score breakdown after a finished round', () => {
     const html = board({ match: { ...match, phase: 'finished', game: { ...game, points: [77, 1], flagCounts: [2, 0], effectPoints: [25, 0], rules: { ...rules, flags: { mode: 'bonus', value: 25 } } } } });
     expect(html).toContain('Клетки');

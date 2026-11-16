@@ -152,7 +152,8 @@ function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRema
   const turnKey = `${match.round}:${view.turn}:${view.currentSeat}:${view.dice?.join(':') ?? 'roll'}:${view.rerolled ?? false}`;
   const canAct = connected && match.phase === 'playing' && seat !== null && view.canAct && view.currentSeat === seat;
   const ready = canAct && view.dice !== null;
-  const canRotate = ready && view.canRotate !== false && !view.turnRotationLocked;
+  const canPlace = ready && !view.impossibleRoll;
+  const canRotate = canPlace && view.canRotate !== false && !view.turnRotationLocked;
   const actualRotated = canRotate && rotated;
   const dice = diceSides(view.rules);
   const diceW = view.dice?.[actualRotated ? 1 : 0] ?? 0;
@@ -197,13 +198,13 @@ function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRema
   }, [view, seat, ready, hints, actualRotated]);
   const objects = useMemo(() => [...(view.flags ?? []).map(position => ({ ...position, kind: 'flag' })), ...(view.effects ?? [])], [view.flags, view.effects]);
   const lastCells = useMemo(() => view.lastMove ? [...view.lastMove.indices.slice(0, 1000), ...view.lastMove.captured.slice(0, 1500)] : [], [view.lastMove]);
-  const ghostError = ghost && ready && seat !== null ? placementError(view, seat, ghost.x, ghost.y, actualRotated) : null;
+  const ghostError = ghost && canPlace && seat !== null ? placementError(view, seat, ghost.x, ghost.y, actualRotated) : null;
   const dispatch = (action: unknown) => {
     if (!canAct || pendingTurn.current === turnKey || !onAction) return;
     pendingTurn.current = turnKey; setPending(true); setError(''); onAction(action);
   };
   const place = (position: Cell | null) => {
-    if (!ready || seat === null || !position) return;
+    if (!canPlace || seat === null || !position) return;
     const reason = placementError(view, seat, position.x, position.y, actualRotated);
     if (reason) { setError(reason); return; }
     dispatch({ type: 'place', ...position, rotated: actualRotated });
@@ -224,9 +225,9 @@ function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRema
       <div className="jinchi-turn-status"><i aria-hidden="true">{canAct ? '▶' : '◷'}</i><strong>{status}</strong>{seat === null && <small>Наблюдение</small>}<small>Круг {view.cycle}</small><Countdown match={match} config={config} clockOffset={clockOffset} supplied={turnRemainingMs} /></div>
       <div className="jinchi-turn-actions"><div className="jinchi-dice-pair"><Die value={view.dice?.[0] ?? null} sides={dice[0]} color={currentColor} /><span aria-hidden="true">×</span><Die value={view.dice?.[1] ?? null} sides={dice[1]} color={currentColor} /><span className="jinchi-dice-size">{view.dice ? `${diceW} × ${diceH}` : `d${dice[0]} + d${dice[1]}`}</span></div>
       {canAct && !view.dice && <button type="button" className="jinchi-primary" data-action="roll" onClick={() => dispatch({ type: 'roll' })} disabled={pending}>Бросить кубики</button>}
-      {ready && <div className="jinchi-placement-actions"><button type="button" onClick={rotate} disabled={pending || !canRotate} title={canRotate ? 'Повернуть (R или правая кнопка)' : 'Поворот недоступен до конца этого хода'} aria-label={canRotate ? 'Повернуть' : 'Поворот недоступен'}>↻<span>Повернуть</span></button><button type="button" className="jinchi-primary" data-action="place" disabled={!ghost || ghostError !== null || pending || view.impossibleRoll} onClick={() => place(ghost)}>Поставить</button></div>}
-      {canAct && view.canReroll && <button type="button" disabled={pending} onClick={() => dispatch({ type: 'reroll' })}>Перебросить ({view.rerollCharges?.[seat!] ?? 0})</button>}
-      {canAct && view.canSkip && <button type="button" disabled={pending} onClick={() => dispatch({ type: 'skip-impossible' })}>Пропустить невозможный бросок</button>}
+      {canPlace && <div className="jinchi-placement-actions"><button type="button" onClick={rotate} disabled={pending || !canRotate} title={canRotate ? 'Повернуть (R или правая кнопка)' : 'Поворот недоступен до конца этого хода'} aria-label={canRotate ? 'Повернуть' : 'Поворот недоступен'}>↻<span>Повернуть</span></button><button type="button" className="jinchi-primary" data-action="place" disabled={!ghost || ghostError !== null || pending} onClick={() => place(ghost)}>Поставить</button></div>}
+      {canAct && view.canReroll && <button type="button" className="jinchi-dice-action" data-action="reroll" aria-label={`Перебросить оба кубика. Зарядов: ${view.rerollCharges?.[seat!] ?? 0}`} title="Перебросить оба кубика" disabled={pending} onClick={() => dispatch({ type: 'reroll' })}><span className="jinchi-action-label">Перебросить ({view.rerollCharges?.[seat!] ?? 0})</span><span className="jinchi-action-short" aria-hidden="true">↻ {view.rerollCharges?.[seat!] ?? 0}</span></button>}
+      {canAct && view.canSkip && <button type="button" className="jinchi-dice-action" data-action="skip-impossible" aria-label="Пропустить невозможный бросок" title="Пропустить невозможный бросок" disabled={pending} onClick={() => dispatch({ type: 'skip-impossible' })}><span className="jinchi-action-label">Пропустить невозможный бросок</span><span className="jinchi-action-short" aria-hidden="true">Пропуск</span></button>}
       <div className="jinchi-tools">{toolButtons}</div><details className="jinchi-more-tools"><summary aria-label="Ещё">⋯</summary><div>{toolButtons}</div></details></div>
       <div className="jinchi-placement-message" role="status">{pending ? 'Ход отправлен…' : !connected ? 'Нет связи…' : error || (view.impossibleRoll ? 'Фигура не помещается. Перебросьте или пропустите.' : view.turnRotationLocked ? 'Поворот недоступен до конца хода' : ready && ghost ? ghostError || '' : '')}</div>
     </div>
@@ -236,11 +237,11 @@ function InteractiveBoard({ match, config, seat, onAction, playerNames, turnRema
     if (event.key.toLowerCase() === 'r') { event.preventDefault(); rotate(); }
     if (event.key.toLowerCase() === 'h') { event.preventDefault(); setHints(old => !old); }
   }}>
-    <MapViewport width={view.width} height={view.height} cells={view.cells} colors={colors} wallColor={visual.wallColor} background={visual.background} grid={visual.grid} focusCells={ownCells} lastCells={lastCells} toolbar={hud} fill={Boolean(stage)} externalFullscreen={fullscreen} objects={objects} minimumPickSize={12} onTooSmall={() => setError('Область приближена. Выберите клетку ещё раз.')} onCellHover={(x, y) => { if (ready && !touchRef.current) setGhost({ x, y }); }} onCellClick={(x, y) => { if (!ready) return; setGhost({ x, y }); setError(''); if (!touchRef.current) place({ x, y }); }}>
+    <MapViewport width={view.width} height={view.height} cells={view.cells} colors={colors} wallColor={visual.wallColor} background={visual.background} grid={visual.grid} focusCells={ownCells} lastCells={lastCells} toolbar={hud} fill={Boolean(stage)} externalFullscreen={fullscreen} objects={objects} minimumPickSize={12} onTooSmall={() => setError('Область приближена. Выберите клетку ещё раз.')} onCellHover={(x, y) => { if (canPlace && !touchRef.current) setGhost({ x, y }); }} onCellClick={(x, y) => { if (!canPlace) return; setGhost({ x, y }); setError(''); if (!touchRef.current) place({ x, y }); }}>
       <BaseLabels bases={view.bases} width={view.width} colors={colors} />
       {hintPath && <path className="jinchi-hints" d={hintPath} fill="none" stroke="#b4fbd2" strokeWidth=".19" strokeLinecap="round" pointerEvents="none" />}
       <LastMove view={view} visual={visual} round={match.round} />
-      {ghost && ready && <g className={`jinchi-ghost${ghostError ? ' is-invalid' : ''}`} pointerEvents="none"><rect x={ghost.x + .04} y={ghost.y + .04} width={Math.max(0, diceW - .08)} height={Math.max(0, diceH - .08)} rx=".1" fill={ghostError ? '#f27474' : '#89f2b6'} fillOpacity=".48" stroke={ghostError ? '#f74949' : '#effff1'} strokeWidth=".1" /><text x={ghost.x + diceW / 2} y={ghost.y + diceH / 2} dominantBaseline="central" textAnchor="middle" fontSize={Math.min(.8, diceW / 2)} fontWeight="800" fill="#143a31">{diceW}×{diceH}</text></g>}
+      {ghost && canPlace && <g className={`jinchi-ghost${ghostError ? ' is-invalid' : ''}`} pointerEvents="none"><rect x={ghost.x + .04} y={ghost.y + .04} width={Math.max(0, diceW - .08)} height={Math.max(0, diceH - .08)} rx=".1" fill={ghostError ? '#f27474' : '#89f2b6'} fillOpacity=".48" stroke={ghostError ? '#f74949' : '#effff1'} strokeWidth=".1" /><text x={ghost.x + diceW / 2} y={ghost.y + diceH / 2} dominantBaseline="central" textAnchor="middle" fontSize={Math.min(.8, diceW / 2)} fontWeight="800" fill="#143a31">{diceW}×{diceH}</text></g>}
     </MapViewport>
     {cue && <div className="jinchi-turn-cue" role="status">▶ Ваш ход</div>}
     {(panel || (finished && !stage && !resultHidden)) && <Panel title={panel === 'rules' ? 'Правила и легенда' : panel === 'events' ? 'События' : finished ? 'Итоговый счёт' : 'Подробный счёт'} close={() => { closePanel(); if (finished) setResultHidden(true); }}>
