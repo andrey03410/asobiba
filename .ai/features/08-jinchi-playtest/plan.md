@@ -46,17 +46,17 @@ flagCounts, effectPoints, rerollCharges, rotationLocked[], turnRotationLocked,
 rerolled, impossibleRoll, canRotate/canReroll/canSkip, remaining flags/effects.
 Действия reroll/skip-impossible. Потребляет optional SDK hooks и analyzeMap от root.
 
-- [ ] Написать красные тесты d100/разных кубиков, одноразового захвата, всех трёх
+- [x] Написать красные тесты d100/разных кубиков, одноразового захвата, всех трёх
   критериев, выбывшего лидера, совпадения целей/лимитов, накопления помех и зарядов.
-- [ ] Запустить `npx vitest run games/jinchi/src/game.test.ts` и новые тесты;
+- [x] Запустить `npx vitest run games/jinchi/src/game.test.ts` и новые тесты;
   увидеть ожидаемые FAIL новых правил, записать команду/причину в progress.md.
-- [ ] Расширить строгую схему и validation, сохранив legacy normal form.
-- [ ] Реализовать capture/placement, сравнить профиль с полным поиском на малых
+- [x] Расширить строгую схему и validation, сохранив legacy normal form.
+- [x] Реализовать capture/placement, сравнить профиль с полным поиском на малых
   ручных картах; проверить случаи overlapOwn и запрета поворота.
-- [ ] Реализовать эффекты и victory pipeline, RNG/replay и таймаут без reset.
-- [ ] Запустить все тесты движка. Готово: новые и прежние проходят, никакой утечки
+- [x] Реализовать эффекты и victory pipeline, RNG/replay и таймаут без reset.
+- [x] Запустить все тесты движка. Готово: новые и прежние проходят, никакой утечки
   hidden outcomes, размеры 1000 и d100 не вызывают квадратичного перебора размеров.
-- [ ] Коммит `feat(jinchi): add objectives effects and large dice`.
+- [x] Код включён в общий интеграционный коммит `687d9fc`.
 
 ## Задача 2. Общая информация и контекстная настройка всех игр
 
@@ -73,14 +73,14 @@ LobbyDto.information. ConfigDocument.info?:{title?,text?}. MatchStage получ
 information?:ReactNode. В SDK game.ts также добавить hasLegalAction и sampleAction
 с T03-сигнатурами; их потребителей меняет root.
 
-- [ ] Красные тесты безопасной сводки всех игр, 5–7 направлений и последствий,
+- [x] Красные тесты безопасной сводки всех игр, 5–7 направлений и последствий,
   границ 80/2000, отсутствия info у legacy, escaping и отсутствия секретных fixtures.
-- [ ] Запустить targeted SDK/info/server tests; увидеть FAIL новых наблюдаемых контрактов.
-- [ ] Реализовать whitelist formatters, expose caps/validation/DTO и общий компонент.
-- [ ] Вставить в лобби, передать в сцену, добавить авторское вступление в обычной
+- [x] Запустить targeted SDK/info/server tests; увидеть FAIL новых наблюдаемых контрактов.
+- [x] Реализовать whitelist formatters, expose caps/validation/DTO и общий компонент.
+- [x] Вставить в лобби, передать в сцену, добавить авторское вступление в обычной
   форме и Quizor. Не менять правила иных игр.
-- [ ] Интеграционные тесты validate → lobby и invitation без автора; targeted GREEN.
-- [ ] Коммит `feat(sdk): explain games and configured matches`.
+- [x] Интеграционные тесты validate → lobby и invitation без автора; targeted GREEN.
+- [x] Код включён в общий интеграционный коммит `687d9fc`.
 
 ## Задача 3. Генерация, баланс, новые пресеты
 
@@ -93,17 +93,17 @@ information?:ReactNode. В SDK game.ts также добавить hasLegalActio
 типизированный GeneratedMap с map/flags/effects/diagnostics; metadata T04.
 Генератор потребляет diceSides/placementCapacity/captureTerritory, не импортирует game.
 
-- [ ] Красные тесты repeatable seed, круг R50→101, N=2…8, различающихся зёрен,
+- [x] Красные тесты repeatable seed, круг R50→101, N=2…8, различающихся зёрен,
   независимых маршрутов, плотности и равных условий; невозможные inputs rejected.
-- [ ] Запустить `npx vitest run games/jinchi/src/generator.test.ts`; expected FAIL
+- [x] Запустить `npx vitest run games/jinchi/src/generator.test.ts`; expected FAIL
   до появления генерации. Написать небольшой ручной imbalance fixture для analyzeMap.
-- [ ] Реализовать ограниченные попытки генерации структур, protected starts/routes,
+- [x] Реализовать ограниченные попытки генерации структур, protected starts/routes,
   объекты и metadata. Не выдавать failed diagnostic как balanced.
-- [ ] Проверить подделанные metadata/ручную правку и max1000/d100 без утраты данных.
-- [ ] Добавить новые обычные пресеты с сюрпризами; старые presets оставить по правилам.
+- [x] Проверить подделанные metadata/ручную правку и max1000/d100 без утраты данных.
+- [x] Добавить новые обычные пресеты с сюрпризами; старые presets оставить по правилам.
   Guide объясняет цели, эффекты, размер, кубики и контекстный диалог.
-- [ ] Реализовать UI генерации с явной заменой карты и диагностикой.
-- [ ] Targeted GREEN, коммит `feat(jinchi): generate balanced multiplayer maps`.
+- [x] Реализовать UI генерации с явной заменой карты и диагностикой.
+- [x] Targeted GREEN, код в `687d9fc`; последующие review-fixes — отдельно.
 
 ## Задача 4. Удобная сцена и редактор
 
@@ -116,15 +116,15 @@ SDK GameClient.stageHud добавляет root (или согласованна
 **Интерфейсы:** view/action задачи 1; MatchStage.information?:ReactNode задачи 2;
 MapEditor optional rules/onRulesChange/generator slot для общей формы.
 
-- [ ] Красные тесты модели камеры, предпочтений счёта, ключа сигнала хода,
+- [x] Красные тесты модели камеры, предпочтений счёта, ключа сигнала хода,
   ограниченного overlay и resize/undo объектов редактора.
-- [ ] Targeted tests, expected FAIL новых сценариев.
-- [ ] Canvas texture, общая миникарта, bounded hints/lastMove, безопасное приближение.
-- [ ] Компактный/скрытый счёт, шторки, один timer, turn cue/звук, ориентации.
-- [ ] Объекты и d100 в UI, reroll/skip/lock, финальное разложение счёта.
-- [ ] Редактор до1000: копирование строк, typed flood, объекты, потери при resize,
+- [x] Targeted tests, expected FAIL новых сценариев.
+- [x] Canvas texture, общая миникарта, bounded hints/lastMove, безопасное приближение.
+- [x] Компактный/скрытый счёт, шторки, один timer, turn cue/звук, ориентации.
+- [x] Объекты и d100 в UI, reroll/skip/lock, финальное разложение счёта.
+- [x] Редактор до1000: копирование строк, typed flood, объекты, потери при resize,
   снятие metadata баланса при правке. MapGenerator slot подключает root.
-- [ ] Targeted GREEN; коммит `feat(jinchi): prioritize map on responsive stage`.
+- [x] Targeted GREEN; код в `687d9fc`, полировка в `981ccdb` и review-fixes.
 
 ## Задача 5. SDK hooks, транспорт, HTTP и MCP, сквозная интеграция
 
@@ -134,16 +134,16 @@ MapEditor optional rules/onRulesChange/generator slot для общей форм
 новые `games/jinchi/src/wire.ts`/тесты; server routes/MCP server/instructions/tests;
 `apps/web/src/useLobbySocket.ts`, NewLobbyPage glue, API helper.
 
-- [ ] Красные тесты Match без enumeration при наличии hook, simulation sampleAction,
+- [x] Красные тесты Match без enumeration при наличии hook, simulation sampleAction,
   encoding roundtrip миллионной карты/последнего захвата, malformed decode rejected.
-- [ ] Targeted expected FAIL. Реализовать hooks consumers и self-contained packed WS.
+- [x] Targeted expected FAIL. Реализовать hooks consumers и self-contained packed WS.
   При малых прежних матчах protocol behaviour не меняется.
-- [ ] Красные реальные MCP/HTTP тесты compact generate→validate→preview→lobby;
+- [x] Красные реальные MCP/HTTP тесты compact generate→validate→preview→lobby;
   чужой configId запрещён, invalid strict состав не стартует, ошибки actionable.
-- [ ] Добавить jinchi_generate и configId альтернативу validate/simulate/preview,
+- [x] Добавить jinchi_generate и configId альтернативу validate/simulate/preview,
   общий серверный генератор и UI glue. Инструкции сохраняют лимит 3КБ.
-- [ ] Проверить полную связку двух кубиков, генератора и редактора; targeted GREEN.
-- [ ] Коммит `feat(server): integrate generated maps and compact snapshots`.
+- [x] Проверить полную связку двух кубиков, генератора и редактора; targeted GREEN.
+- [x] Код включён в общий интеграционный коммит `687d9fc`.
 
 ## Задача 6. QG, живая приёмка, свежее ревью
 
@@ -152,23 +152,23 @@ MapEditor optional rules/onRulesChange/generator slot для общей форм
 **Файлы:** `scripts/verify-jinchi-playtest.mjs` (или узкие drivers),
 `.ai/features/08-jinchi-playtest/verify.md`, progress.md; evidence только storage.
 
-- [ ] Seed verify accounts без печати паролей/токенов; проверить порты и запустить dev.
-- [ ] Настоящий MCP: capabilities всех4, безопасные summary, генератор/превью/лобби.
-- [ ] Несколько WS: флаги/эффекты, итог, replay/reconnect, строгий состав.
-- [ ] Браузер A01–A08, обе ориентации, d100/объекты, info всех4 и создание через форму.
-- [ ] Максимальная карта: PNG, редактирование, начало/ход/крупный захват,
+- [x] Seed verify accounts без печати паролей/токенов; проверить порты и запустить dev.
+- [x] Настоящий MCP: capabilities всех4, безопасные summary, генератор/превью/лобби.
+- [x] Несколько WS: флаги/эффекты, итог, replay/reconnect, строгий состав.
+- [x] Браузер A01–A08, обе ориентации, d100/объекты, info всех4 и создание через форму.
+- [x] Максимальная карта: PNG, редактирование, начало/ход/крупный захват,
   загрузка/навигация/latency; физическую/эмулированную поверхность подписать честно.
-- [ ] Исправить найденное через воспроизведение и TDD; заполнить A01–A30 evidence.
-- [ ] После последних code edits: `npm test` → `npm run build` → `npx tsc --noEmit`;
+- [x] Исправить найденное через воспроизведение и TDD; заполнить A01–A30 evidence.
+- [x] После последних code edits: `npm test` → `npm run build` → `npx tsc --noEmit`;
   expected все exit0, цифры и вывод сохранить.
-- [ ] Свежий review diff main…HEAD, исправить существенное и подтвердить тестами.
+- [x] Свежий review diff main…HEAD, исправить существенное и подтвердить тестами.
 - [ ] Коммит проверки и push ветки; создать PR с результатами и ручным чек-листом.
   Только зелёный QG и исправленное существенное ревью разрешают merge.
 
 ## Задача 7. Знания
 
-- [ ] Обновить карточки SDK/games/mcp/server/web реальным поведением и проверками.
-- [ ] Проверить локальные ссылки, отметить выполненные задачи/доказательства.
+- [x] Обновить карточки SDK/games/mcp/server/web реальным поведением и проверками.
+- [x] Проверить локальные ссылки, отметить выполненные задачи/доказательства.
 - [ ] После готовности PR поставить stage:review; автономная приёмка записана в verify.
 - [ ] Записать историю и stage:merged, push, merge PR в main, switch main/pull.
   Подтвердить SHA main и чистое рабочее дерево. Коммит `docs(08): merged`.

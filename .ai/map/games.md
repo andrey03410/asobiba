@@ -27,30 +27,48 @@
 
 ## Jinchi — территории и кубики
 
-- [`games/jinchi/src/rules.ts`](../../games/jinchi/src/rules.ts) — строгая схема v1,
-  карта `{width,height,rows}` (`.` пусто, `#` стены, `1…8` базы), проверка и `rulesText`.
-- [`game.ts`](../../games/jinchi/src/game.ts) — прямоугольники, поворот, два вида соседства,
-  захват итеративной заливкой, защита баз, выбывание, круги, автопропуски и итоги.
-  Поиск якорей через интегральные суммы O(площадь); 200×200 занимает единицы мс.
-- 2–8 игроков, карты 3–200 на сторону, d2–d20, ручной/автобросок. Пресеты:
-  duel, four-corners, fortresses, labyrinth, mainland (120×80), octahedrons (8 мест).
+- [`games/jinchi/src/rules.ts`](../../games/jinchi/src/rules.ts) — аддитивная строгая v1:
+  карта `{width,height,rows}` 3…1000 на сторону (`.` пусто, `#` стены, `1…8` базы),
+  2–8 игроков. `dice.sides` — число либо пара 2…100, default 6 означает два d6.
+  Старые конфиги/шесть прежних пресетов сохраняют правила; новые флаги/эффекты по умолчанию выключены.
+- [`game.ts`](../../games/jinchi/src/game.ts), [`placement.ts`](../../games/jinchi/src/placement.ts),
+  [`capture.ts`](../../games/jinchi/src/capture.ts) — линейные профили допустимых размеров,
+  поиск якоря/случайного действия без перечисления всех ходов и итеративное окружение.
+  SDK hooks `hasLegalAction`/`sampleAction` обслуживают таймер и simulation; legacy RNG
+  manual+random сохраняет прежний дополнительный draw перед броском.
 - `capture.walls=true`: из областей, касающихся игрока, открыты все самые большие;
   меньшие захватываются. `false`: открыты области с проходом к краю, стены проходимы
   только для заливки. `diagonal=true` означает 4-связную заливку, false — 8-связную.
-- Состояние — плоские cells (-2/-1/место), исходные bases, dice, scores, события (100),
-  lastMove, result. В view нет полного списка ходов: клиент сам считает подсказки.
-  После 256 неудачных бросков точное геометрическое ускорение сохраняет честное
-  распределение, не блокируя сервер длинной отбраковкой. Всё из SDK RNG.
-- [`client/MapViewport.tsx`](../../games/jinchi/src/client/MapViewport.tsx) — общая камера:
-  SVG paths по территориям, zoom/pan/pinch, миникарта, fullscreen с fallback, F/0/M/L/WASD.
-  Сетка выбирает светлый/тёмный штрих по фону. Новые ходы не сдвигают камеру. Static Board — только SVG; номера баз векторами
-  (в resvg нет системных шрифтов).
-- [`client/MapEditor.tsx`](../../games/jinchi/src/client/MapEditor.tsx) — кисть/прямоугольник/
-  заливка, симметрия с нумерацией баз, undo/redo до 50 жестов, resize с сохранением
-  верхнего левого пересечения. Полноэкранный toolbar включает палитру, размеры
-  и симметрию; заливка фиксируется при отпускании, pinch её отменяет. Навигация — отдельный инструмент, пробел или два пальца.
-- `node --import tsx scripts/verify-jinchi.mjs` — настоящий MCP, PNG начала/конца,
-  два WebSocket до итога и повторная партия. Доказательства задачи 02 — в storage.
+- `flags`: off, primary (флаги, затем очки) или bonus (клетки+флаги×цена+эффекты).
+  `positions` до1000, `value`1…100000, primary `target`0…1000. Флаг и эффект одноразовые,
+  активация постановкой и окружением одинакова. Последний живой игрок побеждает всегда;
+  выбывшие сохраняют статистику, но не претендуют на победу. targetPercent несовместим с флагами.
+- `effects.cells`: cache,trap,reroll,lock,mystery; до1000 клеток. Пул mystery — тип/величина/вес,
+  исход выбирается private RNG партии при захвате; seed геометрии его не раскрывает.
+  Переброс обоих кубиков один за ход, максимум3 заряда; lock запрещает поворот следующего
+  своего хода. `skip-impossible` позволяет отказаться от невозможного броска с зарядом.
+  `scores` остаётся площадью; `points`/`flagCounts`/`effectPoints` — отдельные показатели.
+- [`generator.ts`](../../games/jinchi/src/generator.ts), [`balance.ts`](../../games/jinchi/src/balance.ts):
+  круг (R50→101²) или прямоугольник, состав2…8, seed, плотность, гряды/озёра/крепости/перешейки.
+  Диагностика проверяет базовые площади, пути, два выхода, пригодность всех стартовых бросков,
+  сравнимость мест. `generation.balanced` требует точный `expectedPlayers`; validation повторяет
+  метрики, ручная правка снимает метаданные. Это геометрический баланс, не гарантия равных шансов.
+- Новые основы ordinary/trio/flag-race/no-surprises (`generated-presets.ts`); ordinary включает сюрпризы.
+  `JINCHI_PRESETS` объединяет их со старыми `PRESETS` (порядок legacy export сохранён).
+  «Большая экспедиция» — параметрическая сборка генератора, а не миллион строк capabilities.
+- [`client/MapViewport.tsx`](../../games/jinchi/src/client/MapViewport.tsx): Canvas по пикселю на клетку
+  и общая миникарта; SVG для статического PNG. Подсказки/lastMove bounded, камера хранит центр
+  и масштаб клетки при resize/ходах. Zoom/pan/pinch, F/0/M/L/G/WASD. На обзоре первый touch
+  приближает; тап выбирает призрак, отдельная кнопка подтверждает; drag не отправляет действие.
+- Compact/hidden/detail счёт, миникарта и звук — локальные предпочтения. Один turn cue на ход,
+  звук opt-in; `stageHud:'board'` убирает дубли общего HUD, resultSummary даёт разложение итога.
+- [`client/MapEditor.tsx`](../../games/jinchi/src/client/MapEditor.tsx): кисть/прямоугольник/заливка,
+  базы и объекты, симметрия, undo/redo50, resize с подтверждением потерь. Копирует изменённые
+  строки, заливка через typed queue. DiceSettings/ObjectSettings дают обычные поля без JSON.
+- [`wire.ts`](../../games/jinchi/src/wire.ts) (`@asobiba/game-jinchi/wire`) упаковывает большие WS
+  снимки без потерь; это транспорт, правила и внутренний state остаются обычным JSON.
+- `node --import tsx scripts/verify-jinchi-playtest.mjs` — настоящий MCP/HTTP/3WS+spectator,
+  PNG, цели/эффекты, million-cell stress и точный replay. Результаты [задачи08](../features/08-jinchi-playtest/verify.md).
 
 ## Русское поле — слова и барабан
 
@@ -120,7 +138,7 @@
 
 ## Как добавить игру
 
-1. Пакет `games/<id>/` по образцу крестиков-ноликов: `defineGame` с `rulesSchema`, `visualSchema`, `actionSchema`, функциями правил, `guide`, `presets`, `slots`, `themes`, `visualCatalog`.
+1. Пакет `games/<id>/` по образцу крестиков-ноликов: `defineGame` с `rulesSchema`, `visualSchema`, `actionSchema`, функциями правил, `guide`, `presets`, `slots`, `themes`, `visualCatalog`. Добавить `info`, `tuning` и безопасный `summarizeConfig` по белому списку публичных параметров (см. [SDK](sdk.md#информация-об-игре-и-партии)).
 2. Клиент `./client`: `GameClient` с `Board`, `SeatIcon`, `css`, `previewMatch`. Доска обязана работать на сцене партии: при `stage` она заполняет 100 % ширины и высоты и не прокручивает страницу, а полный экран берёт из `fullscreen` (см. [sdk](sdk.md#сцена-партии)). Если анимация доски прячет исход хода, доска зовёт `onHold`. Проверь её на телефоне в портретной ориентации и в полноэкранном режиме.
 3. Зарегистрировать в `apps/server/src/games/catalog.ts` и `apps/web/src/games.ts`, добавить зависимость в `package.json` сервера и сайта.
 4. Тесты правил, проверки конфига, «все пресеты валидны и доигрываются» и статической разметки доски.
@@ -147,3 +165,5 @@
 
 - [задача 06](../features/06-quizor/README.md) — Quizor, правила и судейство квизов
 - [задача 07](../features/07-video-games/README.md) — сцены douga, выбор по карточке и судья `poll` в Quizor
+
+- [задача 08](../features/08-jinchi-playtest/README.md) — Jinchi до1000²/d100, баланс, флаги/эффекты, Canvas и общая информация

@@ -16,7 +16,7 @@
 - [x] 3. Генерация — 21 тест; обычные карты 2…8, асимметричные кубики и 1000²/d100
 - [x] 4. Интерфейс — 35 targeted tests; общий QG после интеграции зелёный
 - [x] 5. Интеграция — compact MCP refs, HTTP, SDK hooks, WS упаковка (84 targeted tests)
-- [ ] 6. QG и приёмка
+- [x] 6. QG и приёмка — 562/60, build, tsc; 3WS+spectator, MCP, браузер, fresh review
 - [ ] 7. Знания и merge
 
 ## Решения по ходу
@@ -46,3 +46,24 @@
   Логи storage/verification/08-jinchi-playtest/prelive-{tests,build,types}.log.
 - Dev запущен после проверки свободных портов; seed verify записал секреты только
   в storage/verify/accounts.json. Начинается живая приёмка.
+
+
+## Живая приёмка и ревью
+
+- UI создан круг R50/3, авторское вступление, 9 flags/9 effects. Mouse move + drag,
+  12 размеров/режимов счёта, max editor paint/undo, общая информация всех4.
+- MCP caps4 → generate/ref → validate/simulate/PNG → lobby; обычная и1000²/d100
+  партии закончены, 241/16 действий, p95 17,8/102,7 мс. Exact journal/reconnect/reload.
+- Stress захват499000 клеток + objects за120,1 мс; lossless snapshots проверены.
+- Live исправления: portrait budget67→81%, ложный strong-effect warning.
+  UI flags/effects получили обычные поля и вероятности вместо JSON.
+- Fresh reviewer на981ccdb: R1 legacy form crash, R2 touching certified starts;
+  оба reproduced RED→GREEN. R3 overflow при reroll/skip исправлен и измерен в browser fixture.
+  Адресный GREEN62/5, повторное заключение reviewer: Ready.
+- Финальный QG после всех code edits: **562 tests/60 files**,36,11с → build PASS → tsc PASS.
+  Логи final-* в storage/verification/08-jinchi-playtest; [verify](verify.md), [review](review.md).
+- Native fullscreen отвергнут IAB, fallback пригоден. Touch проверен синтетическими
+  PointerEvent, мобильный viewport эмулирован; физический телефон не проверен.
+- Ошибочно напечатанный root тестовый MCP-токен отозван, old401/newtools-list200
+  подтверждены. Новый секрет только в storage; в Git секретов нет.
+- Карточки SDK/games/server/mcp/web обновлены; следующий шаг commit/push/PR/merge.
