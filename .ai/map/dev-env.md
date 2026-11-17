@@ -72,6 +72,21 @@ Prisma 7 на macOS может возвращать пустую `Schema engine 
 - Живой сервер: `npx tsx --env-file-if-exists=.env scripts/seed-verify.ts`, затем `node scripts/verify-mcp.mjs --out storage/verification/<run>` и `node scripts/verify-game.mjs`.
 - Сайт: `npm run dev`, браузер на `http://localhost:5173`, вход под `verify-a`/`verify-b` из `storage/verify/accounts.json`.
 
+## Живая проверка Yomifuda
+
+`node scripts/verify-yomifuda.mjs` против запущенного dev и seed-verify проходит настоящий
+MCP,3WS+наблюдателя, права картинок, reconnect, ранние/повторные/старые ходы, оба тай-брейка,
+60карт/20боёв, симуляцию и два PNG. `--backend-only` пропускает только PNG.
+`--browser` готовит лобби для последнего игрока в браузере и ведёт проверочных peer-игроков;
+`--players 6` проверяет плотную раскладку. Данные/секреты остаются в storage, ссылка в browser-lobby.json.
+`--resume-browser` возобновляет peer-процесс после рестарта dev, сохраняя существующее лобби.
+`--hand 5` задаёт руку, `--reduced-motion` отключает движение в проверочном конфиге;
+`--web http://localhost:8787` даёт ссылку на локальную собранную версию вместо Vite.
+Cookies peers для возобновления лежат только в игнорируемом browser-peer-sessions.json;
+не выводить этот файл в чат и не добавлять в git.
+Для браузерного showcase нужны showcase-config.json и собственные портреты в storage/verification/09-yomifuda/;
+протокол без браузера работает без них, с необязательным imported-portraits.json для ACL реальных картинок.
+
 ## История
 
 - [задача 01](../features/01-rebuild/README.md) — пересборка на TypeScript, монорепо, SQLite и миграции

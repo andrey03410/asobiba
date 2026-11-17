@@ -1,6 +1,6 @@
 # Игры
 
-Каталог игр и то, как добавить новую. В каталоге крестики-нолики, Jinchi, Русское поле и Quizor. Каждая игра —
+Каталог игр и то, как добавить новую. В каталоге крестики-нолики, Jinchi, Русское поле, Quizor и Ёмифуда (Yomifuda). Каждая игра —
 отдельный пакет в `games/`: определение для SDK (правила, схема, пресеты, руководство
 для агента) и клиент на React (`./client`: доска, иконка места, CSS анимаций, превью).
 
@@ -135,6 +135,37 @@
   `video_pacing` (свой темп со сценами несовместим), `poll_mode`, `poll_field`.
 - Код: [`video.ts`](../../games/quizor/src/video.ts), тесты [`video.test.ts`](../../games/quizor/src/video.test.ts).
   Общее устройство — [video.md](video.md).
+
+## Ёмифуда (Yomifuda) — тайные аниме-карты
+
+- [`games/yomifuda/src/rules.ts`](../../games/yomifuda/src/rules.ts) — strict v1:
+  2–6 игроков, 2–600 уникальных карт, рука1–20, 1–32 характеристики. `deckSize=cards.length`,
+  размер кратен players, рука не больше D/N. `values` всегда целые, полные, в общей scale
+  (default0–100); границы дополнительно ограничены для точной суммы всех показателей.
+  Больше6 показателей допустимо по запросу. Персонажей/оценки готовит агент, без нормализации
+  и равного бюджета; pool — метаданные подготовки по тройке Shikimori, minViewers2.
+- [`game.ts`](../../games/yomifuda/src/game.ts): один SDK-раунд = вся колода. Внутри
+  `choose → reveal → review → choose|finished`. `play {round,cardId}` и `ready {round}`
+  отвергают старый бой/повтор/чужую карту. Максимум активного values → сумма только между
+  разделившими максимум → tiePoints0.5 каждому оставшемуся лидеру; одиночная победа1.
+  Случайный добор до опустошения, потом доигрываются руки. 60/3/5 даёт20 боёв.
+- `nextWakeAt/wake` держат раскрытие revealSeconds (default10), затем готовность всех.
+  `choiceSeconds` — напоминание без автохода; обычный таймер SDK отключён игрой.
+  no-repeat показателя по умолчанию, также independent/bag. Восстановление по журналу.
+- `view` — whitelist: своя рука без values, в choose стол только `{seat,hidden:true}`;
+  после всех play — открытые карты/активный value, tieTotal лишь у участников тай-брейка.
+  Наблюдатель без руки; хозяин не получает привилегий. finalDeck разрешён только в finished.
+  `presentRules` оставляет cards пустыми и настоящий deckSize.
+- [`guide.ts`](../../games/yomifuda/src/guide.ts), [`information.ts`](../../games/yomifuda/src/information.ts)
+  — честная методика по аниме, профили, 7 tuning-направлений, безопасная сводка.
+  Пресет educational —12 явно учебных карт/3 игрока/рука3, его оценки публичны по определению.
+- [`client/Board.tsx`](../../games/yomifuda/src/client/Board.tsx) — мобильный HUD/рука/подтверждение,
+  [`arena-plan.ts`](../../games/yomifuda/src/client/arena-plan.ts) и
+  [`DougaArena.tsx`](../../games/yomifuda/src/client/DougaArena.tsx) — настоящий douga-план
+  из разрешённого view, lazy InteractivePlayer, синхронное долгое раскрытие, reduced motion/retry.
+  Статическое превью всегда из независимого demoRules, не из секретной пользовательской колоды.
+- Проверка: `npx vitest run games/yomifuda`; живой MCP/WS/PNG и браузерные peer-сессии —
+  [`scripts/verify-yomifuda.mjs`](../../scripts/verify-yomifuda.mjs).
 
 ## Как добавить игру
 

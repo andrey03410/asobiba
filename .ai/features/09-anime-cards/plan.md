@@ -81,38 +81,38 @@ apps/server/src/games/catalog.ts, apps/{web,server}/package.json, package-lock.j
 **Производит:** yomifudaClient с stageHud board, Board, SeatIcon, css, безопасным previewMatch.
 Арена compileVideo(createVideoDocument(...)) → InteractivePlayer; никакой своей замены рендера douga.
 
-- [ ] RED: план douga строится по view без сырой колоды, choose содержит только рубашки,
+- [x] RED: план douga строится по view без сырой колоды, choose содержит только рубашки,
   reveal — активные значения после всех ходов, тай-брейк раскрывает только допустимую сумму;
   staticRender валидный SVG и preview на демонстрационных данных не раскрывает оценки пользователя.
-- [ ] `npx vitest run games/yomifuda` — RED.
-- [ ] Реализовать адаптивную доску с игроками/столом/рукой, выбор и подтверждение,
+- [x] `npx vitest run games/yomifuda` — RED.
+- [x] Реализовать адаптивную доску с игроками/столом/рукой, выбор и подтверждение,
   рубашки, 10сек анимированное раскрытие, готовность, финал, повторную загрузку ошибки,
   fullscreen через props, reduced motion, доступные названия и управление.
   Стол/карты/значения/переходы реально рендерит douga. Красивые тема, фон и паттерн рубашек.
   Полная колода никогда не передаётся плану; для card image используется assetUrl из разрешённого вида.
-- [ ] Зарегистрировать оба клиента, добавить зависимости. Yomifuda в NewLobbyPage —
+- [x] Зарегистрировать оба клиента, добавить зависимости. Yomifuda в NewLobbyPage —
   сводка и выбор пресета/сохранённой колоды без JSON с оценками; saved запускать через configId,
   не валидировать отредактированную скрытую колоду и не пересылать её как будто оригинал.
-- [ ] Focused GREEN, npm test, build, tsc; self-review, commit `feat(web): add mobile Yomifuda arena with Douga`.
-- [ ] Свежее ревью диффа задачи, исправить существенное.
+- [x] Focused GREEN, npm test, build, tsc; self-review, commit `feat(web): add mobile Yomifuda arena with Douga`.
+- [x] Свежее ревью диффа задачи, исправить существенное.
 
 ### Task 4: QG и живая партия
 
 **Файлы:** scripts/verify-yomifuda.mjs, .ai/features/09-anime-cards/verify.md;
 доказательства только storage/verification/09-yomifuda/. Выполняет основной агент.
 
-- [ ] Проверить порты и seed-verify, использовать существующий dev либо запустить один.
-- [ ] Настоящий MCP: capabilities, импорт портретов, validate/save/list/get/simulate/PNG/лобби.
-- [ ] Настоящие WS трёх игроков и наблюдателя: hidden data, рубашки, последний ход→reveal,
+- [x] Проверить порты и seed-verify, использовать существующий dev либо запустить один.
+- [x] Настоящий MCP: capabilities, импорт портретов, validate/save/list/get/simulate/PNG/лобби.
+- [x] Настоящие WS трёх игроков и наблюдателя: hidden data, рубашки, последний ход→reveal,
   early ready отказ, оба тай-брейка, добор до финиша, reconnect/restore.
-- [ ] Браузер телефона и ПК, fullscreen, картинки, кадры douga в начале/середине/конце
+- [x] Браузер телефона и ПК, fullscreen, картинки, кадры douga в начале/середине/конце
   раскрытия. Посмотреть PNG глазами, проверить отсутствие scroll/перекрытия управления.
-- [ ] После последних правок npm test → npm run build → npx tsc --noEmit, записать числа.
+- [x] После последних правок npm test → npm run build → npx tsc --noEmit, записать числа.
 - [ ] Свежее ревью всей ветки, существенное исправить и повторить QG.
 
 ### Task 5: Знания
 
-- [ ] Обновить карточки .ai/map/{games,server,mcp,web,video,dev-env}.md и SDK при изменении контракта;
+- [x] Обновить карточки .ai/map/{games,server,mcp,web,video,dev-env}.md и SDK при изменении контракта;
   проверить ссылки. Plan/README/verify отражают фактический результат и ограничения.
 - [ ] Push ветки, PR `09: Yomifuda — карточная игра с тайными оценками`, stage review.
   После зелёных QG/ревью — history, stage merged, merge PR, pull main и push/проверка origin/main.

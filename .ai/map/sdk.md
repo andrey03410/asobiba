@@ -38,7 +38,7 @@
 ## Информация об игре и партии
 
 [`info.ts`](../../packages/sdk/src/info.ts): `GameInformation` объясняет цель/ход/пример,
-`TuningDirection` даёт варианты с последствиями (у всех4 игр по7), `ConfigSummary`
+`TuningDirection` даёт варианты с последствиями (у всех5 игр по7), `ConfigSummary`
 описывает фактический конфиг. `describeConfig(game, config)` принимает **проверенный оригинал**,
 вызывает whitelist `summarizeConfig`, добавляет общие timer/series и необязательное
 `config.info:{title?,text?}` (80/2000 символов). Не обходить произвольный JSON ради сводки:
