@@ -1,1 +1,19 @@
-{"name":"@asobiba/game-yomifuda","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/index.ts"},"dependencies":{"@asobiba/sdk":"*","zod":"^4.6.7"}}
+{
+  "name": "@asobiba/game-yomifuda",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client/index.ts"
+  },
+  "dependencies": {
+    "@asobiba/sdk": "*",
+    "zod": "^4.6.7",
+    "@douga/video": "file:../../../douga/packages/video",
+    "@douga/player": "file:../../../douga/packages/player"
+  },
+  "peerDependencies": {
+    "react": "^19.3.1"
+  }
+}

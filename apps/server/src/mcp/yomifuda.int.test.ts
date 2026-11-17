@@ -41,8 +41,10 @@ it('keeps MCP authoring safe by default and uses original configs for by-id oper
     const simulation = await call('config_simulate', { configId, rounds: 2 });
     expect(simulation.result.isError).not.toBe(true); safe(simulation.json);
     const preview = await call('config_preview', { configId });
-    // Task3 will register the safe demo client and replace no_preview with a PNG assertion.
-    expect(preview.json.error?.code).toBe('no_preview'); safe(preview.json);
+    expect(preview.result.isError).not.toBe(true); safe(preview.json);
+    const png = (preview.result.content as { type: string; mimeType?: string; data?: string }[]).find(c => c.type === 'image');
+    expect(png?.mimeType).toBe('image/png');
+    expect(Buffer.from(png!.data!, 'base64').subarray(1, 4).toString()).toBe('PNG');
     const lobby = await call('lobby_create', { configId, name: 'Cards' });
     expect(lobby.result.isError).not.toBe(true); safe(lobby.json);
     safe((await call('lobby_get', { lobbyId: lobby.json.lobby.id })).json);

@@ -18,7 +18,8 @@
     "@asobiba/game-jinchi": "*",
     "@asobiba/game-russkoe-pole": "*",
     "@asobiba/game-quizor": "*",
-    "@asobiba/video": "*"
+    "@asobiba/video": "*",
+    "@asobiba/game-yomifuda": "*"
   },
   "devDependencies": {
     "@types/react": "^19.2.7",
