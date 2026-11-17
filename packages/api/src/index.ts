@@ -111,6 +111,8 @@ export interface GameResponse {
 
 // ---------- configs ----------
 export interface ConfigDto {
+  /** Yomifuda safe projection: cards are hidden; use configId for execution. */
+  secretsHidden?: boolean;
   id: string;
   gameId: string;
   title: string;

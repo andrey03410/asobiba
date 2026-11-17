@@ -7,7 +7,7 @@ games_list → game_capabilities(gameId): info объясняет игру; tuni
 
 Рецепт: ближайший пресет → правки → config_validate → config_simulate → config_preview → config_save (необязательно) → lobby_create(name,configId или config) по просьбе человека. Конфиг — данные, код не исполняется.
 config_validate: исправь ошибки по path/hint, объясни предупреждения, покажи summary. info:{title?,text?} — вступление автора до 80/2000 символов, не правила.
-config_simulate: stuck/never-ends требуют разбора; always-draw/first-seat-dominates — сигнал баланса. budget-exceeded и partial preview означают неполную проверку, не доказательство баланса.
+config_simulate: stuck/never-ends — ошибки; always-draw/first-seat-dominates — сигнал баланса, кроме Ёмифуды: проверяй выполнимость, честные оценки не выравнивай. budget-exceeded/partial preview — неполная проверка.
 config_preview: посмотри и покажи PNG. Quizor target:{kind:"question"|"round"|"intro",id}; config_resolve — наследование, config_probe — верные, неверные и пограничные ответы. Итог: url, summary и картинка. Будущие вопросы, ответы и секреты не раскрывай.
 Jinchi: jinchi_generate(request) даёт configId для validate/simulate/preview/lobby_create без строк карты. Радиус50 →101×101.
 

@@ -192,6 +192,11 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     return s.configs.validate(user.id, body.config);
   });
   app.get("/api/configs", async (req) => ({ configs: await s.configs.list(requireAccount(req).id) }));
+  app.get("/api/configs/:id", async (req) => {
+    const user = requireAccount(req);
+    const query = parse(z.object({ revealSecrets: z.enum(["true", "false"]).optional() }), req.query);
+    return { config: await s.configs.get(user.id, parse(idParam, req.params).id, { revealSecrets: query.revealSecrets === "true" }) };
+  });
   app.post("/api/configs", async (req, reply) => {
     const user = requireAccount(req);
     const body = parse(z.object({ config: z.unknown() }), req.body);

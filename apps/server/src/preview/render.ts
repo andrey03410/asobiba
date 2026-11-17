@@ -37,7 +37,7 @@ export async function renderPreview(assets: AssetService, config: ConfigDocument
   const svg = renderToStaticMarkup(
     createElement(client.Board, { match, config, seat: null, assetUrl: (id: string) => uris.get(id) ?? "", staticRender: true }),
   );
-  const png = config.game === "quizor"
+  const png = (config.game === "quizor" || config.game === "yomifuda")
     ? new Resvg(svg, { fitTo: { mode: "width", value: PREVIEW_WIDTH }, font: { loadSystemFonts: true, defaultFontFamily: "Arial" } }).render().asPng()
     : renderTrustedSvg(svg, PREVIEW_WIDTH);
   const height = png.readUInt32BE(20);

@@ -5,6 +5,7 @@ import { jinchiClient } from "@asobiba/game-jinchi/client";
 import { RUSSKOE_POLE_BANK } from "@asobiba/game-russkoe-pole/bank";
 import { russkoePole, useWordBank } from "@asobiba/game-russkoe-pole";
 import { russkoePoleClient } from "@asobiba/game-russkoe-pole/client";
+import { yomifuda } from "@asobiba/game-yomifuda";
 import { quizor } from "@asobiba/game-quizor";
 import { quizorClient } from "@asobiba/game-quizor/client";
 import { ticTacToe } from "@asobiba/game-tic-tac-toe";
@@ -14,7 +15,7 @@ import type { ComponentType } from "react";
 useWordBank(RUSSKOE_POLE_BANK);
 
 /** Every game the site offers. Adding a game = adding it here and to apps/web/src/games.ts. */
-export const catalog = createCatalog([ticTacToe, jinchi, russkoePole, quizor]);
+export const catalog = createCatalog([ticTacToe, jinchi, russkoePole, quizor, yomifuda]);
 
 export type ReactGameClient = GameClient<ComponentType<BoardProps>, ComponentType<SeatIconProps>>;
 

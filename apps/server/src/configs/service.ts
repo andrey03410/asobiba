@@ -46,8 +46,14 @@ export class ConfigService {
     private readonly video?: VideoService,
   ) {}
 
-  /** Bound complete JSON, then check schemas, asset ownership/quotas and Quizor slot MIME. */
+  /** Public validation never discloses a Yomifuda deck, even to its author. */
   async validate(userId: string, input: unknown): Promise<UserValidation> {
+    const res = await this.validateOriginal(userId, input);
+    return res.ok ? { ...res, config: this.shownDocument(res.config) } : res;
+  }
+
+  /** Internal execution/authoring only. Never serialize this result in ordinary responses. */
+  async validateOriginal(userId: string, input: unknown): Promise<UserValidation> {
     const size = documentSizeIssues(input);
     if (size.length > 0) return { ok: false, config: null, issues: size };
     let res = validateConfig(this.catalog, input);
@@ -71,7 +77,7 @@ export class ConfigService {
     if (normalizedSize.length > 0) return { ok: false, config: null, issues: normalizedSize };
     const refs = collectAssetRefs(res.config);
     const ownership = await this.assets.ownershipIssues(userId, refs);
-    const mime = res.config.game === "quizor" ? await this.quizorMimeIssues(userId, res.config, refs) : [];
+    const mime = (res.config.game === "quizor" || res.config.game === "yomifuda") ? await this.slotMimeIssues(userId, res.config, refs) : [];
     if (ownership.length > 0 || mime.length > 0) return { ok: false, config: null, issues: [...res.issues, ...ownership, ...mime] };
     if (res.config.game === "quizor") {
       const duration = await this.normalizeMediaDurations(userId, res.config.rules);
@@ -131,7 +137,7 @@ export class ConfigService {
     return issues;
   }
 
-  private async quizorMimeIssues(userId: string, config: ConfigDocument, refs: readonly { assetId: string }[]): Promise<ConfigIssue[]> {
+  private async slotMimeIssues(userId: string, config: ConfigDocument, refs: readonly { assetId: string }[]): Promise<ConfigIssue[]> {
     if (refs.length === 0) return [];
     const rows = await this.db.asset.findMany({ where: { ownerId: userId, id: { in: [...new Set(refs.map(r => r.assetId))] } }, select: { id: true, mime: true } });
     const mimes = new Map(rows.map(row => [row.id, row.mime]));
@@ -156,7 +162,7 @@ export class ConfigService {
   }
 
   async requireValid(userId: string, input: unknown): Promise<ConfigDocument> {
-    const res = await this.validate(userId, input);
+    const res = await this.validateOriginal(userId, input);
     if (!res.ok) throw invalidConfig(res.issues);
     return res.config;
   }
@@ -168,20 +174,39 @@ export class ConfigService {
       const existing = await this.db.gameConfig.findFirst({ where: { id: configId, ownerId: userId } });
       if (!existing) throw notFound("Конфиг не найден");
       const row = await this.db.gameConfig.update({ where: { id: configId }, data: { title: config.title, gameId: config.game, document } });
-      return configDto(row);
+      return this.shownDto(configDto(row));
     }
     const count = await this.db.gameConfig.count({ where: { ownerId: userId } });
     if (count >= MAX_CONFIGS_PER_USER) throw conflict("too_many_configs", "Слишком много конфигов: удалите ненужные");
     const row = await this.db.gameConfig.create({ data: { id: newId("cfg"), ownerId: userId, gameId: config.game, title: config.title, document } });
-    return configDto(row);
+    return this.shownDto(configDto(row));
   }
 
   async list(userId: string, gameId?: string): Promise<ConfigDto[]> {
     const rows = await this.db.gameConfig.findMany({ where: { ownerId: userId, ...(gameId ? { gameId } : {}) }, orderBy: { updatedAt: "desc" } });
-    return rows.map(configDto);
+    return rows.map(row => this.shownDto(configDto(row)));
   }
 
-  async get(userId: string, id: string): Promise<ConfigDto> {
+  private shownDocument(document: ConfigDocument): ConfigDocument {
+    if (document.game !== "yomifuda") return document;
+    const game = this.catalog.get(document.game);
+    // Fail closed if an existing secret deck outlives its registered definition.
+    return { ...document, rules: game?.presentRules ? game.presentRules(document.rules) : { cards: [] } };
+  }
+
+  private shownDto(dto: ConfigDto): ConfigDto {
+    return dto.document.game === "yomifuda"
+      ? { ...dto, document: this.shownDocument(dto.document), secretsHidden: true }
+      : dto;
+  }
+
+  async get(userId: string, id: string, options: { revealSecrets?: boolean } = {}): Promise<ConfigDto> {
+    const dto = await this.getOriginal(userId, id);
+    return options.revealSecrets === true ? dto : this.shownDto(dto);
+  }
+
+  /** Internal original, scoped to its owner. Explicit revealSecrets is the author-facing opt-in. */
+  async getOriginal(userId: string, id: string): Promise<ConfigDto> {
     const row = await this.db.gameConfig.findFirst({ where: { id, ownerId: userId } });
     if (!row) throw notFound("Конфиг не найден");
     return configDto(row);
