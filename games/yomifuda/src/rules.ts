@@ -41,6 +41,10 @@ export const rulesSchema = z.strictObject({
   if (r.cards.length % r.players !== 0) fail(["cards"], "Число карт должно быть кратно числу игроков");
   if (r.handSize > r.cards.length / r.players) fail(["handSize"], "В колоде недостаточно карт для равных рук");
   if (r.scale.min >= r.scale.max) fail(["scale"], "Максимум шкалы должен быть больше минимума");
+  const safeScaleBound = Math.floor(Number.MAX_SAFE_INTEGER / r.attributes.length);
+  if (Math.max(Math.abs(r.scale.min), Math.abs(r.scale.max)) > safeScaleBound) {
+    fail(["scale"], `Для точного сравнения сумм при ${r.attributes.length} характеристиках границы шкалы по модулю не должны превышать ${safeScaleBound}`);
+  }
   if (r.pool.minViewers > r.pool.profiles.length) fail(["pool", "minViewers"], "Порог просмотра превышает число профилей");
   if (new Set(r.pool.profiles.map((p) => p.toLowerCase())).size !== r.pool.profiles.length) fail(["pool", "profiles"], "Профили не должны повторяться");
   const attributes = new Set(r.attributes.map((a) => a.id));

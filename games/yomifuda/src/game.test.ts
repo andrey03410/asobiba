@@ -35,6 +35,18 @@ describe("Yomifuda rules", () => {
     expect(r.attributes).toHaveLength(7);
   });
   it.each([
+    [2, 4503599627370495],
+    [3, 3002399751580330],
+    [32, 281474976710655],
+  ])("bounds both scale endpoints to preserve exact sums of %i attributes", (count, limit) => {
+    const attributes = Array.from({ length: count }, (_, i) => ({ id: `a${i}`, label: `Показатель ${i}` }));
+    const cards = [0, 1, 2].map((i) => ({ id: `c${i}`, name: `N${i}`, anime: "A", values: Object.fromEntries(attributes.map((a) => [a.id, 0])) }));
+    const rules = { players: 3, handSize: 1, attributes, cards };
+    expect(rulesSchema.safeParse({ ...rules, scale: { min: -limit, max: limit } }).success).toBe(true);
+    expect(rulesSchema.safeParse({ ...rules, scale: { min: 0, max: limit + 1 } }).success).toBe(false);
+    expect(rulesSchema.safeParse({ ...rules, scale: { min: -limit - 1, max: 0 } }).success).toBe(false);
+  });
+  it.each([
     ["duplicate card id", (r: YomifudaRules) => { r.cards[1].id = r.cards[0].id; }],
     ["duplicate character", (r: YomifudaRules) => { r.cards[1].name = r.cards[0].name; r.cards[1].anime = r.cards[0].anime; }],
     ["duplicate shikimori character", (r: YomifudaRules) => { r.cards[0].shikimoriId = 42; r.cards[1].shikimoriId = 42; }],
