@@ -39,3 +39,7 @@ Task4 live: production-mode local server avoided sibling Douga HMR restarts. Rea
 Task5 knowledge: all8 affected map cards updated; final-review/PR/merge pending.
 
 Whole-branch review ff19424: 0 Critical, 3 Important (I1 joint winners lost by SDK draw handling; I2 series repeats fully disclosed deck; I3 missing readable mobile card inspection), 1 Minor (compiler in initial chunk). All three reproduced/confirmed, accepted. Single final fix wave dispatched; no merge until corrected, scoped review and final QG. Declined-to-judge list accepted: canonical personal pool research, excluded balancing/economy/matchmaking, full sibling audit and site-wide profiling are outside this game implementation.
+
+Final fix wave: complete (b03e796 + b51fef4); I1–I3 ADDRESSED by scoped fresh review, no new findings. Root QG after final source edits:626/626,67files,build365modules+tsc exit0. Real MCP/WS/PNG repeat PASS, including partial joint win and rounds2 rejection. Live360×640 card inspection/scroll/close/focus/explicit confirm and common joint-winner dialog PASS via documented CDP DOM actions; native input/ESC limitations recorded in verify.md. M1 initial bundle remains deferred.
+
+Task4: complete (full final QG + live surfaces + fresh branch review and scoped fix review). Task5: knowledge complete, PR/merge in progress.
