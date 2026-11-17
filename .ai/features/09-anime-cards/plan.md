@@ -61,15 +61,15 @@ ConfigDto.secretsHidden?:boolean, ConfigService.getOriginal(userId,id), обыч
 get/list/save и явный get с revealSecrets; создание по configId и внутренние операции на оригинале.
 Client/доска и NewLobbyPage — Task3, не добавлять импорт несуществующего client сейчас.
 
-- [ ] RED: оригинальные значения отсутствуют у save/list/get/validate HTTP/MCP и LobbyDto;
+- [x] RED: оригинальные значения отсутствуют у save/list/get/validate HTTP/MCP и LobbyDto;
   явный авторский доступ только владельцу; по configId работает валидация и запуск;
   чужая скрытая картинка не разрешена, своя разрешена, раскрытая разрешена всем участникам.
-- [ ] `npx vitest run apps/server/src/configs apps/server/src/mcp apps/server/src/lobbies` — RED.
-- [ ] Реализовать проекцию только для Yomifuda, внутренний оригинал, флаг авторского
+- [x] `npx vitest run apps/server/src/configs apps/server/src/mcp apps/server/src/lobbies` — RED.
+- [x] Реализовать проекцию только для Yomifuda, внутренний оригинал, флаг авторского
   revealSecrets (HTTP query и MCP config_get), безопасный validate и доверенные media refs.
   Для UI-предзагрузки не выдавать картинок чужой руки через полный rules.
-- [ ] Те же focused тесты GREEN, npm test; self-review, commit `feat(server): protect Yomifuda deck secrets`.
-- [ ] Свежее ревью диффа задачи, исправить существенное.
+- [x] Те же focused тесты GREEN, npm test; self-review, commit `feat(server): protect Yomifuda deck secrets`.
+- [x] Свежее ревью диффа задачи, исправить существенное.
 
 ### Task 3: Мобильный стол и родной визуал douga
 
