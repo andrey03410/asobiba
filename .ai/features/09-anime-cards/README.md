@@ -2,7 +2,7 @@
 id: 09
 title: Yomifuda — карточная игра с тайными оценками
 track: product
-stage: plan
+stage: build
 branch: feat/09-anime-cards
 pr:
 started: 2026-11-17
@@ -20,7 +20,7 @@ merged:
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [product.md](product.md), принят владельцем 17 ноября с уточнениями; остальное решено автономно
 - [x] Техника — [tech.md](tech.md), решения приняты автономно
-- [ ] План
+- [x] План — [plan.md](plan.md)
 - [ ] Реализация и QG
 - [ ] Проверка владельцем
 - [ ] Влито
