@@ -42,14 +42,14 @@
 Правила, shape карты и публичного вида — T01/T02 техники. Добавить документированный
 `demoRules`/preset helper для интеграционных тестов. Никаких изменений server/web/catalog в этой задаче.
 
-- [ ] Написать тесты до кода: случайная равная раздача, card ownership, hidden hand/values,
+- [x] Написать тесты до кода: случайная равная раздача, card ownership, hidden hand/values,
   ничьи (active→sum→0.5), запрет early ready и stale round, выбор показателя, полное доигрывание,
   RNG/restore, границы шкалы, дубли/неполные значения/кратность/рука, >6 характеристик.
-- [ ] `npx vitest run games/yomifuda` — зафиксировать ожидаемое RED.
-- [ ] Реализовать strict схемы, чистый движок с wake и whitelist view, guide/info/tuning
+- [x] `npx vitest run games/yomifuda` — зафиксировать ожидаемое RED.
+- [x] Реализовать strict схемы, чистый движок с wake и whitelist view, guide/info/tuning
   (семь направлений), безопасные summary/presentRules и учебный пресет.
-- [ ] Та же команда GREEN, затем npm test. Отчёт и self-review; commit `feat(yomifuda): add hidden card game engine`.
-- [ ] Свежее ревью диффа задачи; исправить существенное до следующей задачи.
+- [x] Та же команда GREEN, затем npm test. Отчёт и self-review; commit `feat(yomifuda): add hidden card game engine`.
+- [x] Свежее ревью диффа задачи; исправить существенное до следующей задачи.
 
 ### Task 2: Безопасный сервер и MCP
 
