@@ -12,7 +12,7 @@ import { newId } from "../ids";
 export const MAX_CONFIGS_PER_USER = 200;
 export const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 
-export type UserValidation = { ok: true; config: ConfigDocument; issues: ConfigIssue[]; summary: ConfigSummary } | { ok: false; config: null; issues: ConfigIssue[] };
+export type UserValidation = { ok: true; secretsHidden?: boolean; config: ConfigDocument; issues: ConfigIssue[]; summary: ConfigSummary } | { ok: false; config: null; issues: ConfigIssue[] };
 
 export function configDto(row: GameConfig): ConfigDto {
   return {
@@ -49,7 +49,9 @@ export class ConfigService {
   /** Public validation never discloses a Yomifuda deck, even to its author. */
   async validate(userId: string, input: unknown): Promise<UserValidation> {
     const res = await this.validateOriginal(userId, input);
-    return res.ok ? { ...res, config: this.shownDocument(res.config) } : res;
+    return res.ok && res.config.game === "yomifuda"
+      ? { ...res, config: this.shownDocument(res.config), secretsHidden: true }
+      : res;
   }
 
   /** Internal execution/authoring only. Never serialize this result in ordinary responses. */

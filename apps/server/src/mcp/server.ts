@@ -88,13 +88,13 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "config_validate",
     {
       title: "Проверить конфиг",
-      description: "Проверяет конфиг и картинки. Возвращает нормализованный конфиг и безопасную системную сводку summary или issues с path, message, hint. Авторское info не меняет правила.",
+      description: "Проверяет конфиг и картинки; summary или issues с path, message, hint. Ёмифуда: secretsHidden:true, config — read-only сводка с cards:[], её нельзя сохранять или запускать. Сохраните подготовленный исходный config через config_save, далее используйте configId. Для правки сохранённой колоды получите оригинал через config_get с явным revealSecrets:true. Другие игры возвращают нормализованный config.",
       inputSchema: referenceFields,
       annotations: { readOnlyHint: true },
     },
     (args) => run(async () => {
       const checked = await s.configs.validate(user.id, await configSource(args));
-      return json(args.configId && checked.ok ? { ok: true, configId: args.configId, summary: checked.summary, issues: checked.issues } : checked);
+      return json(args.configId && checked.ok ? { ok: true, configId: args.configId, ...(checked.secretsHidden ? { secretsHidden: true } : {}), summary: checked.summary, issues: checked.issues } : checked);
     }),
   );
 

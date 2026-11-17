@@ -38,7 +38,7 @@ describe('Yomifuda secret config boundary', () => {
 
   it('returns a safe normalized validation but requireValid preserves cards for execution', async () => {
     const source = document(); const checked = await configs.validate(owner.user.id, source);
-    expect(checked.ok).toBe(true); if (!checked.ok) throw new Error('invalid fixture');
+    expect(checked).toMatchObject({ ok: true, secretsHidden: true }); if (!checked.ok) throw new Error('invalid fixture');
     hidden(checked.config); expect(source.rules.cards).toHaveLength(12);
     expect((await configs.requireValid(owner.user.id, source)).rules).toEqual(source.rules);
   });
@@ -71,7 +71,8 @@ describe('Yomifuda secret config boundary', () => {
     const original = await request('GET', `/api/configs/${id}?revealSecrets=true`);
     expect(original.json().config.document.rules.cards).toHaveLength(12);
     expect((await request('GET', `/api/configs/${id}?revealSecrets=true`, undefined, other.cookie)).statusCode).toBe(404);
-    const checked = await request('POST', '/api/configs/validate', document()); hidden(checked.json().config);
+    const checked = await request('POST', '/api/configs/validate', document());
+    expect(checked.json()).toMatchObject({ ok: true, secretsHidden: true }); hidden(checked.json().config);
     hidden((await request('PUT', `/api/configs/${id}`, document())).json().config.document);
   });
 });

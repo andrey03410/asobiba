@@ -22,7 +22,11 @@ it('keeps MCP authoring safe by default and uses original configs for by-id oper
   try {
     const config = presetDocument(yomifuda, yomifuda.presets[0]);
     const valid = await call('config_validate', { config });
-    expect(valid.json.ok).toBe(true); safe(valid.json); expect(valid.json.config.rules.cards).toEqual([]);
+    expect(valid.json).toMatchObject({ ok: true, secretsHidden: true }); safe(valid.json);
+    // The readonly projection cannot replace the original document in config_save.
+    const projected = await call('config_save', { config: valid.json.config });
+    expect(projected.result.isError).toBe(true); expect(projected.json.error.code).toBe('invalid_config');
+    expect((await call('config_list', {})).json.configs).toEqual([]); expect(valid.json.config.rules.cards).toEqual([]);
     const saved = await call('config_save', { config });
     expect(saved.result.isError).not.toBe(true); safe(saved.json); const configId = saved.json.config.id;
     expect(saved.json.config.secretsHidden).toBe(true);
@@ -33,7 +37,7 @@ it('keeps MCP authoring safe by default and uses original configs for by-id oper
     const foreign = await t.services.configs.save(other.user.id, config);
     expect((await call('config_get', { configId: foreign.id, revealSecrets: true })).result.isError).toBe(true);
     const byId = await call('config_validate', { configId });
-    expect(byId.json).toMatchObject({ ok: true, configId }); expect(byId.json.config).toBeUndefined(); safe(byId.json);
+    expect(byId.json).toMatchObject({ ok: true, configId, secretsHidden: true }); expect(byId.json.config).toBeUndefined(); safe(byId.json);
     const simulation = await call('config_simulate', { configId, rounds: 2 });
     expect(simulation.result.isError).not.toBe(true); safe(simulation.json);
     const preview = await call('config_preview', { configId });
