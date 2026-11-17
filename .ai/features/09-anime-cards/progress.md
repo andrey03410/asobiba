@@ -5,3 +5,7 @@
 Воркспейс адаптирован к AGENTS: .work внутри папки задачи вместо .superpowers.
 
 Pre-flight: Task1→Task2: yomifuda/presentRules и типы; Task1→Task3: YomifudaView и действия; Task2→Task3: безопасный ConfigDto и configId. Конфликтов нет.
+
+Task1 implementation b5137a0:35 focused tests,597/597 suite,61files; tsc PASS. Review pending. Exported contracts in .work/task-1-report.md.
+
+Task1 review: Important unsafe integer sums; fix round1/5 dispatched to engine. Conservative scale×attribute-count safety validation; current0–100 unaffected. No other findings.
