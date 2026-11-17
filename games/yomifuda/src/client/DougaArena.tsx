@@ -9,16 +9,20 @@ class ArenaBoundary extends Component<{ children: ReactNode; retry: () => void }
 interface Props { view: YomifudaView; visual: YomifudaVisual; assetUrl: (id: string) => string; names?: string[]; clockOffset?: number }
 function Player({ view, visual, assetUrl, names, clockOffset = 0 }: Props) {
   const box = useRef<HTMLDivElement>(null);
-  const [wide, setWide] = useState(false);
+  const [viewport, setViewport] = useState({ width: 342, height: 342 });
+  const wide = viewport.width / Math.max(1, viewport.height) > 1.5;
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const InteractivePlayer = useMemo(() => lazy(() => import('@douga/player/InteractivePlayer').then(m => ({ default: m.InteractivePlayer }))), [attempt]);
   useEffect(() => {
     if (!box.current) return;
-    const observer = new ResizeObserver(([entry]) => setWide(entry.contentRect.width / Math.max(1, entry.contentRect.height) > 1.5));
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.max(1, Math.round(entry.contentRect.width)), height = Math.max(1, Math.round(entry.contentRect.height));
+      setViewport(current => current.width === width && current.height === height ? current : { width, height });
+    });
     observer.observe(box.current); return () => observer.disconnect();
   }, []);
-  const compiled = useMemo(() => buildArena(view, visual, assetUrl, names, wide), [view, visual, assetUrl, names, wide]);
+  const compiled = useMemo(() => buildArena(view, visual, assetUrl, names, wide, viewport), [view, visual, assetUrl, names, wide, viewport]);
   const now = useCallback(() => Date.now() + clockOffset, [clockOffset]);
   useEffect(() => setError(false), [view.round, view.phase]);
   return <div ref={box} className="yf-arena-player" aria-hidden={!error && compiled.ready}>

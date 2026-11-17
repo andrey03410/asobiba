@@ -1,4 +1,5 @@
 import { createCatalog, Match, validateConfig, type ConfigDocument } from '@asobiba/sdk';
+import { fitTextSize } from '@douga/render/studio-frame';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
 import { demoRules, visualSchema, yomifuda, type YomifudaView } from '../index';
@@ -51,6 +52,33 @@ describe('Yomifuda client privacy and presentation', () => {
     expect(overlay.style.background).toBe('transparent');
     expect(overlay.style.borderWidth).toBe(0);
     expect(plan.scenes[0].nodes.find(n => n.id.includes('name-0'))?.style.background).toBe('transparent');
+  });
+  it.each([4, 5, 6])('keeps %i-player phone values and character names readable after native fitting', (count) => {
+    const v = view(); v.phase = 'reveal'; v.revealStartedAt = 0; v.revealEndsAt = 10000;
+    v.players = Array.from({ length: count }, (_, seat) => ({ seat, score: 0, handCount: 1, played: true, ready: false }));
+    const names = ['Дзюн Садзанами', 'Микото Мисака', 'Сугуха Киригая', 'Ханако Хонда', 'Юри Накамура', 'Цубаса Ханэкава'];
+    v.table = v.players.map(p => ({ seat: p.seat, hidden: false, card: { id: `c${p.seat}`, name: names[p.seat], anime: 'Длинное название аниме', image: { asset: `portrait${p.seat}` } }, value: 100, points: .5, winner: true, tieTotal: 246 }));
+    const viewport = { width: 342, height: 206 }; // 360x640 stage, below six-player HUD and above hand.
+    const result = buildArena(v, visual, assetUrl, [], true, viewport);
+    expect(result.ready, JSON.stringify(result.diagnostics)).toBe(true);
+    const plan = result.plan, scale = Math.min(viewport.width / plan.width, viewport.height / plan.height);
+    const nodes = plan.scenes[0].nodes;
+    for (let seat = 0; seat < count; seat++) {
+      const effectiveFont = (prefix: string) => {
+        const n = nodes.find(n => n.id.endsWith(`/${prefix}-${seat}`))!;
+        const padding = Math.min(20, n.rect.width * .03);
+        // The real native renderer's fitter, including its wrapper padding.
+        return fitTextSize(n.text!, n.rect.width - padding * 2, n.rect.height - padding * 2, n.style.fontSize!) * scale;
+      };
+      expect(effectiveFont('value-final')).toBeGreaterThanOrEqual(14);
+      expect(effectiveFont('name')).toBeGreaterThanOrEqual(10);
+      expect(effectiveFont('tie')).toBeGreaterThanOrEqual(10);
+      expect(nodes.find(n => n.id.endsWith(`/seat-${seat}`))?.text).toBe(String(seat + 1));
+      const rect = nodes.find(n => n.id.endsWith(`/slot-${seat}`))!.rect;
+      expect(rect.x).toBeGreaterThanOrEqual(0); expect(rect.y).toBeGreaterThanOrEqual(0);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(plan.width);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(plan.height);
+    }
   });
   it('previews independent complete demo games even with unreadable original rules', () => {
     const cfg = config(); Object.defineProperty(cfg, 'rules', { get() { throw new Error('Original deck read'); } });

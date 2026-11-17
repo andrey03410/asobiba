@@ -15,7 +15,7 @@ export function displayedScores(view: YomifudaView, now: number) {
   return view.players.map(p => p.score - (hide ? view.table.reduce((sum, t) => sum + (t.seat === p.seat && !t.hidden ? t.points : 0), 0) : 0));
 }
 /** Only the authorized view crosses this boundary. No config, rules or raw deck. */
-export function buildArena(view: YomifudaView, visual: YomifudaVisual, assetUrl: (id: string) => string, names: string[] = [], wide = false) {
+export function buildArena(view: YomifudaView, visual: YomifudaVisual, assetUrl: (id: string) => string, names: string[] = [], wide = false, viewport?: { width: number; height: number }) {
   const colors = palette(visual.theme);
   const doc = createVideoDocument({ kind: 'top', id: 'yomifuda-arena', title: 'Ёмифуда', participants: [], format: wide ? 'wide' : 'square', fps: 30 });
   const duration = Math.max(1, ((view.revealEndsAt ?? 10000) - (view.revealStartedAt ?? 0)) / 1000);
@@ -37,6 +37,11 @@ export function buildArena(view: YomifudaView, visual: YomifudaVisual, assetUrl:
   for (let i = 0; i < 5; i++) {
     nodes.push({ id: `moon-${i}`, type: 'shape', shape: 'ellipse', rect: { x: .5 - i * .1, y: .4 - i * .08, width: .2 + i * .2, height: .2 + i * .16 }, fill: 'transparent', stroke: colors.line, strokeWidth: 1, opacity: .45 });
   }
+  const compact = view.players.length > 3 && (viewport?.width ?? 342) <= 600;
+  const renderScale = Math.min((viewport?.width ?? 342) / unit, (viewport?.height ?? 342) / 1080);
+  const renderWidth = unit * renderScale, renderHeight = 1080 * renderScale;
+  const pxRect = (x: number, y: number, width: number, height: number): Rect => ({ x: x / renderWidth, y: y / renderHeight, width: width / renderWidth, height: height / renderHeight });
+  const pxText = (id: string, value: string, rect: Rect, size: number, color = colors.ink, at = 0, until = duration) => text(id, value, rect, size * 1080 / renderWidth, color, at, until);
   const cols = Math.min(3, view.players.length);
   const rows = Math.ceil(view.players.length / cols);
   const availableH = .84 / rows;
@@ -45,6 +50,61 @@ export function buildArena(view: YomifudaView, visual: YomifudaVisual, assetUrl:
   const w = .88 / cols * scale;
   const h = Math.min(availableH * .88, wide ? .76 : .68) * scale;
   view.players.forEach((player, i) => {
+    if (compact) {
+      // Two columns of horizontal cards use the whole native viewport. Sizes are
+      // chosen in displayed CSS pixels, then converted to the fixed Douga frame.
+      const rows = Math.ceil(view.players.length / 2), gap = 6, margin = 4;
+      const cw = (renderWidth - margin * 2 - gap) / 2;
+      const ch = (renderHeight - margin * 2 - gap * (rows - 1)) / rows;
+      const cx = margin + (i % 2) * (cw + gap), cy = margin + Math.floor(i / 2) * (ch + gap);
+      const rect = pxRect(cx, cy, cw, ch);
+      const photoWidth = Math.min(52, Math.max(40, 44 * visual.cardScale));
+      const face = pxRect(cx + 4, cy + 4, photoWidth, ch - 8);
+      const tx = cx + photoWidth + 9, tw = cw - photoWidth - 13;
+      const table = view.table.find(t => t.seat === player.seat);
+      const card = open && table && !table.hidden ? table : null;
+      shape(`slot-${i}`, rect, colors.card, colors.line);
+      if (!card) {
+        if (table) shape(`back-${i}`, rect, colors.card, visual.accent, 0, duration);
+        pxText(`back-sign-${i}`, table ? '遊' : '·', face, 30, visual.accent);
+        pxText(`waiting-${i}`, table ? 'На столе' : 'Выбирает', pxRect(tx, cy + ch / 2 - 13, tw, 26), 12, colors.muted);
+      } else {
+        const backUntil = Math.max(1 / 30, portraitAt);
+        shape(`back-${i}`, rect, colors.card, visual.accent, 0, backUntil);
+        pxText(`back-sign-${i}`, '遊', face, 30, visual.accent, 0, backUntil);
+        if (card.card.image) {
+          const id = `portrait-${i}`;
+          manifest[id] = { id, kind: 'image', src: assetUrl(card.card.image.asset) };
+          nodes.push({ id, type: 'image', asset: id, rect: face, style: { fit: 'cover', borderRadius: 18 }, timing: { at: { sec: portraitAt }, duration: { sec: duration - portraitAt } },
+            ...(animate ? { animation: [{ property: 'opacity', keyframes: [{ at: { sec: 0 }, value: 0 }, { at: { sec: .65 }, value: 1 }] }] } : {}) });
+        } else {
+          shape(`portrait-fallback-${i}`, face, colors.line, undefined, portraitAt);
+          pxText(`portrait-monogram-${i}`, card.card.name.slice(0, 1), face, 26, visual.accent, portraitAt);
+        }
+        const nameHeight = Math.min(36, ch - 25);
+        pxText(`name-${i}`, card.card.name, pxRect(tx, cy, tw, nameHeight), 11.5, colors.ink, portraitAt);
+        const valueRect = pxRect(tx, cy + nameHeight, tw * .57, ch - nameHeight - 2);
+        if (animate) for (let step = 0; step < 12; step++) {
+          const at = countAt + (valueAt - countAt) * step / 12;
+          pxText(`count-${i}-${step}`, String(Math.round(card.value * step / 12)), valueRect, 19, visual.accent, at, countAt + (valueAt - countAt) * (step + 1) / 12);
+        }
+        pxText(`value-final-${i}`, String(card.value), valueRect, 19, visual.accent, animate ? valueAt : 0);
+        if (card.tieTotal !== undefined) {
+          const tieRect = pxRect(cx + 4, cy + ch - 20, photoWidth, 16);
+          shape(`tie-plate-${i}`, tieRect, colors.bg, undefined, duration * .52);
+          pxText(`tie-${i}`, `Σ ${card.tieTotal}`, tieRect, 10.5, '#ffe3a0', duration * .52);
+        }
+        if (card.winner) {
+          shape(`winner-border-${i}`, rect, 'transparent', '#f6cc79', winnerAt);
+          pxText(`winner-${i}`, `+${card.points} ✦`, pxRect(tx + tw * .57, cy + nameHeight, tw * .43, ch - nameHeight - 2), 12, '#f6cc79', winnerAt);
+        }
+      }
+      // The same number appears in the HUD, so truncated account names are unambiguous.
+      const seatRect = pxRect(cx + 5, cy + 5, 16, 16);
+      shape(`seat-plate-${i}`, seatRect, colors.bg);
+      pxText(`seat-${i}`, String(player.seat + 1), seatRect, 11, colors.ink);
+      return;
+    }
     const col = i % cols, row = Math.floor(i / cols);
     const x = .06 + col * .88 / cols + (.88 / cols - w) / 2;
     const y = .06 + row * availableH + (availableH * .88 - h) / 2;
