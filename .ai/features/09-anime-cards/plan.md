@@ -114,5 +114,5 @@ apps/server/src/games/catalog.ts, apps/{web,server}/package.json, package-lock.j
 
 - [x] Обновить карточки .ai/map/{games,server,mcp,web,video,dev-env}.md и SDK при изменении контракта;
   проверить ссылки. Plan/README/verify отражают фактический результат и ограничения.
-- [ ] Push ветки, PR `09: Yomifuda — карточная игра с тайными оценками`, stage review.
+- [x] Push ветки, PR `09: Yomifuda — карточная игра с тайными оценками`, stage review.
   После зелёных QG/ревью — history, stage merged, merge PR, pull main и push/проверка origin/main.

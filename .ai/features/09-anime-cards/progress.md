@@ -43,3 +43,5 @@ Whole-branch review ff19424: 0 Critical, 3 Important (I1 joint winners lost by S
 Final fix wave: complete (b03e796 + b51fef4); I1–I3 ADDRESSED by scoped fresh review, no new findings. Root QG after final source edits:626/626,67files,build365modules+tsc exit0. Real MCP/WS/PNG repeat PASS, including partial joint win and rounds2 rejection. Live360×640 card inspection/scroll/close/focus/explicit confirm and common joint-winner dialog PASS via documented CDP DOM actions; native input/ESC limitations recorded in verify.md. M1 initial bundle remains deferred.
 
 Task4: complete (full final QG + live surfaces + fresh branch review and scoped fix review). Task5: knowledge complete, PR/merge in progress.
+
+Task5: complete. PR https://github.com/andrey03410/asobiba/pull/9; review+QG green, autonomous acceptance, stage merged and history prepared. Finish: merge PR, fast-forward main and verify origin/main. Scratch review evidence summarized in verify.md and progress; no Ruling entries or parked substantive findings.

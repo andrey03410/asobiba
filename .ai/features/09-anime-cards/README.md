@@ -2,11 +2,11 @@
 id: 09
 title: Yomifuda — карточная игра с тайными оценками
 track: product
-stage: review
+stage: merged
 branch: feat/09-anime-cards
 pr: https://github.com/andrey03410/asobiba/pull/9
 started: 2026-11-17
-merged:
+merged: 2026-11-17
 ---
 
 # 09. Yomifuda — карточная игра с тайными оценками
@@ -23,11 +23,11 @@ merged:
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
 - [x] Приёмка автономно — зелёные QG, живые проверки и свежее ревью
-- [ ] Влито
+- [x] Влито
 
-## Следующий шаг
+## Результат
 
-PR [#9](https://github.com/andrey03410/asobiba/pull/9) → merge и push main. Реализация, живые проверки и итоговое ревью закончены,
+Влито через PR [#9](https://github.com/andrey03410/asobiba/pull/9) в main. Реализация, живые проверки и итоговое ревью закончены,
 результаты — в [verify.md](verify.md), история исполнения — в [progress.md](progress.md).
 Разрешение автономности дословно в `brief.md`.
 
