@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Live Yomifuda verification. Disposable identities and evidence stay in storage/.
-// Needs npm run dev and scripts/seed-verify.ts. --backend-only skips PNG until a client exists.
-// --browser creates a portrait showcase for a human/browser third seat and drives two test peers.
+// Needs a local server and scripts/seed-verify.ts. --backend-only skips PNG.
+// --browser creates a showcase for the last browser seat and drives disposable peers.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -228,7 +228,7 @@ async function runMatch(config, label, withGuards = false) {
       );
       const before = cs.map((c) => c.match.game.hand.map((card) => card.id));
       const attribute = cs[0].match.game.attribute.id;
-      if (previousAttribute !== null)
+      if (previousAttribute !== null && config.rules.attributes.length > 1)
         assert.notEqual(attribute, previousAttribute);
       previousAttribute = attribute;
       if (withGuards && round === 1) {
@@ -288,7 +288,10 @@ async function runMatch(config, label, withGuards = false) {
       );
       const table = os.match.game.table;
       assert(table.every((t) => !t.hidden && Number.isInteger(t.value)));
-      if (config.rules.cards.every((c) => c.values.focus === 10)) {
+      if (label === "partial-parity") {
+        assert.equal(table.filter((t) => t.winner).length, 2);
+        assert(table.filter((t) => t.winner).every((t) => t.points === 0.5));
+      } else if (config.rules.cards.every((c) => c.values.focus === 10)) {
         assert(table.every((t) => t.winner && t.points === 0.5));
       } else if (attribute === "power") {
         tieBreak = true;
@@ -333,12 +336,20 @@ async function runMatch(config, label, withGuards = false) {
     assert.equal(cs[0].match.game.stockCount, 0);
     assert.equal(cs[0].match.game.finalDeck.length, config.rules.cards.length);
     assert(cs[0].match.game.players.every((p) => p.handCount === 0));
+    const gameWinners = cs[0].match.game.result.winners;
+    assert.deepEqual(cs[0].match.result.winners, gameWinners);
+    const publicMatch = (await call("lobby_get", { lobbyId: lobby.id })).json
+      .match;
+    assert.equal(publicMatch.phase, "finished");
+    assert.deepEqual(publicMatch.result.winners, gameWinners);
     const result = {
       lobbyId: lobby.id,
       configId,
       cards: seen.size,
       rounds: cs[0].match.game.round,
       score: cs[0].match.game.players.map((p) => p.score),
+      winners: gameWinners,
+      matchResult: publicMatch.result,
       tieBreak,
       earlyReady,
       replayReconnect,
@@ -476,6 +487,28 @@ try {
       connections.forEach((c) => c.ws.close());
     }
   } else {
+    const repeatedDeck = fixture(3, 1);
+    repeatedDeck.series.rounds = 2;
+    assert.equal(
+      (await call("config_validate", { config: repeatedDeck })).json.ok,
+      false,
+    );
+    for (const name of ["config_save", "lobby_create"]) {
+      const result = await client.callTool({
+        name,
+        arguments: {
+          config: repeatedDeck,
+          ...(name === "lobby_create"
+            ? { name: "Rejected repeated deck" }
+            : {}),
+        },
+      });
+      assert.equal(
+        result.isError,
+        true,
+        `${name} must reject repeated revealed decks`,
+      );
+    }
     const fractional = fixture(6, 2);
     fractional.rules.cards[0].values.power = 1.5;
     assert.equal(
@@ -501,6 +534,13 @@ try {
     assert(sum.tieBreak && sum.earlyReady && sum.replayReconnect);
     const tie = await runMatch(fixture(3, 1, true), "full-parity");
     assert(tie.score.every((s) => s === 0.5));
+    const partialConfig = fixture(3, 1);
+    partialConfig.rules.attributes = [{ id: "power", label: "Сила" }];
+    partialConfig.rules.cards.forEach((card, i) => {
+      card.values = { power: i < 2 ? 90 : 40 };
+    });
+    const partial = await runMatch(partialConfig, "partial-parity");
+    assert.equal(partial.winners.length, 2);
     const full = await runMatch(fixture(60, 5), "full-deck-60");
     assert.equal(full.rounds, 20);
     const sim = (
@@ -525,7 +565,7 @@ try {
     await save("live-result.json", {
       checkedAt: new Date().toISOString(),
       game: caps.id,
-      results: [sum, tie, full],
+      results: [sum, tie, partial, full],
       simulate: sim,
       preview: !process.argv.includes("--backend-only"),
     });

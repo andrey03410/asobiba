@@ -37,3 +37,5 @@ Task3: complete (commits7536b9a..9540eb4, review clean;48 focused,617 full/66 fi
 Task4 live: production-mode local server avoided sibling Douga HMR restarts. Real MCP/WS/PNG repeat PASS; full3 and6 player browser matches finished; native reveal frames8/90/299, fullscreen transitions, reduced motion, hand5 scroll+one-card draw checked. verify.md contains evidence and explicit limits. Final triple after QA-driver edits running.
 
 Task5 knowledge: all8 affected map cards updated; final-review/PR/merge pending.
+
+Whole-branch review ff19424: 0 Critical, 3 Important (I1 joint winners lost by SDK draw handling; I2 series repeats fully disclosed deck; I3 missing readable mobile card inspection), 1 Minor (compiler in initial chunk). All three reproduced/confirmed, accepted. Single final fix wave dispatched; no merge until corrected, scoped review and final QG. Declined-to-judge list accepted: canonical personal pool research, excluded balancing/economy/matchmaking, full sibling audit and site-wide profiling are outside this game implementation.
