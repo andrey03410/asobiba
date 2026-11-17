@@ -76,3 +76,17 @@ describe('Yomifuda secret config boundary', () => {
     hidden((await request('PUT', `/api/configs/${id}`, document())).json().config.document);
   });
 });
+
+
+it('rejects repeated decks at HTTP validate/save/create, including existing saved originals', async () => {
+  const config = document(); config.series.rounds = 2;
+  const request = (url: string, payload: Record<string, unknown>) => t.app.inject({ method: 'POST', url, headers: { cookie: owner.cookie }, payload });
+  const checked = await request('/api/configs/validate', { config });
+  expect(checked.json()).toMatchObject({ ok: false, issues: [expect.objectContaining({ path: 'series.rounds' })] });
+  expect((await request('/api/configs', { config })).statusCode).toBe(422);
+  expect((await request('/api/lobbies', { config, name: 'Repeated deck' })).statusCode).toBe(422);
+  expect(await configs.list(owner.user.id)).toEqual([]);
+  const saved = await configs.save(owner.user.id, document());
+  await t.db.gameConfig.update({ where: { id: saved.id }, data: { document: JSON.parse(JSON.stringify(config)) } });
+  expect((await request('/api/lobbies', { configId: saved.id, name: 'Legacy repeated deck' })).statusCode).toBe(422);
+});

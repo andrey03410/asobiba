@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRng, isActionError, createCatalog, validateConfig, presetDocument, describeGame, Match } from "@asobiba/sdk";
+import { createRng, isActionError, createCatalog, validateConfig, presetDocument, describeGame, documentSchema, Match } from "@asobiba/sdk";
 import { yomifuda, rulesSchema, visualSchema, demoRules, type YomifudaRules, type YomifudaAction } from "./index";
 
 function fixture(extra: Record<string, unknown> = {}): YomifudaRules {
@@ -253,5 +253,39 @@ describe("Yomifuda engine", () => {
     const summary = yomifuda.summarizeConfig!({ ...presetDocument(yomifuda, yomifuda.presets[0]), rules: r, visual: visualSchema.parse({}) });
     expect(JSON.stringify(summary)).not.toContain("Персонаж");
     expect(JSON.stringify(summary)).not.toContain("ast_portrait");
+  });
+});
+
+
+describe("Yomifuda match contract", () => {
+  it.each([[90, 40, 20], [90, 90, 40], [90, 90, 90]])("preserves all winning seats for values %j", (...values) => {
+    const rules = fixture({ handSize: 1, revealSeconds: 0, attributes: [{ id: 'power', label: 'Сила' }],
+      cards: values.map((power, i) => ({ id: `c${i}`, name: `N${i}`, anime: 'A', values: { power } })) });
+    const config = presetDocument(yomifuda, { id: 'test', title: 'Test', description: '', config: { rules } });
+    const match = Match.start({ game: yomifuda, config, seats: 3, seed: 17, startedAt: 0 });
+    const winners: number[] = [];
+    for (let seat = 0; seat < 3; seat++) {
+      const cardId = (match.view(seat).game as ReturnType<typeof yomifuda.view>).hand[0].id;
+      if (rules.cards.find(c => c.id === cardId)!.values.power === 90) winners.push(seat);
+      expect(match.dispatch(seat, { type: 'play', round: 1, cardId }, 0)).toEqual({ ok: true });
+    }
+    for (let seat = 0; seat < 3; seat++) expect(match.dispatch(seat, { type: 'ready', round: 1 }, 1)).toEqual({ ok: true });
+    const view = match.view(null), game = view.game as ReturnType<typeof yomifuda.view>;
+    const result = { winners, draw: winners.length > 1, scores: [0, 1, 2].map(s => winners.includes(s) ? 1 : 0) };
+    expect(view.phase).toBe('finished');
+    expect(game.result).toMatchObject({ winners, draw: winners.length > 1 });
+    expect(view.result).toEqual(result);
+    expect(match.finalResult).toEqual(result);
+    expect(Match.restore({ game: yomifuda, config, record: match.record(), now: 10000 }).view(null)).toEqual(view);
+  });
+
+  it('rejects repeated decks in both document schema and validation and publishes the limit', () => {
+    const config = presetDocument(yomifuda, yomifuda.presets[0]);
+    expect(documentSchema(yomifuda).safeParse({ ...config, series: { rounds: 2 } }).success).toBe(false);
+    const result = validateConfig(createCatalog([yomifuda]), { ...config, series: { rounds: 2 } });
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({ path: 'series.rounds' }));
+    expect(describeGame(yomifuda).configSchema).toMatchObject({ properties: { series: { properties: { rounds: { const: 1 } } } } });
+    expect(documentSchema(yomifuda).parse({ ...config, series: {} }).series.rounds).toBe(1);
   });
 });

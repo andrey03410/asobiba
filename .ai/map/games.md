@@ -145,10 +145,13 @@
   Больше6 показателей допустимо по запросу. Персонажей/оценки готовит агент, без нормализации
   и равного бюджета; pool — метаданные подготовки по тройке Shikimori, minViewers2.
 - [`game.ts`](../../games/yomifuda/src/game.ts): один SDK-раунд = вся колода. Внутри
+  Только `series.rounds=1`, ограничение опубликовано и проверяется через SDK `seriesSchema`.
   `choose → reveal → review → choose|finished`. `play {round,cardId}` и `ready {round}`
   отвергают старый бой/повтор/чужую карту. Максимум активного values → сумма только между
   разделившими максимум → tiePoints0.5 каждому оставшемуся лидеру; одиночная победа1.
   Случайный добор до опустошения, потом доигрываются руки. 60/3/5 даёт20 боёв.
+  `roundResult` присуждает победу SDK каждому лидеру колоды (draw:false); итоговый
+  Match сохраняет тех же победителей и draw:true при совместной победе. Очки серии и боёв различаются.
 - `nextWakeAt/wake` держат раскрытие revealSeconds (default10), затем готовность всех.
   `choiceSeconds` — напоминание без автохода; обычный таймер SDK отключён игрой.
   no-repeat показателя по умолчанию, также independent/bag. Восстановление по журналу.
@@ -163,6 +166,8 @@
   [`arena-plan.ts`](../../games/yomifuda/src/client/arena-plan.ts) и
   [`DougaArena.tsx`](../../games/yomifuda/src/client/DougaArena.tsx) — настоящий douga-план
   из разрешённого view, lazy InteractivePlayer, синхронное долгое раскрытие, reduced motion/retry.
+  Нажатие своей карты открывает `CardInspection` с полным портретом/name/anime/version
+  без values; отдельное подтверждение, Escape/возврат фокуса, прокрутка длинных текстов.
   Статическое превью всегда из независимого demoRules, не из секретной пользовательской колоды.
 - Проверка: `npx vitest run games/yomifuda`; живой MCP/WS/PNG и браузерные peer-сессии —
   [`scripts/verify-yomifuda.mjs`](../../scripts/verify-yomifuda.mjs).

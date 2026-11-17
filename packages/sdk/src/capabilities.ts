@@ -7,7 +7,7 @@ import { gameInformation, type GameInformation, type TuningDirection } from "./i
 export const SDK_GUIDE = `Конфиг — JSON-документ { sdk, game, gameVersion, title, info?, rules, series, timer, visual }.
 - info — необязательное вступление автора: title до 80, text до 2000 символов; обычный текст, не правила.
 - rules — правила конкретной игры, детали описаны в configSchema и guide игры.
-- series — серия раундов: rounds, firstPlayer, stopWhenDecided. Общая для всех игр.
+- series — серия раундов: rounds, firstPlayer, stopWhenDecided. Игра может ограничить серию в configSchema и guide.
 - timer — таймер хода (только пошаговые игры): turnSeconds (0 — без таймера), onTimeout.
   Игра может задать свои часы и свою политику таймаута: тогда guide игры говорит, что из timer действует.
 - visual — тема и переопределения. Незаданные поля берутся из темы. Картинки можно класть

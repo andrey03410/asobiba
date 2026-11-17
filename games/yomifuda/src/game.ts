@@ -1,4 +1,4 @@
-import { actionError, defineGame, type GameContext, type RoundResult } from "@asobiba/sdk";
+import { actionError, defineGame, seriesSchema, type GameContext, type RoundResult } from "@asobiba/sdk";
 import { z } from "zod";
 import { YOMIFUDA_GUIDE } from "./guide";
 import { YOMIFUDA_INFO, YOMIFUDA_TUNING, summarizeYomifudaConfig } from "./information";
@@ -169,6 +169,10 @@ function view(s: YomifudaState, seat: number | null): YomifudaView {
 
 export const yomifuda = defineGame<YomifudaRules, YomifudaVisual, YomifudaState, YomifudaAction, YomifudaView>({
   id: "yomifuda", version: 1, title: "Ёмифуда", summary: "Тайные карты аниме-персонажей: выберите по сюжету и сравните скрытый показатель", kind: "turn",
+  seriesSchema: seriesSchema.unwrap().extend({
+    rounds: z.literal(1, { error: "В Ёмифуде одна колода на матч: series.rounds должно быть 1" }).default(1)
+      .meta({ description: "Только одна колода на матч: после финала раскрываются все оценки" }),
+  }).prefault({}),
   rulesSchema, visualSchema, actionSchema, info: YOMIFUDA_INFO, tuning: YOMIFUDA_TUNING,
   summarizeConfig: summarizeYomifudaConfig,
   seats: (rules) => ({ min: rules.players, max: rules.players }),
@@ -190,7 +194,10 @@ export const yomifuda = defineGame<YomifudaRules, YomifudaVisual, YomifudaState,
   applyAction,
   nextWakeAt: (s) => s.phase === "reveal" ? s.revealEndsAt : null,
   wake: (s, ctx) => s.phase === "reveal" && s.revealEndsAt !== null && ctx.now >= s.revealEndsAt ? { ...s, phase: "review" } : s,
-  roundResult: (s) => s.result,
+  // The game view uses draw for shared victory. SDK rounds use draw for no award:
+  // all explicit deck winners must receive a series win, even at full parity.
+  // Match then derives its final shared-victory flag from the awarded winners.
+  roundResult: (s) => s.result ? { ...s.result, draw: false } : null,
   view,
   presentRules: (r) => ({ players: r.players, handSize: r.handSize, deckSize: r.deckSize,
     attributes: r.attributes.map((a) => ({ ...a })), cards: [], scale: { ...r.scale },

@@ -43,7 +43,7 @@ export function documentSchema(game: AnyGame) {
         text: z.string().trim().max(2000).optional().meta({ title: "Текст вступления", description: "Обычный текст с абзацами, до 2000 символов. Не меняет системные правила" }),
       }).optional().meta({ title: "Вступление автора", description: "Необязательное обращение к друзьям. Обычный текст без вставок и медиа" }),
       rules: game.rulesSchema,
-      series: seriesSchema,
+      series: game.seriesSchema ?? seriesSchema,
       timer: timerSchema,
       visual: game.visualSchema,
     })

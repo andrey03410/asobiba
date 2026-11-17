@@ -21,6 +21,15 @@ it('keeps MCP authoring safe by default and uses original configs for by-id oper
   const safe = (data: unknown) => { expect(JSON.stringify(data)).not.toContain('saitama'); expect(JSON.stringify(data)).not.toContain('values'); };
   try {
     const config = presetDocument(yomifuda, yomifuda.presets[0]);
+    const repeated = { ...config, series: { ...config.series, rounds: 2 } };
+    const rejected = await call('config_validate', { config: repeated });
+    expect(rejected.json).toMatchObject({ ok: false, issues: [expect.objectContaining({ path: 'series.rounds' })] });
+    for (const name of ['config_save', 'lobby_create']) {
+      const invalid = await call(name, { config: repeated, ...(name === 'lobby_create' ? { name: 'Repeated deck' } : {}) });
+      expect(invalid.result.isError).toBe(true);
+      expect(invalid.json.error.code).toBe('invalid_config');
+    }
+    expect((await call('config_list', {})).json.configs).toEqual([]);
     const valid = await call('config_validate', { config });
     expect(valid.json).toMatchObject({ ok: true, secretsHidden: true }); safe(valid.json);
     // The readonly projection cannot replace the original document in config_save.

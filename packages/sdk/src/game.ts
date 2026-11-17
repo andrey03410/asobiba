@@ -1,3 +1,4 @@
+import type { SeriesSettings } from "./schema";
 import type { GameVideoSupport } from "./video";
 import type { ConfigDocument } from "./config";
 import type { AuthorInformation, ConfigSummary, GameInformation, TuningDirection } from "./info";
@@ -95,6 +96,8 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   /** Realtime only: simulation steps per second. */
   tickRate?: number;
 
+  /** Optional per-game restriction of the shared series contract, published in configSchema. */
+  seriesSchema?: z.ZodType<SeriesSettings>;
   rulesSchema: z.ZodType<R>;
   visualSchema: z.ZodType<V>;
   actionSchema: z.ZodType<A>;

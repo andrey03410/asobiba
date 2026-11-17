@@ -55,3 +55,36 @@ describe('Yomifuda safe lobby and media', () => {
     expect(await t.services.lobbies.canReadAsset(viewer.user.id, config.rules.cards[5].image!.asset)).toBe(true);
   });
 });
+
+
+it('publishes and persists the same joint winners as the game', async () => {
+  const players = await Promise.all(['host', 'second', 'third'].map(name => signUp(t, name)));
+  const config = presetDocument(yomifuda, yomifuda.presets[0]) as ConfigDocument<YomifudaRules>;
+  config.rules = { ...config.rules, handSize: 1, deckSize: 3, revealSeconds: 0,
+    attributes: [{ id: 'power', label: 'Сила' }], cards: [90, 90, 40].map((power, i) => ({ id: `c${i}`, name: `N${i}`, anime: 'A', values: { power } })) };
+  const lobby = await t.services.lobbies.create(players[0].user, { name: 'Joint winners', config });
+  for (const player of players.slice(1)) await t.services.lobbies.join(player.user, lobby.id, 'player');
+  const messages = new Map<string, ServerMessage[]>();
+  for (const player of players) {
+    messages.set(player.user.id, []);
+    await t.services.lobbies.subscribe({ userId: player.user.id, send: message => messages.get(player.user.id)!.push(message) }, lobby.id);
+  }
+  const snapshot = (id: string) => (messages.get(id)!.filter(m => m.type === 'match').at(-1) as Extract<ServerMessage, { type: 'match' }>).match!;
+  await t.services.lobbies.start(players[0].user, lobby.id);
+  const winners: number[] = [];
+  for (const player of players) {
+    const view = snapshot(player.user.id).game as YomifudaView;
+    if (view.hand[0].id !== 'c2') winners.push(view.seat!);
+    expect(await t.services.lobbies.action(player.user, lobby.id, { type: 'play', round: 1, cardId: view.hand[0].id })).toEqual({ ok: true });
+  }
+  for (const player of players) expect(await t.services.lobbies.action(player.user, lobby.id, { type: 'ready', round: 1 })).toEqual({ ok: true });
+  const expected = { winners: winners.sort(), draw: true, scores: [0, 1, 2].map(s => winners.includes(s) ? 1 : 0) };
+  for (const player of players) {
+    const view = snapshot(player.user.id);
+    expect(view).toMatchObject({ phase: 'finished', result: expected, game: { result: { winners: expected.winners } } });
+  }
+  const saved = await t.db.match.findFirstOrThrow({ where: { lobbyId: lobby.id } });
+  expect(saved.result).toEqual(expected);
+  await t.close(); t = await createTestApp();
+  expect(await t.services.lobbies.matchSummary(lobby.id)).toMatchObject({ phase: 'finished', result: expected });
+});

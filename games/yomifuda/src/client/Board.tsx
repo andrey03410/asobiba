@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { visualSchema, type YomifudaView } from '../index';
 import { displayedScores, palette, revealProgress } from './arena-plan';
 import { DougaArena } from './DougaArena';
+import { CardInspection } from './CardInspection';
 import { StaticBoard } from './StaticBoard';
 const number = (value: number) => value.toLocaleString('ru-RU');
 export function YomifudaSeatIcon({ size = 28, seat }: SeatIconProps) { return <span aria-hidden="true" style={{ width: size, height: size, borderRadius: '50%', background: '#36324d', color: '#e8dbff', display: 'inline-grid', placeItems: 'center', fontSize: size * .5 }}>{seat + 1}</span>; }
@@ -11,6 +12,7 @@ function LiveBoard({ match, config, seat, assetUrl, onAction, playerNames, clock
   const view = match.game as YomifudaView;
   const attributes = (config.rules as { attributes?: { id: string; label: string }[] }).attributes ?? [];
   const [selected, setSelected] = useState<string | null>(null);
+  const [cardInspection, setCardInspection] = useState(false);
   const [pending, setPending] = useState(false);
   const [now, setNow] = useState(() => Date.now() + clockOffset);
   const [reduced, setReduced] = useState(false);
@@ -22,8 +24,8 @@ function LiveBoard({ match, config, seat, assetUrl, onAction, playerNames, clock
   const visual = useMemo(() => { const parsed = visualSchema.parse(config.visual ?? {}); return { ...parsed, reducedMotion: parsed.reducedMotion || reduced }; }, [config.visual, reduced]);
   const colors = palette(visual.theme);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now() + clockOffset), 100); return () => window.clearInterval(timer); }, [clockOffset]);
-  useEffect(() => { setSelected(null); setPending(false); setInspect(false); }, [view.round, seat]);
-  useEffect(() => { setPending(false); if (!view.canPlay) setSelected(null); }, [view.canPlay, view.canReady, connected]);
+  useEffect(() => { setSelected(null); setPending(false); setInspect(false); setCardInspection(false); }, [view.round, seat]);
+  useEffect(() => { setPending(false); if (!view.canPlay) { setSelected(null); setCardInspection(false); } }, [view.canPlay, view.canReady, connected]);
   useEffect(() => { if (!pending) return; const timer = window.setTimeout(() => setPending(false), 2500); return () => window.clearTimeout(timer); }, [pending]);
   const progress = revealProgress(view, now);
   const hold = view.phase === 'reveal' && progress < .66;
@@ -49,7 +51,7 @@ function LiveBoard({ match, config, seat, assetUrl, onAction, playerNames, clock
         <div className="yf-finish"><strong>{view.result?.draw ? 'Победа поровну' : 'Победа!'} {view.result?.winners.map(s => playerNames?.[s] || `Игрок ${s + 1}`).join(', ')}</strong><button onClick={() => setInspect(!inspect)} aria-expanded={inspect}>{inspect ? 'Закрыть колоду' : 'Разбор колоды'}</button></div>
         {inspect && <div className="yf-deck-review" tabIndex={0}>{view.finalDeck?.map(card => <div key={card.id}><strong>{card.name}</strong><span>{card.anime}</span><span>{Object.entries(card.values).map(([id, v]) => `${attributes.find(a => a.id === id)?.label ?? id}: ${v}`).join(' · ')}</span></div>)}</div>}
       </> : <>
-        {seat !== null && view.hand.length > 0 && <div className="yf-hand" aria-label="Ваши карты">{view.hand.map(card => <button key={card.id} className={`yf-hand-card${selected === card.id ? ' yf-selected' : ''}`} aria-pressed={selected === card.id} disabled={!view.canPlay || !actionable} onClick={() => setSelected(card.id)} aria-label={`${card.name}. ${card.anime}${card.version ? `. ${card.version}` : ''}`}>
+        {seat !== null && view.hand.length > 0 && <div className="yf-hand" aria-label="Ваши карты">{view.hand.map(card => <button key={card.id} className={`yf-hand-card${selected === card.id ? ' yf-selected' : ''}`} aria-pressed={selected === card.id} aria-haspopup="dialog" onClick={() => { setSelected(card.id); setCardInspection(true); }} aria-label={`${card.name}. ${card.anime}${card.version ? `. ${card.version}` : ''}`}>
           <span className="yf-hand-art">{card.image ? <img src={assetUrl(card.image.asset)} alt="" onError={e => { e.currentTarget.style.display = 'none'; }} /> : null}<span aria-hidden="true">{card.name.slice(0, 1)}</span></span><span className="yf-hand-name">{card.name}</span><span className="yf-hand-anime">{card.anime}</span>
         </button>)}</div>}
         {chosen && <p className="yf-selection" title={`${chosen.name} · ${chosen.anime}${chosen.version ? ` · ${chosen.version}` : ''}`}>{chosen.name}{chosen.version ? ` · ${chosen.version}` : ''}</p>}
@@ -59,5 +61,9 @@ function LiveBoard({ match, config, seat, assetUrl, onAction, playerNames, clock
         {view.phase === 'choose' && view.choiceEndsAt !== null && now >= view.choiceEndsAt && !own?.played && seat !== null && <span className="yf-reminder">Вас ждут — выберите карту, когда будете готовы.</span>}
       </>}
     </footer>
+    {cardInspection && chosen && <CardInspection card={chosen} assetUrl={assetUrl} canConfirm={actionable && view.canPlay}
+      onClose={() => setCardInspection(false)} onConfirm={() => {
+        if (actionable && view.canPlay) { setCardInspection(false); send({ type: 'play', round: view.round, cardId: chosen.id }); }
+      }} />}
   </section>;
 }
