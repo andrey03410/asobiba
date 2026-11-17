@@ -13,9 +13,16 @@ describe('saved Yomifuda authoring', () => {
   });
   it('renders a summary without reading or exposing card identities and values', () => {
     const document = original(); document.rules.deckSize = 12;
+    document.rules.pool = { profiles: ['alpha-reader', 'beta-reader', 'gamma-reader'], minViewers: 3 };
+    document.rules.winPoints = 2.5; document.rules.tiePoints = 0.75;
     Object.defineProperty(document.rules, 'cards', { get() { throw new Error('Hidden cards read'); } });
     const html = renderToStaticMarkup(<YomifudaSummary document={document} saved />);
     expect(html).toContain('12 карт'); expect(html).toContain('Физическая сила');
     expect(html).not.toContain('Сайтама'); expect(html).not.toContain('textarea');
+    const text = html.replace(/<[^>]*>/g, '');
+    expect(text).toContain('alpha-reader, beta-reader, gamma-reader');
+    expect(text).toContain('Минимум просмотров: 3');
+    expect(text).toContain('Победа в бою: 2,5');
+    expect(text).toContain('Полный паритет: 0,75 каждому');
   });
 });

@@ -606,10 +606,16 @@ export function NewLobbyPage() {
 export function YomifudaSummary({ document, saved }: { document: unknown; saved: boolean }) {
   const rules = isPlainObject(document) && isPlainObject(document.rules) ? document.rules : {};
   const attributes = Array.isArray(rules.attributes) ? rules.attributes : [];
+  const pool = isPlainObject(rules.pool) ? rules.pool : {};
+  const profiles = Array.isArray(pool.profiles) ? pool.profiles.filter((profile): profile is string => typeof profile === "string") : [];
+  const points = (value: unknown) => typeof value === "number" ? value.toLocaleString("ru-RU") : "—";
   return <section aria-label="Сводка колоды Ёмифуды">
     <h2>{saved ? "Ваша колода" : "Учебная колода"}</h2>
     <p>{String(rules.players ?? "—")} игрока · {String(rules.deckSize ?? (Array.isArray(rules.cards) ? rules.cards.length : "—"))} карт · по {String(rules.handSize ?? "—")} в руке</p>
     <h3>Показатели</h3><p>{attributes.flatMap(a => isPlainObject(a) && typeof a.label === "string" ? [a.label] : []).join(" · ")}</p>
+    <h3>Условия колоды</h3>
+    <p>Профили: {profiles.join(", ") || "—"}<br />Минимум просмотров: {String(pool.minViewers ?? "—")} из {profiles.length} профилей</p>
+    <p>Победа в бою: {points(rules.winPoints)}<br />Полный паритет: {points(rules.tiePoints)} каждому</p>
     <p className="muted">Оценки откроются после того, как все поставят карты. Раскрытие длится {String(rules.revealSeconds ?? 10)} с.</p>
     <p className="muted">{saved ? "Лобби возьмёт сохранённую колоду. Её карты и оценки здесь скрыты." : "Открытый учебный набор для знакомства с игрой."} Для своей колоды попросите ИИ-агента собрать персонажей и сохранить конфиг через MCP.</p>
     <p className="muted small">Превью показывает независимую учебную партию.</p>
