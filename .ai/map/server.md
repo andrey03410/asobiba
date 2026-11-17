@@ -94,6 +94,23 @@ PNG-превью Jinchi использует staticRender SVG, основная 
 Проверка: `node --import tsx scripts/verify-jinchi-playtest.mjs`; режимы описаны в
 [verify08](../features/08-jinchi-playtest/verify.md).
 
+## Yomifuda: секретный конфиг и портреты
+
+`ConfigDto.secretsHidden` обозначает read-only проекцию: save/list/get/update и успешный
+публичный validate возвращают cards:[], deckSize и открытые параметры. `UserValidation`
+тоже помечает secretsHidden. Такая проекция не является исходником для сохранения.
+`validateOriginal`/`requireValid` и `getOriginal` — внутренние owner-scoped пути для исполнения;
+MCP by-id и LobbyService.create читают оригинал, DTO/WS продолжают скрывать его.
+
+`GET /api/configs/:id?revealSecrets=true` и MCP config_get с явным boolean-флагом открывают
+оригинал только владельцу. Без флага он закрыт и владельцу; false не раскрывает. Автоматически
+сайт за полной колодой не ходит. Остальные игры сохраняют прежний авторский доступ.
+
+`yomifudaMediaRefs` в [`games/media-refs.ts`](../../apps/server/src/games/media-refs.ts)
+читает image только своей руки, открытых table и finished finalDeck. Известный id чужой
+скрытой карты не разрешает её файл. MIME image/* проверяется по rules.cards[n].image.asset;
+приватный оригинал и raw state нельзя обходить ради ACL или превью.
+
 ## Грабли
 
 - **Клиент базы.** Prisma 7 ходит в SQLite через адаптер `better-sqlite3`, обёрнутый в `sqliteAdapter` ([`sqlite.ts`](../../apps/server/src/sqlite.ts)):

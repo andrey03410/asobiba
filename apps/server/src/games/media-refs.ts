@@ -1,3 +1,4 @@
+import type { YomifudaView } from "@asobiba/game-yomifuda";
 import { collectAssetRefs } from "@asobiba/sdk";
 
 /** Only renderer-owned media containers. Answers can contain arbitrary field IDs,
@@ -15,4 +16,16 @@ export function quizorMediaRefs(view: unknown) {
   // rather than scanning rules, arbitrary view data or unknown visual properties.
   const roundVisual = typeof background === "string" ? { background: { asset: background } } : undefined;
   return collectAssetRefs({ visual: { blocks: shown.blocks, preload: shown.preload, fields: shown.fields, reveal: shown.reveal, history, roundVisual } });
+}
+
+/** Whitelist only card image slots of the viewer-safe projection, never rules or raw state. */
+export function yomifudaMediaRefs(view: unknown) {
+  if (!view || typeof view !== "object") return [];
+  const shown = view as Partial<YomifudaView>;
+  const cards = [
+    ...(shown.hand ?? []),
+    ...(shown.table ?? []).flatMap(item => item.hidden === false ? [item.card] : []),
+    ...(shown.phase === "finished" ? shown.finalDeck ?? [] : []),
+  ];
+  return collectAssetRefs({ visual: { images: cards.map(card => card.image) } });
 }

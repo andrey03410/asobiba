@@ -6,6 +6,8 @@ import { jinchi } from "@asobiba/game-jinchi";
 import { jinchiClient } from "@asobiba/game-jinchi/client";
 import { russkoePole } from "@asobiba/game-russkoe-pole";
 import { russkoePoleClient } from "@asobiba/game-russkoe-pole/client";
+import { yomifuda } from "@asobiba/game-yomifuda";
+import { yomifudaClient } from "@asobiba/game-yomifuda/client";
 import { quizor } from "@asobiba/game-quizor";
 import { quizorClient } from "@asobiba/game-quizor/client";
 import { ticTacToe } from "@asobiba/game-tic-tac-toe";
@@ -15,13 +17,14 @@ import type { ComponentType } from "react";
 
 export type WebGameClient = GameClient<ComponentType<BoardProps>, ComponentType<SeatIconProps>>;
 
-const definitions: AnyGame[] = [ticTacToe, jinchi, russkoePole, quizor];
+const definitions: AnyGame[] = [ticTacToe, jinchi, russkoePole, quizor, yomifuda];
 
 export const gameClients: Record<string, WebGameClient> = {
   [ticTacToeClient.gameId]: ticTacToeClient,
   [jinchiClient.gameId]: jinchiClient,
   [russkoePoleClient.gameId]: russkoePoleClient,
   [quizorClient.gameId]: quizorClient,
+  [yomifudaClient.gameId]: yomifudaClient,
 };
 
 /** Catalog for local validation in the browser; the server validates again. */

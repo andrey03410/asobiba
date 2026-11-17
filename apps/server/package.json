@@ -25,6 +25,7 @@
     "@asobiba/game-jinchi": "*",
     "@asobiba/game-russkoe-pole": "*",
     "@asobiba/game-quizor": "*",
+    "@asobiba/game-yomifuda": "*",
     "@douga/video": "file:../../../douga/packages/video",
     "@douga/node": "file:../../../douga/packages/node",
     "@douga/render": "file:../../../douga/packages/render",

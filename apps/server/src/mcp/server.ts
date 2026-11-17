@@ -38,13 +38,13 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
   const server = new McpServer({ name: "asobiba", version: "0.1.0" }, { instructions: MCP_INSTRUCTIONS });
 
   const validated = async (config: unknown) => {
-    const res = await s.configs.validate(user.id, config);
+    const res = await s.configs.validateOriginal(user.id, config);
     if (!res.ok) throw new HttpError(422, "invalid_config", "Конфиг не прошёл проверку — сначала исправьте его (config_validate)", res.issues);
     return res;
   };
   const configSource = async ({ config, configId }: { config?: unknown; configId?: string }) => {
     if ((config !== undefined) === (configId !== undefined)) throw badRequest('config_source', 'Передайте ровно одно: config или свой configId');
-    return configId !== undefined ? (await s.configs.get(user.id, configId)).document : config;
+    return configId !== undefined ? (await s.configs.getOriginal(user.id, configId)).document : config;
   };
   const referenceFields = { config: configArg.optional(), configId: z.string().min(1).max(80).optional().describe('Свой сохранённый конфиг; вместо config, удобно для большой карты') };
 
@@ -88,13 +88,13 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "config_validate",
     {
       title: "Проверить конфиг",
-      description: "Проверяет конфиг и картинки. Возвращает нормализованный конфиг и безопасную системную сводку summary или issues с path, message, hint. Авторское info не меняет правила.",
+      description: "Проверяет конфиг и картинки; summary или issues с path, message, hint. Ёмифуда: secretsHidden:true, config — read-only сводка с cards:[], её нельзя сохранять или запускать. Сохраните подготовленный исходный config через config_save, далее используйте configId. Для правки сохранённой колоды получите оригинал через config_get с явным revealSecrets:true. Другие игры возвращают нормализованный config.",
       inputSchema: referenceFields,
       annotations: { readOnlyHint: true },
     },
     (args) => run(async () => {
       const checked = await s.configs.validate(user.id, await configSource(args));
-      return json(args.configId && checked.ok ? { ok: true, configId: args.configId, summary: checked.summary, issues: checked.issues } : checked);
+      return json(args.configId && checked.ok ? { ok: true, configId: args.configId, ...(checked.secretsHidden ? { secretsHidden: true } : {}), summary: checked.summary, issues: checked.issues } : checked);
     }),
   );
 
@@ -201,8 +201,8 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
 
   server.registerTool(
     "config_get",
-    { title: "Конфиг", description: "Сохранённый конфиг целиком.", inputSchema: { configId: z.string() }, annotations: { readOnlyHint: true } },
-    ({ configId }) => run(async () => json({ config: await s.configs.get(user.id, configId) })),
+    { title: "Конфиг", description: "Свой сохранённый конфиг. Ёмифуда скрывает колоду; revealSecrets:true явно открывает оригинал только автору.", inputSchema: { configId: z.string(), revealSecrets: z.boolean().optional() }, annotations: { readOnlyHint: true } },
+    ({ configId, revealSecrets }) => run(async () => json({ config: await s.configs.get(user.id, configId, { revealSecrets }) })),
   );
 
   server.registerTool(

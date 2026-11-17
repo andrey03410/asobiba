@@ -74,6 +74,23 @@
 - **Сайт.** Кабинет → «Картинки» → раздел «Ролики douga» ([`VideoSnapshots.tsx`](../../apps/web/src/pages/account/VideoSnapshots.tsx));
   значок «видео» у конфига и лобби.
 
+## Встроенная арена Yomifuda
+
+Снимки Quizor и их ACL остаются прежними. Yomifuda использует второй путь: встроенный
+версионированный шаблон из безопасного view → createVideoDocument/compileVideo → тот же
+InteractivePlayer/StudioVideo douga. Личные карты и управление находятся вне кадра в React.
+Это не импортированный снимок, не GameVideoSupport.directives и не новый рендерер эффектов;
+его медиа — обычный пул картинок Asobiba с персональным ACL.
+
+Шаблон в [`arena-plan.ts`](../../games/yomifuda/src/client/arena-plan.ts) не читает rules.cards,
+чужую руку или finalDeck. startedAt берётся из серверных времён боя, reconnect/готовность не
+перематывают раскрытие. Важная ловушка custom nodes: DEFAULT_SETTINGS.card имеет непрозрачный
+фон и рамку wrapper; для декоративных shapes/text явно задаются background:transparent,
+borderWidth0, gradient/shadow:null и очищаются formatSettings, иначе рамка победителя закроет карту.
+
+На dev exclude zod из optimizeDeps сохраняет разные версии SDK и linked douga; при сборке
+разрешение пакетов также должно учитывать их собственные зависимости.
+
 ## Грабли
 
 - Версия Remotion в asobiba должна совпадать с douga, иначе импорт отказывает.

@@ -111,6 +111,8 @@ export interface GameResponse {
 
 // ---------- configs ----------
 export interface ConfigDto {
+  /** Yomifuda safe projection: cards are hidden; use configId for execution. */
+  secretsHidden?: boolean;
   id: string;
   gameId: string;
   title: string;
@@ -120,6 +122,8 @@ export interface ConfigDto {
 }
 /** POST /api/configs/validate { config } → ValidateResponse (always 200) */
 export interface ValidateResponse {
+  /** True means config is a readonly safe projection; save the prepared original or use configId. */
+  secretsHidden?: boolean;
   ok: boolean;
   config: ConfigDocument | null;
   issues: ConfigIssue[];

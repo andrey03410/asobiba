@@ -1,3 +1,5 @@
+import { yomifuda, type YomifudaView } from '@asobiba/game-yomifuda';
+import { Match, presetDocument } from '@asobiba/sdk';
 import type { LobbyDto } from "@asobiba/api";
 import type { BoardProps, ConfigDocument, MatchView } from "@asobiba/sdk";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -171,4 +173,25 @@ describe("MatchStage", () => {
     );
     expect(won).toContain("Победа: Боря");
   });
+});
+
+
+it('names the actual shared Yomifuda winners in the common final dialog', () => {
+  const config = presetDocument(yomifuda, { id: 'test', title: 'Test', description: '', config: { rules: {
+    players: 3, handSize: 1, revealSeconds: 0, attributes: [{ id: 'power', label: 'Сила' }],
+    cards: [90, 90, 40].map((power, i) => ({ id: `c${i}`, name: `N${i}`, anime: 'A', values: { power } })),
+  } } });
+  const match = Match.start({ game: yomifuda, config, seats: 3, seed: 17, startedAt: 0 });
+  const winners: number[] = [];
+  for (let seat = 0; seat < 3; seat++) {
+    const cardId = (match.view(seat).game as YomifudaView).hand[0].id;
+    if (cardId !== 'c2') winners.push(seat);
+    match.dispatch(seat, { type: 'play', round: 1, cardId }, 0);
+  }
+  for (let seat = 0; seat < 3; seat++) match.dispatch(seat, { type: 'ready', round: 1 }, 1);
+  const html = renderToStaticMarkup(<MatchStage lobby={lobby} match={match.view(0)} config={config} client={client} mySeat={0} seatName={seat => `Person${seat}`} clockOffset={0} online onLeave={() => {}} busy={false} drawer={null} />);
+  const heading = html.match(/<h2>(.*?)<\/h2>/)?.[1];
+  expect(heading).toContain('Победу делят');
+  for (const seat of winners) expect(heading).toContain(`Person${seat}`);
+  expect(heading).not.toContain(`Person${[0, 1, 2].find(s => !winners.includes(s))}`);
 });

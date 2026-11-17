@@ -10,6 +10,9 @@ const douga = fileURLToPath(new URL("../../../douga/packages", import.meta.url))
 
 export default defineConfig({
   plugins: [react()],
+  // The linked Douga SDK uses Zod 3, while Asobiba uses Zod 4. Optimizing
+  // both bare imports under one key would feed Zod 4 to Douga at runtime.
+  optimizeDeps: { exclude: ["zod"] },
   resolve: {
     dedupe: ["react", "react-dom", "remotion", "@remotion/player"],
   },

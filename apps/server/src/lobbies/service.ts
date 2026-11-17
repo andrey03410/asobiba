@@ -4,7 +4,7 @@ import type { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
 import type { Db } from "../db";
 import type { Env } from "../env";
-import { quizorMediaRefs } from "../games/media-refs";
+import { quizorMediaRefs, yomifudaMediaRefs } from "../games/media-refs";
 import { badRequest, conflict, forbidden, notFound } from "../http-errors";
 import { newId, randomSeed } from "../ids";
 
@@ -214,11 +214,12 @@ export class LobbyService {
       const config = row.config as unknown as ConfigDocument;
       const safeConfig = this.shownConfig(config);
       if (collectAssetRefs(safeConfig).some(ref => ref.assetId === assetId)) return true;
-      if (config.game !== "quizor") continue;
+      if (config.game !== "quizor" && config.game !== "yomifuda") continue;
       const room = await this.room(row.id);
       // Presenter secrets are deliberately excluded: a known future file stays closed.
       const view = room.match?.view(this.viewerSeat(room, userId));
-      if (view && quizorMediaRefs(view.game).some(ref => ref.assetId === assetId)) return true;
+      const refs = view ? (config.game === "yomifuda" ? yomifudaMediaRefs(view.game) : quizorMediaRefs(view.game)) : [];
+      if (refs.some(ref => ref.assetId === assetId)) return true;
     }
     return false;
   }
@@ -289,7 +290,7 @@ export class LobbyService {
   async create(user: UserDto, req: CreateLobbyRequest): Promise<LobbyDto> {
     if (user.role === "guest") throw forbidden("Создать лобби можно только с аккаунтом");
     let input: unknown = req.config;
-    if (req.configId) input = (await this.deps.configs.get(user.id, req.configId)).document;
+    if (req.configId) input = (await this.deps.configs.getOriginal(user.id, req.configId)).document;
     if (input === undefined) throw badRequest("no_config", "Нужен configId или config");
     const config = await this.deps.configs.requireValid(user.id, input);
     const { max } = this.seatsOf(config);

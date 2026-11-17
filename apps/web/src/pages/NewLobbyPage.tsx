@@ -177,14 +177,12 @@ export function NewLobbyPage() {
   const confirmDiscard = () =>
     !dirty || window.confirm("Правки текущего конфига пропадут. Продолжить?");
 
+  const hiddenSaved = gameId === "yomifuda" && source?.kind === "config";
   const localCheck = gameId !== null && catalog.get(gameId) !== undefined;
   const deferredDoc = useDeferredValue(doc);
-  const result = useMemo(
-    () =>
-      deferredDoc === null || !localCheck
-        ? null
-        : validateConfig(catalog, deferredDoc),
-    [deferredDoc, localCheck],
+  const { result, ok } = useMemo(
+    () => checkLobbyDocument(deferredDoc, gameId, hiddenSaved),
+    [deferredDoc, gameId, hiddenSaved],
   );
   const [lastValid, setLastValid] = useState<ConfigDocument | null>(null);
   useEffect(() => {
@@ -196,7 +194,6 @@ export function NewLobbyPage() {
     const parsed = jinchiRulesSchema.safeParse(doc.rules);
     return parsed.success ? parsed.data : undefined;
   }, [gameId, doc]);
-  const ok = localCheck ? result?.ok === true : doc !== null;
 
   const docTitle =
     isPlainObject(doc) && typeof doc.title === "string" && doc.title.trim()
@@ -374,7 +371,9 @@ export function NewLobbyPage() {
           <section
             className={`card create-editor${gameId === "jinchi" ? " create-editor-jinchi" : ""}`}
           >
-            {gameId === "quizor" ? (
+            {gameId === "yomifuda" ? (
+              <YomifudaSummary document={doc} saved={hiddenSaved} />
+            ) : gameId === "quizor" ? (
               <>
                 <QuizSummary rules={isPlainObject(doc) ? doc.rules : null} />
                 <AuthorInformationFields value={isPlainObject(doc) ? doc.info : undefined} onChange={(info) => {
@@ -482,7 +481,7 @@ export function NewLobbyPage() {
             </section>}
             <section className="card preview-card">
               <div className="preview-head">
-                <h2>Превью</h2>
+                <h2>{gameId === "yomifuda" ? "Учебный пример" : "Превью"}</h2>
                 <div
                   className="segmented"
                   role="group"
@@ -519,10 +518,10 @@ export function NewLobbyPage() {
                   Сайт пока не умеет рисовать и проверять эту игру — конфиг
                   проверит сервер при создании.
                 </div>
-              ) : lastValid ? (
+              ) : hiddenSaved || lastValid ? (
                 <>
                   <ConfigPreview
-                    config={lastValid}
+                    config={hiddenSaved ? doc as ConfigDocument : lastValid!}
                     moment={moment}
                     seed={seed}
                   />
@@ -601,4 +600,31 @@ export function NewLobbyPage() {
       )}
     </div>
   );
+}
+
+/** Read-only overview: the projected saved deck cannot be edited or validated as an original. */
+export function YomifudaSummary({ document, saved }: { document: unknown; saved: boolean }) {
+  const rules = isPlainObject(document) && isPlainObject(document.rules) ? document.rules : {};
+  const attributes = Array.isArray(rules.attributes) ? rules.attributes : [];
+  const pool = isPlainObject(rules.pool) ? rules.pool : {};
+  const profiles = Array.isArray(pool.profiles) ? pool.profiles.filter((profile): profile is string => typeof profile === "string") : [];
+  const points = (value: unknown) => typeof value === "number" ? value.toLocaleString("ru-RU") : "—";
+  return <section aria-label="Сводка колоды Ёмифуды">
+    <h2>{saved ? "Ваша колода" : "Учебная колода"}</h2>
+    <p>{String(rules.players ?? "—")} игрока · {String(rules.deckSize ?? (Array.isArray(rules.cards) ? rules.cards.length : "—"))} карт · по {String(rules.handSize ?? "—")} в руке</p>
+    <h3>Показатели</h3><p>{attributes.flatMap(a => isPlainObject(a) && typeof a.label === "string" ? [a.label] : []).join(" · ")}</p>
+    <h3>Условия колоды</h3>
+    <p>Профили: {profiles.join(", ") || "—"}<br />Минимум просмотров: {String(pool.minViewers ?? "—")} из {profiles.length} профилей</p>
+    <p>Победа в бою: {points(rules.winPoints)}<br />Полный паритет: {points(rules.tiePoints)} каждому</p>
+    <p className="muted">Оценки откроются после того, как все поставят карты. Раскрытие длится {String(rules.revealSeconds ?? 10)} с.</p>
+    <p className="muted">{saved ? "Лобби возьмёт сохранённую колоду. Её карты и оценки здесь скрыты." : "Открытый учебный набор для знакомства с игрой."} Для своей колоды попросите ИИ-агента собрать персонажей и сохранить конфиг через MCP.</p>
+    <p className="muted small">Превью показывает независимую учебную партию.</p>
+  </section>;
+}
+
+export function checkLobbyDocument(doc: unknown, gameId: string | null, hiddenSaved: boolean): { result: ReturnType<typeof validateConfig> | null; ok: boolean } {
+  if (doc === null) return { result: null, ok: false };
+  if ((gameId === "yomifuda" && hiddenSaved) || gameId === null || !catalog.get(gameId)) return { result: null, ok: true };
+  const result = validateConfig(catalog, doc);
+  return { result, ok: result.ok };
 }

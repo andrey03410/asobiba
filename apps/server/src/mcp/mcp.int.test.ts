@@ -62,7 +62,7 @@ describe("MCP over Streamable HTTP", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     expect(res.status).toBe(401);
-    expect(MCP_INSTRUCTIONS.length).toBeLessThan(3072);
+    expect(Buffer.byteLength(MCP_INSTRUCTIONS, "utf8")).toBeLessThan(3072);
   });
 
   it("walks the agent recipe from capabilities to a lobby", async () => {
