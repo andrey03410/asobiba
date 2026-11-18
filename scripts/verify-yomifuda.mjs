@@ -493,20 +493,18 @@ try {
       (await call("config_validate", { config: repeatedDeck })).json.ok,
       false,
     );
-    for (const name of ["config_save", "lobby_create"]) {
+    const invalid = (await call("config_save", { config: repeatedDeck })).json.config;
+    assert.equal(invalid.validationStatus, "invalid", "Saved repeated deck must be marked invalid");
+    assert.equal(invalid.document.rules, null, "Invalid stored rules must remain private");
+    for (const source of [{ config: repeatedDeck }, { configId: invalid.id }]) {
       const result = await client.callTool({
-        name,
-        arguments: {
-          config: repeatedDeck,
-          ...(name === "lobby_create"
-            ? { name: "Rejected repeated deck" }
-            : {}),
-        },
+        name: "lobby_create",
+        arguments: source,
       });
       assert.equal(
         result.isError,
         true,
-        `${name} must reject repeated revealed decks`,
+        "Lobby creation must reject repeated revealed decks",
       );
     }
     const fractional = fixture(6, 2);
