@@ -30,6 +30,41 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 }
 
 describe("MCP over Streamable HTTP", () => {
+  it("lets an agent repair, rename and copy owned configurations", async () => {
+    const owner = await signUp(t, "owner");
+    const other = await signUp(t, "other");
+    const client = await connect((await t.services.auth.createToken(owner.user.id, "Редактор")).secret);
+    try {
+      const config = { sdk: 1, game: "tic-tac-toe", gameVersion: 1, title: "Исходный заголовок" };
+      const draft = await call(client, "config_save", { config: { game: "unknown-game" }, name: "Рабочий сценарий" });
+      expect(draft.isError).toBe(false);
+      const configId = draft.json.config.id;
+      expect(draft.json.config).toMatchObject({ title: "Рабочий сценарий", validationStatus: "invalid" });
+      expect((await call(client, "lobby_create", { configId })).json.error.code).toBe("invalid_config");
+      const repaired = await call(client, "config_save", { configId, config });
+      expect(repaired.json.config).toMatchObject({ id: configId, title: "Рабочий сценарий", validationStatus: "valid", document: config });
+      expect((await call(client, "config_save", { configId, name: "Новое имя" })).json.config).toMatchObject({ id: configId, title: "Новое имя", document: config });
+      for (const args of [{}, { configId, config }]) {
+        expect((await call(client, "lobby_create", args)).json.error.code).toBe("config_source");
+      }
+      const created = await call(client, "lobby_create", { configId });
+      expect(created.json.lobby.name).toBe(config.title);
+      const lobbyId = created.json.lobby.id;
+      const copy = await call(client, "config_save", { lobbyId, name: "Снимок" });
+      expect(copy.json.config).toMatchObject({ title: "Снимок", validationStatus: "valid", document: { title: config.title, rules: expect.any(Object) } });
+      expect(copy.json.config.id).not.toBe(configId);
+      for (const args of [{ lobbyId }, { config, lobbyId, name: "X" }, { configId, lobbyId, name: "X" }, { configId }, { name: "X" }]) {
+        expect((await call(client, "config_save", args)).isError).toBe(true);
+      }
+      const foreign = await t.services.lobbies.create(other.user, { config });
+      expect((await call(client, "config_save", { lobbyId: foreign.id, name: "Чужой снимок" })).json.error.code).toBe("forbidden");
+      const listed = (await call(client, "config_list")).json.configs;
+      expect(listed).toHaveLength(2);
+      expect(listed[0]).not.toHaveProperty("document");
+      expect(listed[0]).not.toHaveProperty("issues");
+    } finally { await client.close(); }
+  });
+
   it("freezes a full uploaded WAV duration through the real agent recipe", async () => {
     const owner = await signUp(t, "owner");
     const { secret } = await t.services.auth.createToken(owner.user.id, "Media timing");
@@ -47,7 +82,10 @@ describe("MCP over Streamable HTTP", () => {
       expect(valid.json.config.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
       const saved = await call(client, "config_save", { config });
       expect(saved.isError).toBe(false);
-      expect(saved.json.config.document.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBe(12.5);
+      expect(saved.json.config).toMatchObject({ secretsHidden: true, validationStatus: "valid" });
+      expect(saved.json.config.document.rules.rounds[0].questions).toEqual([]);
+      const original = await call(client, "config_get", { configId: saved.json.config.id, revealSecrets: true });
+      expect(original.json.config.document).toEqual(config);
       const lobby = await call(client, "lobby_create", { name: "Timed audio", configId: saved.json.config.id });
       expect(lobby.isError).toBe(false);
       const frozen = await t.db.lobby.findUniqueOrThrow({ where: { id: lobby.json.lobby.id } });

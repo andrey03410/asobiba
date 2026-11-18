@@ -35,7 +35,7 @@ describe("round background disclosure", () => {
 });
 
 describe("frozen full-media timing", () => {
-  it("normalizes owned WAV/video duration through groups, intro, questions and reveal before save/lobby", async () => {
+  it("keeps original media settings in the library and normalizes them in the lobby snapshot", async () => {
     const host = await signUp(t, "host");
     const sound = await t.services.assets.save(host.user.id, { body: wavSeconds(60), source: "upload" });
     const video = await t.services.assets.save(host.user.id, { body: await readFile(join(import.meta.dirname, "../assets/fixtures/blank-2s.mp4")), source: "upload" });
@@ -44,16 +44,17 @@ describe("frozen full-media timing", () => {
     config.rules.rounds[0].questions[0].blocks = [{ type: "video", asset: video.id }, { type: "audio", asset: sound.id, durationSeconds: 7 }, { type: "audio", asset: sound.id, from: 2, to: 4 }];
     config.rules.rounds[0].questions[0].reveal = [{ type: "audio", asset: sound.id }];
     const saved = await t.services.configs.save(host.user.id, config);
-    const normalized = saved.document as ConfigDocument<QuizorRules, QuizorVisual>;
+    expect(saved.validationStatus).toBe("valid");
+    expect((await t.services.configs.get(host.user.id, saved.id, { revealSecrets: true })).document).toEqual(config);
+    const lobby = await t.services.lobbies.create(host.user, { name: "Frozen timing", configId: saved.id });
+    const frozen = await t.db.lobby.findUniqueOrThrow({ where: { id: lobby.id } });
+    const normalized = frozen.config as unknown as ConfigDocument<QuizorRules, QuizorVisual>;
     expect(normalized.rules.rounds[0].intro[0].blocks?.[0].durationSeconds).toBe(75);
     expect(normalized.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBeCloseTo(2, 5);
     expect(normalized.rules.rounds[0].questions[0].blocks[1].durationSeconds).toBe(7);
     expect(normalized.rules.rounds[0].questions[0].blocks[2].durationSeconds).toBeUndefined();
     expect(normalized.rules.rounds[0].questions[0].reveal[0].durationSeconds).toBe(60);
     expect(config.rules.rounds[0].questions[0].blocks[0].durationSeconds).toBeUndefined();
-    const lobby = await t.services.lobbies.create(host.user, { name: "Frozen timing", configId: saved.id });
-    const frozen = await t.db.lobby.findUniqueOrThrow({ where: { id: lobby.id } });
-    expect((frozen.config as unknown as ConfigDocument<QuizorRules>).rules.rounds[0].questions[0].blocks[0].durationSeconds).toBeCloseTo(2, 5);
   });
 
   it("requires explicit duration/to when a structurally identified video has no trustworthy duration", async () => {

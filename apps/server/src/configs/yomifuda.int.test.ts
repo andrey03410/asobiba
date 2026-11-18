@@ -7,7 +7,7 @@ import { ConfigService } from './service';
 
 let t: TestApp, owner: TestUser, other: TestUser, configs: ConfigService;
 const document = () => presetDocument(yomifuda, yomifuda.presets[0]) as ConfigDocument<YomifudaRules>;
-function hidden(config: ConfigDocument) {
+function hidden(config: { rules?: unknown }) {
   expect(config.rules).toMatchObject({ cards: [], deckSize: 12, players: 3 });
   expect(JSON.stringify(config)).not.toContain('saitama');
   expect(JSON.stringify(config)).not.toContain('values');
@@ -24,11 +24,10 @@ describe('Yomifuda secret config boundary', () => {
     const source = document();
     const saved = await configs.save(owner.user.id, source);
     expect(saved).toMatchObject({ secretsHidden: true }); hidden(saved.document);
-    const listed = await configs.list(owner.user.id); hidden(listed[0].document);
+    const listed = await configs.list(owner.user.id); expect(listed[0]).not.toHaveProperty('document');
     hidden((await configs.get(owner.user.id, saved.id)).document);
     const original = await configs.getOriginal(owner.user.id, saved.id);
-    expect(original.document.rules).toEqual(source.rules);
-    expect(original.secretsHidden).not.toBe(true);
+    expect(original).toEqual(source);
     const explicit = await configs.get(owner.user.id, saved.id, { revealSecrets: true });
     expect(explicit.document.rules).toEqual(source.rules);
     await expect(configs.getOriginal(other.user.id, saved.id)).rejects.toMatchObject({ status: 404 });
@@ -40,7 +39,7 @@ describe('Yomifuda secret config boundary', () => {
     const source = document(); const checked = await configs.validate(owner.user.id, source);
     expect(checked).toMatchObject({ ok: true, secretsHidden: true }); if (!checked.ok) throw new Error('invalid fixture');
     hidden(checked.config); expect(source.rules.cards).toHaveLength(12);
-    expect((await configs.requireValid(owner.user.id, source)).rules).toEqual(source.rules);
+    expect((await configs.requireValid(owner.user.id, { config: source })).rules).toEqual(source.rules);
   });
 
   it.each(['audio', 'video'] as const)('rejects %s in a card image at the exact asset path', async (kind) => {
@@ -65,7 +64,7 @@ describe('Yomifuda secret config boundary', () => {
     const saved = await request('POST', '/api/configs', document());
     expect(saved.statusCode).toBe(201); hidden(saved.json().config.document);
     const id = saved.json().config.id;
-    hidden((await request('GET', '/api/configs')).json().configs[0].document);
+    expect((await request('GET', '/api/configs')).json().configs[0]).not.toHaveProperty('document');
     hidden((await request('GET', `/api/configs/${id}`)).json().config.document);
     hidden((await request('GET', `/api/configs/${id}?revealSecrets=false`)).json().config.document);
     const original = await request('GET', `/api/configs/${id}?revealSecrets=true`);
@@ -78,15 +77,14 @@ describe('Yomifuda secret config boundary', () => {
 });
 
 
-it('rejects repeated decks at HTTP validate/save/create, including existing saved originals', async () => {
+it('keeps a repeated deck as an invalid draft and rejects it at validation and creation', async () => {
   const config = document(); config.series.rounds = 2;
   const request = (url: string, payload: Record<string, unknown>) => t.app.inject({ method: 'POST', url, headers: { cookie: owner.cookie }, payload });
   const checked = await request('/api/configs/validate', { config });
   expect(checked.json()).toMatchObject({ ok: false, issues: [expect.objectContaining({ path: 'series.rounds' })] });
-  expect((await request('/api/configs', { config })).statusCode).toBe(422);
+  const draft = await request('/api/configs', { config });
+  expect(draft.statusCode).toBe(201);
+  expect(draft.json().config).toMatchObject({ validationStatus: 'invalid', secretsHidden: true, document: { rules: null } });
   expect((await request('/api/lobbies', { config, name: 'Repeated deck' })).statusCode).toBe(422);
-  expect(await configs.list(owner.user.id)).toEqual([]);
-  const saved = await configs.save(owner.user.id, document());
-  await t.db.gameConfig.update({ where: { id: saved.id }, data: { document: JSON.parse(JSON.stringify(config)) } });
-  expect((await request('/api/lobbies', { configId: saved.id, name: 'Legacy repeated deck' })).statusCode).toBe(422);
+  expect((await request('/api/lobbies', { configId: draft.json().config.id, name: 'Repeated deck draft' })).statusCode).toBe(422);
 });

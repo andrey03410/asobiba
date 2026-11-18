@@ -2,7 +2,7 @@
  * HTTP and WebSocket contract between apps/server and apps/web. Types only.
  * Errors: non-2xx responses carry `ApiError`.
  */
-import type { ConfigDocument, ConfigInformation, ConfigIssue, ConfigSummary, GameCapabilities, GameSummary, MatchView, Seat } from "@asobiba/sdk";
+import type { ConfigDocument, ConfigInformation, ConfigIssue, ConfigSummary, GameCapabilities, GameGuide, GameSummary, MatchView, Seat } from "@asobiba/sdk";
 
 export interface ApiError {
   error: { code: string; message: string };
@@ -108,17 +108,27 @@ export interface GamesResponse {
 export interface GameResponse {
   game: GameCapabilities;
 }
+/** GET /api/games/:id/guide → { guide } */
+export interface GameGuideResponse {
+  guide: GameGuide;
+}
 
 // ---------- configs ----------
-export interface ConfigDto {
-  /** Yomifuda safe projection: cards are hidden; use configId for execution. */
-  secretsHidden?: boolean;
+export type ConfigValidationStatus = "valid" | "invalid" | "unavailable";
+
+export interface ConfigListItem {
   id: string;
   gameId: string;
   title: string;
-  document: ConfigDocument;
   createdAt: string;
   updatedAt: string;
+  validationStatus: ConfigValidationStatus;
+}
+export interface ConfigDto extends ConfigListItem {
+  /** The original JSON is available to the owner with revealSecrets=true. */
+  document: Record<string, unknown>;
+  issues: ConfigIssue[];
+  secretsHidden?: boolean;
 }
 /** POST /api/configs/validate { config } → ValidateResponse (always 200) */
 export interface ValidateResponse {
@@ -132,12 +142,14 @@ export interface ValidateResponse {
 }
 /**
  * GET /api/configs → { configs }
- * POST /api/configs { config } → 201 { config: ConfigDto } | 422 ApiError with issues
- * PUT /api/configs/:id { config } → { config } | 422
+ * GET /api/configs/:id?revealSecrets=true → { config: ConfigDto }
+ * POST /api/configs { config, name? } → 201 { config }
+ * PUT /api/configs/:id { config, name? } → { config }
+ * PATCH /api/configs/:id { name } → { config }
  * DELETE /api/configs/:id → 204
  */
 export interface ConfigsResponse {
-  configs: ConfigDto[];
+  configs: ConfigListItem[];
 }
 
 // ---------- assets ----------
@@ -227,7 +239,8 @@ export interface LobbySummaryDto {
 }
 /**
  * GET /api/lobbies → { lobbies } (not closed, newest first)
- * POST /api/lobbies { name, configId } | { name, config } → 201 { lobby } (the host joins as a player)
+ * POST /api/lobbies { name?, configId } | { name?, config } → 201 { lobby } (the host joins as a player)
+ * POST /api/lobbies/:id/config { name } → 201 { config: ConfigDto }   host only
  * GET /api/lobbies/:id → { lobby }
  * POST /api/lobbies/:id/join { role: "player" | "spectator" } → { lobby }
  * POST /api/lobbies/:id/presenter { userId: string | null } → { lobby } host only, outside a match
@@ -242,7 +255,7 @@ export interface LobbyResponse {
   lobby: LobbyDto;
 }
 export interface CreateLobbyRequest {
-  name: string;
+  name?: string;
   configId?: string;
   config?: unknown;
 }

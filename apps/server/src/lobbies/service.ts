@@ -1,4 +1,4 @@
-import type { CreateLobbyRequest, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
+import type { ConfigDto, CreateLobbyRequest, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
 import type { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
@@ -289,10 +289,11 @@ export class LobbyService {
 
   async create(user: UserDto, req: CreateLobbyRequest): Promise<LobbyDto> {
     if (user.role === "guest") throw forbidden("Создать лобби можно только с аккаунтом");
-    let input: unknown = req.config;
-    if (req.configId) input = (await this.deps.configs.getOriginal(user.id, req.configId)).document;
-    if (input === undefined) throw badRequest("no_config", "Нужен configId или config");
-    const config = await this.deps.configs.requireValid(user.id, input);
+    if ((req.configId !== undefined) === (req.config !== undefined)) {
+      throw badRequest("config_source", "Передайте ровно одно: config или свой configId");
+    }
+    const source = req.configId === undefined ? { config: req.config } : { configId: req.configId };
+    const config = await this.deps.configs.requireValid(user.id, source);
     const { max } = this.seatsOf(config);
     const name = (req.name ?? "").trim().slice(0, 60) || config.title;
     const id = newId("lob", 10);
@@ -308,6 +309,14 @@ export class LobbyService {
       },
     });
     return this.get(id);
+  }
+
+  async saveConfig(user: UserDto, lobbyId: string, name: string): Promise<ConfigDto> {
+    if (user.role === "guest") throw forbidden("Сохранить конфиг можно только с аккаунтом");
+    const row = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { hostId: true, config: true } });
+    if (!row) throw notFound("Лобби не найдено");
+    if (row.hostId !== user.id) throw forbidden("Только хозяин лобби");
+    return this.deps.configs.save(user.id, row.config, { name });
   }
 
   join(user: UserDto, lobbyId: string, role: "player" | "spectator"): Promise<LobbyDto> {
