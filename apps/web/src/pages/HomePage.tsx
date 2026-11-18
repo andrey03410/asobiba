@@ -70,8 +70,8 @@ export function HomePage() {
               : null}
           </p>
         </div>
-        <Link to="/new" className="btn btn-primary">
-          Создать лобби
+        <Link to="/new" className="btn">
+          Создать из JSON
         </Link>
       </div>
 
@@ -85,9 +85,9 @@ export function HomePage() {
             空
           </p>
           <p>Пока ни одного лобби.</p>
-          <p className="muted">Создайте игру сами или попросите своего ИИ-агента собрать её через MCP.</p>
-          <Link to="/new" className="btn btn-primary">
-            Создать лобби
+          <p className="muted">Попросите агента собрать конфиг и создать лобби через MCP.</p>
+          <Link to="/games" className="btn btn-primary">
+            Посмотреть игры
           </Link>
         </div>
       )}

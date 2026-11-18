@@ -29,6 +29,9 @@ export function Layout() {
               <NavLink to="/" end className="nav-link">
                 Лобби
               </NavLink>
+              <NavLink to="/games" className="nav-link">
+                Игры
+              </NavLink>
               <NavLink to="/account" className="nav-link">
                 Кабинет
               </NavLink>
