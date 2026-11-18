@@ -1,7 +1,7 @@
 import { actionError, defineGame, seriesSchema, type GameContext, type RoundResult } from "@asobiba/sdk";
 import { z } from "zod";
 import { YOMIFUDA_GUIDE } from "./guide";
-import { YOMIFUDA_INFO, YOMIFUDA_TUNING, summarizeYomifudaConfig } from "./information";
+import { YOMIFUDA_INFO, YOMIFUDA_PROMPT_EXAMPLES, YOMIFUDA_TUNING, summarizeYomifudaConfig } from "./information";
 import { PRESETS } from "./presets";
 import { rulesSchema, visualSchema, type YomifudaAttribute, type YomifudaCard, type YomifudaRules, type YomifudaVisual } from "./rules";
 
@@ -174,6 +174,7 @@ export const yomifuda = defineGame<YomifudaRules, YomifudaVisual, YomifudaState,
       .meta({ description: "Только одна колода на матч: после финала раскрываются все оценки" }),
   }).prefault({}),
   rulesSchema, visualSchema, actionSchema, info: YOMIFUDA_INFO, tuning: YOMIFUDA_TUNING,
+  promptExamples: YOMIFUDA_PROMPT_EXAMPLES, examplePresetId: "educational",
   summarizeConfig: summarizeYomifudaConfig,
   seats: (rules) => ({ min: rules.players, max: rules.players }),
   setup: (ctx) => {

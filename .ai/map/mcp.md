@@ -14,13 +14,13 @@
 ## Как устроено
 
 - Инструменты:
-  - `games_list`, `game_capabilities(gameId)` — info, семь tuning-направлений, схема, руководства, слоты, темы, каталог, пресеты целиком;
+  - `games_list`, `game_capabilities(gameId)` — info, tuning-направления, примеры запросов, схема, руководства, слоты, темы, каталог, пресеты целиком;
   - `jinchi_generate(request, title?, info?)` — детерминированная генерация, сохранённый configId, summary и diagnostics;
   - `config_validate`, `config_simulate(config, rounds?)` (до 200 раундов, синхронно), `config_preview(config, moment?, seed?, target?)` — PNG 768 px шириной как MCP-картинка плюс текст с итогом раунда;
   - `config_resolve(config, questionId)`, `config_probe(config, questionId, answers)` — Quizor: источники наследования и приёмка примеров с объяснениями;
-  - `config_save(config, configId?)`, `config_list(gameId?)`, `config_get`;
+  - `config_save({config, name?, configId?})` сохраняет исходный JSON и возвращает его текущий статус. `config_save({lobbyId, name})` копирует снимок лобби хозяина. `config_save({configId, name})` переименовывает запись. `config_list(gameId?)` отдаёт метаданные и статус, `config_get({configId, revealSecrets?})` — документ и диагностику;
   - `asset_list`, `asset_create_svg(name, svg)`, `asset_import_url(url, name?)`, `asset_upload_begin(name)` → `{ uploadUrl, method: "PUT", expiresAt, example }`;
-  - `lobby_create(name, configId | config)` → `{ lobby: { id, url, … } }`, `lobby_list`, `lobby_get` (состав и счёт без ходов), `lobby_close` (только хозяин).
+  - `lobby_create({name?, configId | config})` → `{ lobby: { id, url, … } }`, `lobby_list`, `lobby_get` (состав и счёт без ходов), `lobby_close` (только хозяин). Если имя не передано, используется заголовок конфига.
 - Симуляция и превью сначала проверяют конфиг и отвечают ошибкой с `issues`, если он невалиден.
 - Каждый вызов заново ищет пользователя по токену (`lastUsedAt` обновляется не чаще раза в минуту). Отозванный токен — 401.
 - Гость не получает MCP-токены: HTTP-кабинет и выпуск требуют аккаунта; `AuthService.createToken` также запрещает гостя, `userByToken` исключает роль guest. Лобби, созданное агентом аккаунта, использует ту же ссылку для гостевого входа друзей.
@@ -66,14 +66,14 @@ id раунда. Адресное превью не считается partial-�
 `game_capabilities("yomifuda")` отдаёт схему v1, честную методику, профили
 andrey03410/dimma0148/kostyankomaranime (порог2), 7 направлений настройки и учебный пресет.
 Схема допускает только `series.rounds=1`: после одной колоды раскрываются все оценки.
-`config_validate`, `config_save` и `lobby_create` отклоняют повторную серию через общий SDK.
+`config_validate` и `lobby_create` отклоняют повторную серию через общий SDK. `config_save` хранит её исходник со статусом `invalid`.
 Новых инструментов нет. Числа показателей всегда целые, значения не выравнивают ради
 баланса; предупреждения симуляции о доминировании не дают права менять честную силу.
 
 `config_validate(config)` возвращает secretsHidden:true и read-only проекцию cards:[];
 агент сохраняет **подготовленный оригинал** через config_save и дальше использует configId.
 By-id validate/simulate/preview/lobby_create исполняются по оригиналу внутри сервера.
-Save/list/get/лобби наружу секретов не возвращают. Явный авторский
+Обычные ответы библиотеки и лобби скрывают секреты. Явный авторский
 `config_get({configId,revealSecrets:true})` остаётся owner-only; обычный get безопасен.
 PNG-превью — независимая учебная сцена, оно не раскрывает состав или значения настоящей колоды.
 Встроенный визуал douga не требует импорта снимка или работающего сервиса douga во время партии.

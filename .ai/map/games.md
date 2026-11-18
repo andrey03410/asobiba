@@ -174,7 +174,7 @@
 
 ## Как добавить игру
 
-1. Пакет `games/<id>/` по образцу крестиков-ноликов: `defineGame` с `rulesSchema`, `visualSchema`, `actionSchema`, функциями правил, `guide`, `presets`, `slots`, `themes`, `visualCatalog`. Добавить `info`, `tuning` и безопасный `summarizeConfig` по белому списку публичных параметров (см. [SDK](sdk.md#информация-об-игре-и-партии)).
+1. Пакет `games/<id>/` по образцу крестиков-ноликов: `defineGame` с `rulesSchema`, `visualSchema`, `actionSchema`, функциями правил, `guide`, `presets`, `slots`, `themes`, `visualCatalog`. Добавить `info`, `tuning`, `promptExamples` и `examplePresetId` с публичным демонстрационным пресетом без файлов аккаунта. Добавить безопасный `summarizeConfig` по белому списку публичных параметров. [Справка SDK](sdk.md#информация-об-игре-и-партии)
 2. Клиент `./client`: `GameClient` с `Board`, `SeatIcon`, `css`, `previewMatch`. Доска обязана работать на сцене партии: при `stage` она заполняет 100 % ширины и высоты и не прокручивает страницу, а полный экран берёт из `fullscreen` (см. [sdk](sdk.md#сцена-партии)). Если анимация доски прячет исход хода, доска зовёт `onHold`. Проверь её на телефоне в портретной ориентации и в полноэкранном режиме.
 3. Зарегистрировать в `apps/server/src/games/catalog.ts` и `apps/web/src/games.ts`, добавить зависимость в `package.json` сервера и сайта.
 4. Тесты правил, проверки конфига, «все пресеты валидны и доигрываются» и статической разметки доски.

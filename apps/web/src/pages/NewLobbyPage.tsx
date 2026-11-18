@@ -1,630 +1,233 @@
-import { DiceSettings, EffectSettings, FlagSettings, MapEditor, MapGenerator } from "@asobiba/game-jinchi/client";
-import { rulesSchema as jinchiRulesSchema, type JinchiRules } from '@asobiba/game-jinchi';
-import type { ConfigDto, CreateLobbyRequest } from "@asobiba/api";
-import {
-  type ConfigDocument,
-  type ConfigIssue,
-  type GameCapabilities,
-  type GameSummary,
-  validateConfig,
-} from "@asobiba/sdk";
-import {
-  type FormEvent,
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import type { ConfigDto } from "@asobiba/api";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ApiRequestError, api, errorMessage } from "../api";
-import { ConfigPreview } from "../components/ConfigPreview";
+import { useUser } from "../auth";
+import { ConfigNameAction } from "../components/ConfigNameAction";
 import { IssueList } from "../components/IssueList";
-import { SchemaForm } from "../components/SchemaForm";
-import { QuizSummary } from "../components/QuizSummary";
-import { AuthorInformationFields, GameInformation } from "../components/GameInformation";
-import { catalog } from "../games";
-import { isPlainObject } from "../jsonSchema";
 import { useToast } from "../toast";
 import { useTitle } from "../util";
 
-type Source = { kind: "preset" | "config"; id: string };
+type Validation = Pick<ConfigDto, "validationStatus" | "issues">;
+type LoadedSource = { text: string; saved?: ConfigDto };
+type SourceState = { source: LoadedSource } | { error: string };
 
-const sourceKey = (s: Source | null) => (s ? `${s.kind}:${s.id}` : "");
-function parseSourceKey(key: string): Source | null {
-  const at = key.indexOf(":");
-  if (at < 0) return null;
-  const kind = key.slice(0, at);
-  return kind === "preset" || kind === "config"
-    ? { kind, id: key.slice(at + 1) }
-    : null;
+function parseConfig(text: string): { document?: Record<string, unknown>; error?: string } {
+  if (!text.trim()) return {};
+  try {
+    const document: unknown = JSON.parse(text);
+    if (typeof document !== "object" || document === null || Array.isArray(document)) {
+      return { error: "Конфиг должен быть JSON-объектом." };
+    }
+    return { document: document as Record<string, unknown> };
+  } catch {
+    return { error: "Исправьте синтаксис JSON." };
+  }
 }
-
-const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export function NewLobbyPage() {
   useTitle("Новое лобби");
-  const [params, setParams] = useSearchParams();
-  const navigate = useNavigate();
-  const toast = useToast();
+  const user = useUser();
+  const [params] = useSearchParams();
+  return <LobbyConfigSource key={user.id + ":" + params.toString()} params={params} />;
+}
 
-  const [games, setGames] = useState<GameSummary[] | null>(null);
-  const [configs, setConfigs] = useState<ConfigDto[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [gameId, setGameId] = useState<string | null>(null);
-  const [caps, setCaps] = useState<GameCapabilities | null>(null);
-  const capsCache = useRef(new Map<string, GameCapabilities>());
-  const pendingSource = useRef<Source | null>(null);
-  // setSearchParams changes identity with the URL; keep it out of effect deps.
-  const setParamsRef = useRef(setParams);
-  useEffect(() => {
-    setParamsRef.current = setParams;
-  }, [setParams]);
-
-  const [source, setSource] = useState<Source | null>(null);
-  const [doc, setDoc] = useState<unknown>(null);
-  const [baseline, setBaseline] = useState("");
-  const [mode, setMode] = useState<"form" | "json">("form");
-  const [jsonText, setJsonText] = useState("");
-  const [jsonError, setJsonError] = useState<string | null>(null);
-
-  const [moment, setMoment] = useState<"start" | "end">("end");
-  const [seed, setSeed] = useState(1);
-  useEffect(() => {
-    if (gameId === "jinchi" || gameId === "quizor") setMoment("start");
-  }, [gameId]);
-  const [name, setName] = useState("");
-  const [saveConfig, setSaveConfig] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [serverIssues, setServerIssues] = useState<ConfigIssue[]>([]);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  // Games and saved configs; the URL may preselect ?game=&preset= or ?config=.
-  useEffect(() => {
-    let alive = true;
-    Promise.all([api.games(), api.configs()])
-      .then(([g, c]) => {
-        if (!alive) return;
-        setGames(g.games);
-        setConfigs(c.configs);
-        const configParam = params.get("config");
-        const fromConfig = configParam
-          ? c.configs.find((x) => x.id === configParam)
-          : undefined;
-        const gameParam = params.get("game");
-        const presetParam = params.get("preset");
-        const initialGame =
-          fromConfig?.gameId ??
-          (gameParam && g.games.some((x) => x.id === gameParam)
-            ? gameParam
-            : g.games[0]?.id) ??
-          null;
-        if (configParam && !fromConfig)
-          toast("Сохранённый конфиг не найден — начнём с пресета", "error");
-        pendingSource.current = fromConfig
-          ? { kind: "config", id: fromConfig.id }
-          : presetParam
-            ? { kind: "preset", id: presetParam }
-            : null;
-        setGameId(initialGame);
-      })
-      .catch((err) => alive && setLoadError(errorMessage(err)));
-    return () => {
-      alive = false;
-    };
-    // Only the URL at first load matters; later choices rewrite it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const applySource = useCallback(
-    (s: Source, gameCaps: GameCapabilities, savedConfigs: ConfigDto[]) => {
-      const document =
-        s.kind === "preset"
-          ? gameCaps.presetConfigs.find((p) => p.id === s.id)?.config
-          : savedConfigs.find((c) => c.id === s.id && c.gameId === gameCaps.id)
-              ?.document;
-      if (!document) return false;
-      const d = clone(document);
-      setSource(s);
-      setDoc(d);
-      setBaseline(JSON.stringify(d));
-      setJsonText(JSON.stringify(d, null, 2));
-      setJsonError(null);
-      setServerIssues([]);
-      setSubmitError(null);
-      setSaveConfig(false);
-      const next = new URLSearchParams({ game: gameCaps.id });
-      next.set(s.kind, s.id);
-      setParamsRef.current(next, { replace: true });
-      return true;
-    },
-    [],
+function LobbyConfigSource({ params }: { params: URLSearchParams }) {
+  const configId = params.get("config");
+  const gameId = params.get("game");
+  const presetId = params.get("preset");
+  const example = params.get("example") === "1";
+  const fromGame = Boolean(gameId && (presetId || example));
+  const [loaded, setLoaded] = useState<SourceState | null>(
+    configId || fromGame ? null : { source: { text: "" } },
   );
 
-  // Capabilities of the chosen game, then the starting document.
   useEffect(() => {
-    if (!gameId) return;
+    if (!configId && !fromGame) return;
     let alive = true;
-    const use = (gameCaps: GameCapabilities) => {
-      if (!alive) return;
-      setCaps(gameCaps);
-      const wanted = pendingSource.current;
-      pendingSource.current = null;
-      if (wanted && applySource(wanted, gameCaps, configs)) return;
-      const first = gameCaps.presetConfigs[0];
-      if (first)
-        applySource({ kind: "preset", id: first.id }, gameCaps, configs);
-    };
-    const cached = capsCache.current.get(gameId);
-    if (cached) use(cached);
-    else
-      api
-        .game(gameId)
-        .then((res) => {
-          capsCache.current.set(gameId, res.game);
-          use(res.game);
-        })
-        .catch((err) => alive && setLoadError(errorMessage(err)));
-    return () => {
-      alive = false;
-    };
-    // configs are loaded together with the games, before gameId is set
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId, applySource]);
-
-  const dirty = doc !== null && JSON.stringify(doc) !== baseline;
-  const confirmDiscard = () =>
-    !dirty || window.confirm("Правки текущего конфига пропадут. Продолжить?");
-
-  const hiddenSaved = gameId === "yomifuda" && source?.kind === "config";
-  const localCheck = gameId !== null && catalog.get(gameId) !== undefined;
-  const deferredDoc = useDeferredValue(doc);
-  const { result, ok } = useMemo(
-    () => checkLobbyDocument(deferredDoc, gameId, hiddenSaved),
-    [deferredDoc, gameId, hiddenSaved],
-  );
-  const [lastValid, setLastValid] = useState<ConfigDocument | null>(null);
-  useEffect(() => {
-    if (result?.ok) setLastValid(result.config);
-  }, [result]);
-  const issues = result?.issues ?? [];
-  const jinchiEditorRules = useMemo(() => {
-    if (gameId !== 'jinchi' || !isPlainObject(doc)) return undefined;
-    const parsed = jinchiRulesSchema.safeParse(doc.rules);
-    return parsed.success ? parsed.data : undefined;
-  }, [gameId, doc]);
-
-  const docTitle =
-    isPlainObject(doc) && typeof doc.title === "string" && doc.title.trim()
-      ? doc.title.trim()
-      : (caps?.title ?? "");
-  const savedSource =
-    source?.kind === "config"
-      ? configs.find((c) => c.id === source.id)
-      : undefined;
-  const reuseSaved = savedSource !== undefined && !dirty;
-  const presetInfo =
-    source?.kind === "preset"
-      ? caps?.presets.find((p) => p.id === source.id)
-      : undefined;
-
-  const changeGame = (id: string) => {
-    if (id === gameId || !confirmDiscard()) return;
-    setCaps(null);
-    setDoc(null);
-    setLastValid(null);
-    setGameId(id);
-  };
-
-  const changeSource = (key: string) => {
-    const s = parseSourceKey(key);
-    if (!s || !caps || key === sourceKey(source) || !confirmDiscard()) return;
-    applySource(s, caps, configs);
-  };
-
-  const changeJson = (text: string) => {
-    setJsonText(text);
-    try {
-      setDoc(JSON.parse(text));
-      setJsonError(null);
-    } catch (err) {
-      setJsonError(err instanceof Error ? err.message : "ошибка разбора");
-    }
-  };
-
-  const switchMode = (next: "form" | "json") => {
-    if (next === mode) return;
-    if (next === "json") {
-      setJsonText(JSON.stringify(doc, null, 2));
-      setJsonError(null);
-    }
-    setMode(next);
-  };
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (doc === null || !ok) return;
-    setBusy(true);
-    setServerIssues([]);
-    setSubmitError(null);
-    const lobbyName = name.trim() || docTitle || "Лобби";
-    try {
-      let body: CreateLobbyRequest;
-      if (reuseSaved && savedSource) {
-        body = { name: lobbyName, configId: savedSource.id };
-      } else if (saveConfig) {
-        const saved = await api.createConfig(doc);
-        toast(`Конфиг «${saved.config.title}» сохранён`, "success");
-        body = { name: lobbyName, configId: saved.config.id };
-      } else {
-        body = { name: lobbyName, config: doc };
+    async function load(): Promise<LoadedSource> {
+      if (configId) {
+        // This route is reached via the owner's explicit "Править JSON" action.
+        const { config: saved } = await api.config(configId, true);
+        return { saved, text: JSON.stringify(saved.document, null, 2) };
       }
-      const { lobby } = await api.createLobby(body);
-      navigate(`/lobby/${lobby.id}`);
-    } catch (err) {
-      if (err instanceof ApiRequestError && err.issues.length > 0)
-        setServerIssues(err.issues);
-      setSubmitError(errorMessage(err));
-    } finally {
-      setBusy(false);
+      if (gameId && presetId) {
+        const { game } = await api.game(gameId);
+        const document = game.presetConfigs.find(({ id }) => id === presetId)?.config;
+        if (document) return { text: JSON.stringify(document, null, 2) };
+      } else if (gameId) {
+        const { guide } = await api.gameGuide(gameId);
+        if (guide.exampleConfig) return { text: JSON.stringify(guide.exampleConfig, null, 2) };
+      }
+      throw new Error("Пример конфига не найден.");
     }
-  };
-
-  if (loadError) {
-    return (
-      <div className="page">
-        <h1>Новое лобби</h1>
-        <div className="notice notice-error">
-          Не удалось загрузить игры: {loadError}
-        </div>
-      </div>
-    );
-  }
-  if (games === null) return <div className="page-loading">Загружаю игры…</div>;
-  if (games.length === 0) {
-    return (
-      <div className="page">
-        <h1>Новое лобби</h1>
-        <div className="notice">На сервере пока нет ни одной игры.</div>
-      </div>
-    );
-  }
-
-  const gameConfigs = configs.filter((c) => c.gameId === gameId);
+    load().then((source) => {
+      if (alive) setLoaded({ source });
+    }).catch((err) => {
+      if (alive) setLoaded({ error: errorMessage(err) });
+    });
+    return () => { alive = false; };
+  }, [configId, example, fromGame, gameId, presetId]);
 
   return (
-    <div className="page page-wide">
+    <div className="page">
       <div className="page-head">
         <div>
           <h1>Новое лобби</h1>
-          <p className="muted">
-            Возьмите пресет или свой конфиг, поправьте настройки и позовите
-            друзей.
-          </p>
+          <p className="muted">Агент может собрать конфиг и создать лобби через MCP.</p>
         </div>
-        <Link to="/" className="btn btn-ghost">
-          К списку лобби
-        </Link>
+        <Link className="btn" to="/games">Справка по играм</Link>
       </div>
-
-      <section className="card create-source">
-        <div className="field-row">
-          <label className="field">
-            <span className="field-label">Игра</span>
-            <select
-              value={gameId ?? ""}
-              onChange={(e) => changeGame(e.target.value)}
-            >
-              {games.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="field-label">Основа</span>
-            <select
-              value={sourceKey(source)}
-              onChange={(e) => changeSource(e.target.value)}
-              disabled={!caps}
-            >
-              {!source && <option value="">…</option>}
-              {caps && (
-                <optgroup label="Пресеты">
-                  {caps.presetConfigs.map((p) => (
-                    <option key={p.id} value={`preset:${p.id}`}>
-                      {caps.presets.find((x) => x.id === p.id)?.title ??
-                        p.config.title}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {gameConfigs.length > 0 && (
-                <optgroup label="Мои конфиги">
-                  {gameConfigs.map((c) => (
-                    <option key={c.id} value={`config:${c.id}`}>
-                      {c.title}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-          </label>
-        </div>
-        {caps && (
-          <p className="muted small">
-            {presetInfo
-              ? presetInfo.description
-              : savedSource
-                ? `Ваш сохранённый конфиг «${savedSource.title}»`
-                : caps.summary}
-          </p>
-        )}
-      </section>
-
-      {!caps || doc === null ? (
-        <div className="page-loading">Загружаю настройки игры…</div>
-      ) : (
-        <div className="create-grid">
-          <section
-            className={`card create-editor${gameId === "jinchi" ? " create-editor-jinchi" : ""}`}
-          >
-            {gameId === "yomifuda" ? (
-              <YomifudaSummary document={doc} saved={hiddenSaved} />
-            ) : gameId === "quizor" ? (
-              <>
-                <QuizSummary rules={isPlainObject(doc) ? doc.rules : null} />
-                <AuthorInformationFields value={isPlainObject(doc) ? doc.info : undefined} onChange={(info) => {
-                  if (!isPlainObject(doc)) return;
-                  const next = { ...doc };
-                  if (info) next.info = info; else delete next.info;
-                  setDoc(next);
-                }} />
-              </>
-            ) : (
-              <>
-                <div className="tabs" role="tablist">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === "form"}
-                    className={`tab${mode === "form" ? " is-active" : ""}`}
-                    onClick={() => switchMode("form")}
-                  >
-                    Настройки
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === "json"}
-                    className={`tab${mode === "json" ? " is-active" : ""}`}
-                    onClick={() => switchMode("json")}
-                  >
-                    JSON целиком
-                  </button>
-                  {dirty && <span className="dirty-mark">изменено</span>}
-                </div>
-                {mode === "form" ? (
-                  <SchemaForm
-                    schema={caps.configSchema}
-                    value={doc}
-                    onChange={setDoc}
-                    issues={issues}
-                    overrides={{
-                      info: ({ value, onChange }) => <AuthorInformationFields value={value} onChange={onChange} />,
-                      ...(gameId === "jinchi"
-                        ? {
-                            'rules.dice.sides': ({ value, onChange }) => <DiceSettings value={value} onChange={onChange} />,
-                            'rules.flags': ({ value, onChange }) => <FlagSettings value={value} onChange={onChange} />,
-                            'rules.effects': ({ value, onChange }) => <EffectSettings value={value} onChange={onChange} />,
-                            "rules.map": ({ value, onChange }) => {
-                              const map =
-                                isPlainObject(value) &&
-                                Array.isArray(value.rows) &&
-                                typeof value.width === "number" &&
-                                typeof value.height === "number" &&
-                                value.rows.every(
-                                  (row) => typeof row === "string",
-                                )
-                                  ? (value as {
-                                      width: number;
-                                      height: number;
-                                      rows: string[];
-                                    })
-                                  : {
-                                      width: 16,
-                                      height: 16,
-                                      rows: Array(16).fill(".".repeat(16)),
-                                    };
-                              const rules = jinchiEditorRules;
-                              const updateRules = (next: JinchiRules) => setDoc((current: unknown) => isPlainObject(current) ? { ...current, rules: next } : current);
-                              return <MapEditor value={map} onChange={onChange} rules={rules} onRulesChange={updateRules} generator={rules ? <MapGenerator rules={rules} onChange={updateRules} generate={async request => {
-                                const response = await api.generateJinchi(request);
-                                const generated = response.config.rules as JinchiRules;
-                                return { map: generated.map, flags: generated.flags, effects: generated.effects, diagnostics: response.diagnostics };
-                              }} /> : undefined} />;
-                            },
-                          }
-                        : {}),
-                    }}
-                  />
-                ) : (
-                  <div className="json-editor">
-                    <textarea
-                      spellCheck={false}
-                      value={jsonText}
-                      onChange={(e) => changeJson(e.target.value)}
-                      aria-label="Конфиг целиком в JSON"
-                    />
-                    {jsonError ? (
-                      <p className="sf-json-error">
-                        Некорректный JSON: {jsonError}. Превью и проверка
-                        показывают последний разобранный вариант.
-                      </p>
-                    ) : (
-                      <p className="muted small">
-                        Весь документ конфига. Описание полей — в схеме игры, её
-                        же читает ИИ-агент через MCP.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-
-          <aside className="create-side">
-            {result?.ok && <section className="card">
-              <GameInformation information={{ game: caps.info, summary: result.summary, ...(result.config.info?.title || result.config.info?.text ? { author: result.config.info } : {}) }} />
-            </section>}
-            <section className="card preview-card">
-              <div className="preview-head">
-                <h2>{gameId === "yomifuda" ? "Учебный пример" : "Превью"}</h2>
-                <div
-                  className="segmented"
-                  role="group"
-                  aria-label="Момент партии"
-                >
-                  <button
-                    type="button"
-                    className={moment === "start" ? "is-active" : ""}
-                    onClick={() => setMoment("start")}
-                  >
-                    Начало
-                  </button>
-                  <button
-                    type="button"
-                    className={moment === "end" ? "is-active" : ""}
-                    onClick={() => setMoment("end")}
-                  >
-                    {gameId === "jinchi" ? "Пример партии" : "Конец"}
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  onClick={() =>
-                    setSeed(Math.floor(Math.random() * 1_000_000) + 1)
-                  }
-                  disabled={moment === "start"}
-                >
-                  Другая партия
-                </button>
-              </div>
-              {!localCheck ? (
-                <div className="notice">
-                  Сайт пока не умеет рисовать и проверять эту игру — конфиг
-                  проверит сервер при создании.
-                </div>
-              ) : hiddenSaved || lastValid ? (
-                <>
-                  <ConfigPreview
-                    config={hiddenSaved ? doc as ConfigDocument : lastValid!}
-                    moment={moment}
-                    seed={seed}
-                  />
-                  {result && !result.ok && (
-                    <p className="muted small">
-                      Показан последний верный вариант конфига.
-                    </p>
-                  )}
-                </>
-              ) : result === null ? (
-                <div className="notice">Проверяю конфиг…</div>
-              ) : (
-                <div className="notice">
-                  Исправьте ошибки — и здесь появится поле.
-                </div>
-              )}
-              {localCheck && result?.ok && issues.length === 0 && (
-                <p className="ok-mark">Конфиг в порядке</p>
-              )}
-              <IssueList issues={issues} />
-            </section>
-
-            <form className="card create-submit" onSubmit={submit}>
-              <label className="field">
-                <span className="field-label">Название лобби</span>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={docTitle || "Лобби"}
-                  maxLength={80}
-                />
-              </label>
-              {reuseSaved ? (
-                <p className="muted small">
-                  Лобби возьмёт копию сохранённого конфига «{savedSource?.title}
-                  ».
-                </p>
-              ) : (
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={saveConfig}
-                    onChange={(e) => setSaveConfig(e.target.checked)}
-                  />
-                  <span>
-                    {savedSource
-                      ? "Сохранить как новый конфиг в мои"
-                      : "Сохранить в мои конфиги"}
-                  </span>
-                </label>
-              )}
-              <IssueList
-                issues={serverIssues}
-                title="Сервер не принял конфиг"
-              />
-              {submitError && serverIssues.length === 0 && (
-                <p className="form-error">{submitError}</p>
-              )}
-              <button
-                type="submit"
-                className="btn btn-primary btn-wide"
-                disabled={
-                  !ok || busy || (mode === "json" && jsonError !== null)
-                }
-              >
-                {busy ? "Создаю…" : "Создать лобби"}
-              </button>
-              {!ok && result !== null && (
-                <p className="muted small">
-                  Сначала исправьте ошибки в конфиге.
-                </p>
-              )}
-            </form>
-          </aside>
+      {!loaded && <p role="status">Загружаю конфиг…</p>}
+      {loaded && "error" in loaded && (
+        <div className="notice notice-error">
+          <p>{loaded.error}</p>
+          <Link to="/new">Открыть пустой редактор</Link>
         </div>
       )}
+      {loaded && "source" in loaded && <LobbyConfigEditor {...loaded.source} />}
     </div>
   );
 }
 
-/** Read-only overview: the projected saved deck cannot be edited or validated as an original. */
-export function YomifudaSummary({ document, saved }: { document: unknown; saved: boolean }) {
-  const rules = isPlainObject(document) && isPlainObject(document.rules) ? document.rules : {};
-  const attributes = Array.isArray(rules.attributes) ? rules.attributes : [];
-  const pool = isPlainObject(rules.pool) ? rules.pool : {};
-  const profiles = Array.isArray(pool.profiles) ? pool.profiles.filter((profile): profile is string => typeof profile === "string") : [];
-  const points = (value: unknown) => typeof value === "number" ? value.toLocaleString("ru-RU") : "—";
-  return <section aria-label="Сводка колоды Ёмифуды">
-    <h2>{saved ? "Ваша колода" : "Учебная колода"}</h2>
-    <p>{String(rules.players ?? "—")} игрока · {String(rules.deckSize ?? (Array.isArray(rules.cards) ? rules.cards.length : "—"))} карт · по {String(rules.handSize ?? "—")} в руке</p>
-    <h3>Показатели</h3><p>{attributes.flatMap(a => isPlainObject(a) && typeof a.label === "string" ? [a.label] : []).join(" · ")}</p>
-    <h3>Условия колоды</h3>
-    <p>Профили: {profiles.join(", ") || "—"}<br />Минимум просмотров: {String(pool.minViewers ?? "—")} из {profiles.length} профилей</p>
-    <p>Победа в бою: {points(rules.winPoints)}<br />Полный паритет: {points(rules.tiePoints)} каждому</p>
-    <p className="muted">Оценки откроются после того, как все поставят карты. Раскрытие длится {String(rules.revealSeconds ?? 10)} с.</p>
-    <p className="muted">{saved ? "Лобби возьмёт сохранённую колоду. Её карты и оценки здесь скрыты." : "Открытый учебный набор для знакомства с игрой."} Для своей колоды попросите ИИ-агента собрать персонажей и сохранить конфиг через MCP.</p>
-    <p className="muted small">Превью показывает независимую учебную партию.</p>
-  </section>;
-}
+function LobbyConfigEditor({ text: initialText, saved }: LoadedSource) {
+  const navigate = useNavigate();
+  const toast = useToast();
+  const [text, setText] = useState(initialText);
+  const parsed = useMemo(() => parseConfig(text), [text]);
+  const [check, setCheck] = useState<Validation | null>(saved ?? null);
+  const [retry, setRetry] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const validationId = useRef(0);
 
-export function checkLobbyDocument(doc: unknown, gameId: string | null, hiddenSaved: boolean): { result: ReturnType<typeof validateConfig> | null; ok: boolean } {
-  if (doc === null) return { result: null, ok: false };
-  if ((gameId === "yomifuda" && hiddenSaved) || gameId === null || !catalog.get(gameId)) return { result: null, ok: true };
-  const result = validateConfig(catalog, doc);
-  return { result, ok: result.ok };
+  useEffect(() => {
+    if (!parsed.document) return;
+    const id = validationId.current;
+    const document = parsed.document;
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      api.validateConfig(document).then(({ ok, issues }) => {
+        if (alive && id === validationId.current) setCheck({ validationStatus: ok ? "valid" : "invalid", issues });
+      }).catch((err) => {
+        if (!alive || id !== validationId.current) return;
+        if (err instanceof ApiRequestError && err.status === 413) {
+          setCheck({
+            validationStatus: "invalid",
+            issues: [{ path: "", code: "config_limit", severity: "error", message: "Уменьшите размер JSON-конфига." }],
+          });
+        } else {
+          setCheck({ validationStatus: "unavailable", issues: [] });
+        }
+      });
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [parsed, retry]);
+
+  async function createLobby() {
+    if (busy || !parsed.document || check?.validationStatus !== "valid") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { lobby } = await api.createLobby({ config: parsed.document });
+      navigate("/lobby/" + encodeURIComponent(lobby.id));
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.code === "invalid_config") {
+        validationId.current += 1;
+        setCheck({ validationStatus: "invalid", issues: err.issues });
+      }
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateSaved() {
+    if (busy || !saved || !parsed.document) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { config } = await api.updateConfig(saved.id, parsed.document);
+      validationId.current += 1;
+      if (config.secretsHidden && config.issues.length > 0 && config.validationStatus !== "unavailable") {
+        setCheck({
+          validationStatus: config.validationStatus,
+          issues: check?.validationStatus === config.validationStatus ? check.issues : [],
+        });
+        setRetry((attempt) => attempt + 1);
+      } else {
+        setCheck(config);
+      }
+      const detail = config.validationStatus === "invalid"
+        ? " Для запуска исправьте ошибки."
+        : config.validationStatus === "unavailable" ? " Проверка сейчас недоступна." : "";
+      toast("Изменения сохранены." + detail, detail ? "info" : "success");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const document = parsed.document;
+  const status = !document ? null : check?.validationStatus ?? "pending";
+
+  return (
+    <section className="card">
+      {saved && <h2>{saved.title}</h2>}
+      <label className="field config-json-field">
+        <span className="field-label">JSON-конфиг</span>
+        <textarea
+          rows={15}
+          value={text}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          disabled={busy}
+          aria-invalid={Boolean(parsed.error) || status === "invalid"}
+          aria-describedby="config-validation"
+          onChange={(event) => {
+            validationId.current += 1;
+            setText(event.target.value);
+            setError(null);
+            setCheck(null);
+          }}
+        />
+      </label>
+      <div id="config-validation" aria-live="polite">
+        {parsed.error && <p className="form-error">{parsed.error}</p>}
+        {!text.trim() && <p className="muted">Напишите конфиг или вставьте готовый JSON.</p>}
+        {status === "pending" && <p className="muted">Проверяю конфиг…</p>}
+        {status === "valid" && <p>Конфиг готов к запуску.</p>}
+        {status === "invalid" && <p className="form-error">Для запуска исправьте ошибки в конфиге.</p>}
+        {status === "unavailable" && <p className="form-error">Сейчас не удалось проверить конфиг.</p>}
+        <IssueList issues={check?.issues ?? []} />
+      </div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="row-actions">
+        <button type="button" className="btn btn-primary" disabled={busy || status !== "valid"} onClick={() => void createLobby()}>
+          Создать лобби
+        </button>
+        {status === "unavailable" && <button type="button" className="btn" disabled={busy} onClick={() => {
+          validationId.current += 1;
+          setCheck(null);
+          setRetry(retry + 1);
+        }}>Проверить снова</button>}
+        {saved ? (
+          <button type="button" className="btn" disabled={!document || busy} onClick={() => void updateSaved()}>
+            Сохранить изменения
+          </button>
+        ) : document && !busy && (
+          <ConfigNameAction
+            label="Сохранить конфиг"
+            initialName={typeof document.title === "string" ? document.title : ""}
+            submit={(name) => api.createConfig(document, name)}
+          />
+        )}
+      </div>
+    </section>
+  );
 }

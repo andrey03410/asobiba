@@ -28,7 +28,7 @@ import type {
   ValidateResponse,
   VideoSnapshotDto,
 } from "@asobiba/api";
-import type { ConfigIssue } from "@asobiba/sdk";
+import type { ConfigIssue, GameGuide } from "@asobiba/sdk";
 import type { ConfigDocument } from '@asobiba/sdk';
 import type { GenerationRequest, MapAnalysis } from '@asobiba/game-jinchi';
 import { forgetGuestAttempt, guestAttempt, withIdentityLock } from "./guestIdentity";
@@ -167,13 +167,16 @@ export const api = {
   // games
   games: () => request<GamesResponse>("GET", "/api/games"),
   game: (id: string) => request<GameResponse>("GET", `/api/games/${enc(id)}`),
+  gameGuide: (id: string) => request<{ guide: GameGuide }>("GET", `/api/games/${enc(id)}/guide`),
 
   // configs
   configs: () => request<ConfigsResponse>("GET", "/api/configs"),
+  config: (id: string, revealSecrets = false) => request<ConfigResponse>("GET", `/api/configs/${enc(id)}${revealSecrets ? "?revealSecrets=true" : ""}`),
   validateConfig: (config: unknown) => request<ValidateResponse>("POST", "/api/configs/validate", { body: { config } }),
   generateJinchi: (generation: GenerationRequest) => request<{ config: ConfigDocument; diagnostics: MapAnalysis }>('POST', '/api/games/jinchi/generate', { body: { request: generation } }),
-  createConfig: (config: unknown) => request<ConfigResponse>("POST", "/api/configs", { body: { config } }),
+  createConfig: (config: unknown, name: string) => request<ConfigResponse>("POST", "/api/configs", { body: { config, name } }),
   updateConfig: (id: string, config: unknown) => request<ConfigResponse>("PUT", `/api/configs/${enc(id)}`, { body: { config } }),
+  renameConfig: (id: string, name: string) => request<ConfigResponse>("PATCH", `/api/configs/${enc(id)}`, { body: { name } }),
   deleteConfig: (id: string) => request<void>("DELETE", `/api/configs/${enc(id)}`),
 
   // assets
@@ -191,6 +194,7 @@ export const api = {
   lobby: (id: string) => request<LobbyResponse>("GET", `/api/lobbies/${enc(id)}`),
   invitation: (id: string) => request<{ invitation: LobbyInvitationDto }>("GET", `/api/lobbies/${enc(id)}/invitation`),
   createLobby: (body: CreateLobbyRequest) => request<LobbyResponse>("POST", "/api/lobbies", { body }),
+  saveLobbyConfig: (id: string, name: string) => request<ConfigResponse>("POST", `/api/lobbies/${enc(id)}/config`, { body: { name } }),
   joinLobby: (id: string, role: "player" | "spectator") => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/join`, { body: { role } }),
   leaveLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/leave`),
   startLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/start`),

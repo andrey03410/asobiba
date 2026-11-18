@@ -35,7 +35,7 @@
   - страховка от зависания: в пошаговой игре, если ни у кого из ходящих нет `hasLegalAction` (или `legalActions` у игр без hook), а `roundResult` пуст, раунд без `applyControl`/`nextWakeAt` заканчивается ничьей `no-moves` («ходов нет»). Проверка идёт после `setup` каждого раунда и после каждого изменения. Пас, если игра его допускает, должен быть действием.
   - отклонённое действие (`actionError`) не попадает в журнал, поэтому движок откатывает генератор (`rng.state()`/`restore()`) — повтор по журналу совпадает с живой партией.
 - **Прогоны** `simulate` (синхронно, в MCP — до 200 раундов): независимые раунды, место 0 всегда ходит первым. Проблемы: `never-ends`, `stuck`, `illegal-legal-action`, `always-draw` (≥95 % ничьих при ≥10 раундах), `first-seat-dominates` (≥90 % результативных раундов).
-- **Возможности** `describeGame`: JSON Schema документа (`z.toJSONSchema`, `io: "input"`), `guide` игры, `sdkGuide`, слоты, темы, `visualCatalog`, полные документы пресетов.
+- **Возможности** `describeGame`: JSON Schema документа (`z.toJSONSchema`, `io: "input"`), `guide` игры, `sdkGuide`, слоты, темы, `visualCatalog`, полные документы пресетов и примеры запросов.
 
 ## Информация об игре и партии
 
@@ -45,7 +45,10 @@
 вызывает whitelist `summarizeConfig`, добавляет общие timer/series и необязательное
 `config.info:{title?,text?}` (80/2000 символов). Не обходить произвольный JSON ради сводки:
 Quizor/Pole содержат ответы и будущие вопросы. `presentRules` недостаточно для formatter.
-Capabilities включает info/tuning, успешная validation — summary, LobbyDto — information.
+Capabilities включает info/tuning и `promptExamples`. `describeGameGuide(game)`
+возвращает браузеру те же описания и JSON из `examplePresetId`. Пример выбирается
+из публичных пресетов разработчика и проходит проверку без файлов аккаунта.
+Успешная validation включает summary, LobbyDto — information.
 Авторский текст — plain text, отдельно от системных правил; invitation его не показывает.
 
 ## Поиск действия без перечисления

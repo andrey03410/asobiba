@@ -680,8 +680,43 @@ textarea:focus {
 .create-submit .field {
   margin-bottom: 10px;
 }
-.json-editor textarea {
-  min-height: 60vh;
+.config-json-field textarea {
+  min-height: 15rem;
+  font-family: var(--mono, monospace);
+  resize: vertical;
+}
+
+.config-name-form {
+  flex: 1 1 100%;
+}
+
+.saved-config-row .row-main,
+.game-guide {
+  overflow-wrap: anywhere;
+}
+
+.lobby-config-actions {
+  margin-top: 16px;
+}
+
+.game-catalog-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.game-catalog-card .btn {
+  margin-top: auto;
+}
+
+.game-tuning {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px 24px;
+}
+
+.game-tuning h3 {
+  margin-bottom: 4px;
 }
 
 .preview-head {

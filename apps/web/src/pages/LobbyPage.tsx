@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiRequestError, api, assetUrl, errorMessage } from "../api";
 import { useUser } from "../auth";
+import { ConfigNameAction } from "../components/ConfigNameAction";
 import { ConfigPreview } from "../components/ConfigPreview";
 import { CopyButton } from "../components/CopyButton";
 import { ErrorBoundary } from "../components/ErrorBoundary";
@@ -413,6 +414,18 @@ export function LobbyPage() {
 
       <section className="card">
         <GameInformation information={lobby.information} />
+        <div className="row-actions lobby-config-actions">
+          <Link to={`/games/${encodeURIComponent(lobby.gameId)}`} state={{ fromLobbyId: lobby.id }} className="btn">
+            Что можно настроить
+          </Link>
+          {isHost && user.role !== "guest" && (
+            <ConfigNameAction
+              label="Сохранить конфиг"
+              initialName={lobby.config.title}
+              submit={(name) => api.saveLobbyConfig(lobby.id, name)}
+            />
+          )}
+        </div>
       </section>
     </>
   );

@@ -1,5 +1,6 @@
-import type { ConfigDto } from "@asobiba/api";
+import type { ConfigDto, ConfigListItem, ConfigValidationStatus } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type ConfigIssue, type ConfigSummary, type GameCatalog, validateConfig, type VideoPlay, type VideoSnapshotSummary } from "@asobiba/sdk";
+import { z } from "zod";
 import type { GameConfig, Prisma } from "../generated/prisma/client";
 import type { AssetService } from "../assets/service";
 import { MAX_CONFIG_MEDIA_BYTES } from "../assets/media";
@@ -11,31 +12,66 @@ import { newId } from "../ids";
 
 export const MAX_CONFIGS_PER_USER = 200;
 export const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
+/** Room for the request envelope and its small metadata fields. */
+export const CONFIG_REQUEST_BODY_BYTES = MAX_CONFIG_BYTES + 8 * 1024;
+export const configNameSchema = z.string().trim().min(1).max(80);
 
 export type UserValidation = { ok: true; secretsHidden?: boolean; config: ConfigDocument; issues: ConfigIssue[]; summary: ConfigSummary } | { ok: false; config: null; issues: ConfigIssue[] };
 
-export function configDto(row: GameConfig): ConfigDto {
+type LibraryValidation = { status: ConfigValidationStatus; issues: ConfigIssue[]; normalized?: ConfigDocument };
+
+function listItem(row: GameConfig, validationStatus: ConfigValidationStatus): ConfigListItem {
   return {
     id: row.id,
     gameId: row.gameId,
     title: row.title,
-    document: row.document as unknown as ConfigDocument,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    validationStatus,
   };
 }
+
+const isDocument = (input: unknown): input is Record<string, unknown> =>
+  input !== null && typeof input === "object" && !Array.isArray(input);
+
+const documentGameId = (document: Record<string, unknown>): string =>
+  typeof document.game === "string" && document.game.length <= 80 ? document.game : "";
+
+function hideRuleDiagnostics(issues: ConfigIssue[]): ConfigIssue[] {
+  return issues.map(({ path, code, severity }) => ({
+    path: path.match(/^(sdk|game|gameVersion|title|info|rules|series|timer|visual)(?=$|\.|\[)/)?.[0] ?? "",
+    code, severity, message: "Подробности доступны при открытии исходного документа",
+  }));
+}
+
+const sizeIssue: ConfigIssue = {
+  path: "", code: "config_limit", message: "Полный JSON конфига больше 2 МиБ",
+  hint: "Уменьшите тексты и число вопросов; файлы передавайте ссылками на пул", severity: "error",
+};
+const jsonIssue: ConfigIssue = { path: "", code: "invalid_json", message: "Конфиг должен быть сериализуемым JSON", severity: "error" };
 
 function documentSizeIssues(input: unknown): ConfigIssue[] {
   try {
     const json = JSON.stringify(input);
-    if (json !== undefined && Buffer.byteLength(json, "utf8") > MAX_CONFIG_BYTES) return [{
-      path: "", code: "config_limit", message: "Полный JSON конфига больше 2 МиБ",
-      hint: "Уменьшите тексты и число вопросов; файлы передавайте ссылками на пул", severity: "error",
-    }];
-    return [];
+    return json !== undefined && Buffer.byteLength(json, "utf8") > MAX_CONFIG_BYTES ? [sizeIssue] : [];
   } catch {
-    return [{ path: "", code: "invalid_json", message: "Конфиг должен быть сериализуемым JSON", severity: "error" }];
+    return [jsonIssue];
   }
+}
+
+function documentForStorage(input: unknown): Prisma.InputJsonObject {
+  if (!isDocument(input)) throw invalidConfig([{ path: "", code: "invalid_type", message: "Конфиг должен быть JSON-объектом", severity: "error" }]);
+  let json: string;
+  try {
+    json = JSON.stringify(input);
+  } catch {
+    throw invalidConfig([jsonIssue]);
+  }
+  if (json === undefined) throw invalidConfig([jsonIssue]);
+  if (Buffer.byteLength(json, "utf8") > MAX_CONFIG_BYTES) throw invalidConfig([sizeIssue]);
+  const document = JSON.parse(json);
+  if (!isDocument(document)) throw invalidConfig([jsonIssue]);
+  return document as Prisma.InputJsonObject;
 }
 
 export class ConfigService {
@@ -49,9 +85,9 @@ export class ConfigService {
   /** Public validation never discloses a Yomifuda deck, even to its author. */
   async validate(userId: string, input: unknown): Promise<UserValidation> {
     const res = await this.validateOriginal(userId, input);
-    return res.ok && res.config.game === "yomifuda"
-      ? { ...res, config: this.shownDocument(res.config), secretsHidden: true }
-      : res;
+    if (!res.ok || res.config.game !== "yomifuda") return res;
+    const rules = this.catalog.get(res.config.game)?.presentRules?.(res.config.rules) ?? null;
+    return { ...res, config: { ...res.config, rules }, secretsHidden: true };
   }
 
   /** Internal execution/authoring only. Never serialize this result in ordinary responses. */
@@ -163,55 +199,129 @@ export class ConfigService {
     return issues;
   }
 
-  async requireValid(userId: string, input: unknown): Promise<ConfigDocument> {
-    const res = await this.validateOriginal(userId, input);
+  async requireValid(userId: string, source: { config: unknown } | { configId: string }): Promise<ConfigDocument> {
+    const res = await ("configId" in source
+      ? this.validateSavedOriginal(userId, source.configId)
+      : this.validateOriginal(userId, source.config));
     if (!res.ok) throw invalidConfig(res.issues);
     return res.config;
   }
 
-  async save(userId: string, input: unknown, configId?: string): Promise<ConfigDto> {
-    const config = await this.requireValid(userId, input);
-    const document = config as unknown as Prisma.InputJsonValue;
-    if (configId) {
-      const existing = await this.db.gameConfig.findFirst({ where: { id: configId, ownerId: userId } });
-      if (!existing) throw notFound("Конфиг не найден");
-      const row = await this.db.gameConfig.update({ where: { id: configId }, data: { title: config.title, gameId: config.game, document } });
-      return this.shownDto(configDto(row));
+  /** By-id execution gets the original; emitted diagnostics must describe it safely. */
+  async validateSavedOriginal(userId: string, id: string): Promise<UserValidation> {
+    const document = await this.getOriginal(userId, id);
+    const result = await this.validateOriginal(userId, document);
+    if (!isDocument(document) || !this.hasPrivateRules(documentGameId(document), document)) return result;
+    const issues = hideRuleDiagnostics(result.issues);
+    return result.ok ? { ...result, issues, secretsHidden: true } : { ...result, issues };
+  }
+
+  async save(userId: string, input: unknown, { configId, name }: { configId?: string; name?: string } = {}): Promise<ConfigDto> {
+    const document = documentForStorage(input);
+    const gameId = documentGameId(document);
+    if (configId !== undefined) {
+      return this.update(userId, configId, { gameId, document, title: name });
     }
-    const count = await this.db.gameConfig.count({ where: { ownerId: userId } });
-    if (count >= MAX_CONFIGS_PER_USER) throw conflict("too_many_configs", "Слишком много конфигов: удалите ненужные");
-    const row = await this.db.gameConfig.create({ data: { id: newId("cfg"), ownerId: userId, gameId: config.game, title: config.title, document } });
-    return this.shownDto(configDto(row));
+    const documentTitle = typeof document.title === "string" ? document.title.trim().slice(0, 80) : "";
+    const title = name ?? (documentTitle || this.catalog.get(gameId)?.title || "Без названия");
+    const row = await this.db.$transaction(async (tx) => {
+      const count = await tx.gameConfig.count({ where: { ownerId: userId } });
+      if (count >= MAX_CONFIGS_PER_USER) throw conflict("too_many_configs", "Слишком много конфигов: удалите ненужные");
+      return tx.gameConfig.create({ data: { id: newId("cfg"), ownerId: userId, gameId, title, document } });
+    });
+    return this.detail(row);
   }
 
-  async list(userId: string, gameId?: string): Promise<ConfigDto[]> {
-    const rows = await this.db.gameConfig.findMany({ where: { ownerId: userId, ...(gameId ? { gameId } : {}) }, orderBy: { updatedAt: "desc" } });
-    return rows.map(row => this.shownDto(configDto(row)));
+  rename(userId: string, id: string, name: string): Promise<ConfigDto> {
+    return this.update(userId, id, { title: name });
   }
 
-  private shownDocument(document: ConfigDocument): ConfigDocument {
-    if (document.game !== "yomifuda") return document;
-    const game = this.catalog.get(document.game);
-    // Fail closed if an existing secret deck outlives its registered definition.
-    return { ...document, rules: game?.presentRules ? game.presentRules(document.rules) : { cards: [] } };
+  private async update(userId: string, id: string, data: Prisma.GameConfigUpdateManyMutationInput): Promise<ConfigDto> {
+    const [row] = await this.db.gameConfig.updateManyAndReturn({ where: { id, ownerId: userId }, data });
+    if (!row) throw notFound("Конфиг не найден");
+    return this.detail(row);
   }
 
-  private shownDto(dto: ConfigDto): ConfigDto {
-    return dto.document.game === "yomifuda"
-      ? { ...dto, document: this.shownDocument(dto.document), secretsHidden: true }
-      : dto;
+  /** A failure of the validator must not make the library or its drafts inaccessible. */
+  private async libraryValidation(row: GameConfig): Promise<LibraryValidation> {
+    try {
+      const result = await this.validateOriginal(row.ownerId, row.document);
+      return result.ok
+        ? { status: "valid", issues: result.issues, normalized: result.config }
+        : { status: "invalid", issues: result.issues };
+    } catch {
+      return {
+        status: "unavailable",
+        issues: [{ path: "", code: "validation_unavailable", message: "Проверка конфига временно недоступна", severity: "error" }],
+      };
+    }
+  }
+
+  async list(userId: string, gameId?: string): Promise<ConfigListItem[]> {
+    const entries = await this.db.gameConfig.findMany({
+      where: { ownerId: userId, ...(gameId !== undefined ? { gameId } : {}) },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      select: { id: true },
+    });
+    const result: ConfigListItem[] = [];
+    // Keep the number of raw documents held at once small even at the storage limit.
+    const batchSize = 8;
+    for (let index = 0; index < entries.length; index += batchSize) {
+      const ids = entries.slice(index, index + batchSize).map(({ id }) => id);
+      const rows = await this.db.gameConfig.findMany({
+        where: { ownerId: userId, id: { in: ids }, ...(gameId !== undefined ? { gameId } : {}) },
+      });
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      for (const id of ids) {
+        const row = byId.get(id);
+        if (row) result.push(listItem(row, (await this.libraryValidation(row)).status));
+      }
+    }
+    return result;
+  }
+
+  private hasPrivateRules(gameId: string, document: Record<string, unknown>): boolean {
+    const game = this.catalog.get(gameId);
+    // Unknown games may include older private formats.
+    return game ? game.presentRules !== undefined : Object.hasOwn(document, "rules");
+  }
+
+  private async detail(row: GameConfig, revealSecrets = false): Promise<ConfigDto> {
+    const validation = await this.libraryValidation(row);
+    const document = isDocument(row.document) ? row.document : {};
+    const dto = { ...listItem(row, validation.status), document, issues: validation.issues };
+    if (revealSecrets || !this.hasPrivateRules(row.gameId, document)) return dto;
+
+    const game = this.catalog.get(row.gameId);
+    let projected: Record<string, unknown> = { game: row.gameId, rules: null };
+    if (game?.presentRules && validation.status !== "unavailable") {
+      try {
+        let config = validation.normalized;
+        if (!config) {
+          const local = validateConfig(this.catalog, document);
+          if (local.ok) config = local.config;
+        }
+        if (config?.game === game.id) projected = { ...config, rules: game.presentRules(config.rules) };
+      } catch { /* Keep rules hidden if even the local projection fails. */ }
+    }
+    // Diagnostics may quote keys, IDs or values supplied in private rules.
+    const issues = validation.status === "unavailable" ? dto.issues : hideRuleDiagnostics(dto.issues);
+    return { ...dto, document: projected, issues, secretsHidden: true };
   }
 
   async get(userId: string, id: string, options: { revealSecrets?: boolean } = {}): Promise<ConfigDto> {
-    const dto = await this.getOriginal(userId, id);
-    return options.revealSecrets === true ? dto : this.shownDto(dto);
+    return this.detail(await this.getRow(userId, id), options.revealSecrets === true);
   }
 
-  /** Internal original, scoped to its owner. Explicit revealSecrets is the author-facing opt-in. */
-  async getOriginal(userId: string, id: string): Promise<ConfigDto> {
+  /** Internal original for execution, scoped to its owner. */
+  async getOriginal(userId: string, id: string): Promise<unknown> {
+    return (await this.getRow(userId, id)).document;
+  }
+
+  private async getRow(userId: string, id: string): Promise<GameConfig> {
     const row = await this.db.gameConfig.findFirst({ where: { id, ownerId: userId } });
     if (!row) throw notFound("Конфиг не найден");
-    return configDto(row);
+    return row;
   }
 
   async remove(userId: string, id: string): Promise<void> {

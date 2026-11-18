@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Services } from "../app";
+import { configNameSchema, type UserValidation } from "../configs/service";
 import { badRequest, HttpError, notFound } from "../http-errors";
 import { renderPreview } from "../preview/render";
 import { MCP_INSTRUCTIONS } from "./instructions";
@@ -37,14 +38,14 @@ const configArg = z.record(z.string(), z.unknown()).describe("Документ �
 export function createMcpServer(user: UserDto, s: Services): McpServer {
   const server = new McpServer({ name: "asobiba", version: "0.1.0" }, { instructions: MCP_INSTRUCTIONS });
 
-  const validated = async (config: unknown) => {
-    const res = await s.configs.validateOriginal(user.id, config);
+  const validated = (res: UserValidation) => {
     if (!res.ok) throw new HttpError(422, "invalid_config", "Конфиг не прошёл проверку — сначала исправьте его (config_validate)", res.issues);
     return res;
   };
-  const configSource = async ({ config, configId }: { config?: unknown; configId?: string }) => {
+  const validateSource = ({ config, configId }: { config?: unknown; configId?: string }, forExecution = false) => {
     if ((config !== undefined) === (configId !== undefined)) throw badRequest('config_source', 'Передайте ровно одно: config или свой configId');
-    return configId !== undefined ? (await s.configs.getOriginal(user.id, configId)).document : config;
+    if (configId !== undefined) return s.configs.validateSavedOriginal(user.id, configId);
+    return forExecution ? s.configs.validateOriginal(user.id, config) : s.configs.validate(user.id, config);
   };
   const referenceFields = { config: configArg.optional(), configId: z.string().min(1).max(80).optional().describe('Свой сохранённый конфиг; вместо config, удобно для большой карты') };
 
@@ -58,7 +59,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "game_capabilities",
     {
       title: "Возможности игры",
-      description: "Знакомство с игрой (info), 5–7 направлений настройки с последствиями (tuning), JSON Schema (configSchema), guide/sdkGuide, слоты, темы, визуальный каталог и готовые конфиги. Доступно до создания конфига.",
+      description: "Знакомство с игрой (info), направления настройки с последствиями (tuning), примеры просьб игрока (promptExamples), JSON Schema (configSchema), guide/sdkGuide, слоты, темы, визуальный каталог и готовые конфиги. Доступно до создания конфига.",
       inputSchema: { gameId: z.string().describe("id из games_list") },
       annotations: { readOnlyHint: true },
     },
@@ -88,12 +89,12 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "config_validate",
     {
       title: "Проверить конфиг",
-      description: "Проверяет конфиг и картинки; summary или issues с path, message, hint. Ёмифуда: secretsHidden:true, config — read-only сводка с cards:[], её нельзя сохранять или запускать. Сохраните подготовленный исходный config через config_save, далее используйте configId. Для правки сохранённой колоды получите оригинал через config_get с явным revealSecrets:true. Другие игры возвращают нормализованный config.",
+      description: "Проверяет конфиг и медиа; summary или issues с path, message, hint. Ёмифуда возвращает сводку с cards:[] и secretsHidden:true. Сохраняйте подготовленный исходный config, для запуска используйте configId. Другие игры возвращают нормализованный config при проверке переданного документа.",
       inputSchema: referenceFields,
       annotations: { readOnlyHint: true },
     },
     (args) => run(async () => {
-      const checked = await s.configs.validate(user.id, await configSource(args));
+      const checked = await validateSource(args);
       return json(args.configId && checked.ok ? { ok: true, configId: args.configId, ...(checked.secretsHidden ? { secretsHidden: true } : {}), summary: checked.summary, issues: checked.issues } : checked);
     }),
   );
@@ -108,7 +109,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     },
     ({ config, configId, rounds }) =>
       run(async () => {
-        const res = await validated(await configSource({ config, configId }));
+        const res = validated(await validateSource({ config, configId }, true));
         const game = s.catalog.get(res.config.game);
         if (!game) throw notFound("Игра не найдена");
         return json(simulate(game, res.config, { rounds: rounds ?? 100 }));
@@ -124,7 +125,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
       annotations: { readOnlyHint: true },
     },
     ({ config, questionId }) => run(async () => {
-      const res = await validated(config);
+      const res = validated(await s.configs.validateOriginal(user.id, config));
       if (res.config.game !== "quizor") throw badRequest("unsupported_probe", "Настройки вопроса доступны для Quizor");
       try { return json(resolveQuestion(res.config.rules as QuizorRules, questionId)); }
       catch { throw notFound(`Вопрос ${questionId} не найден`); }
@@ -140,7 +141,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
       annotations: { readOnlyHint: true },
     },
     ({ config, questionId, answers }) => run(async () => {
-      const res = await validated(config);
+      const res = validated(await s.configs.validateOriginal(user.id, config));
       if (res.config.game !== "quizor") throw badRequest("unsupported_probe", "Пробник ответов доступен для Quizor");
       try { resolveQuestion(res.config.rules as QuizorRules, questionId); }
       catch { throw notFound(`Вопрос ${questionId} не найден`); }
@@ -163,7 +164,7 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     },
     ({ config, configId, moment, seed, target }) =>
       run(async () => {
-        const res = await validated(await configSource({ config, configId }));
+        const res = validated(await validateSource({ config, configId }, true));
         const preview = await renderPreview(s.assets, res.config, moment ?? "end", seed ?? 1, target);
         const last = preview.match.lastRound;
         const partial = !target && (moment ?? "end") === "end" && preview.match.phase === "playing" && !last;
@@ -183,25 +184,36 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "config_save",
     {
       title: "Сохранить конфиг",
-      description: "Сохраняет конфиг в библиотеку пользователя (с configId — обновляет свой). Возвращает id для lobby_create.",
-      inputSchema: { config: configArg, configId: z.string().optional() },
+      description: "Сохраняет исходный JSON-объект, включая черновики. config и name? создают запись, config и configId обновляют её (name? меняет имя), configId и name без config переименовывают. lobbyId и name копируют снимок своего лобби в новую запись. Для lobby_create нужен статус valid. В ответе закрытые правила скрыты.",
+      inputSchema: {
+        config: configArg.optional(),
+        configId: z.string().min(1).max(80).optional().describe("ID своей записи для обновления или переименования"),
+        lobbyId: z.string().min(1).max(80).optional().describe("ID своего лобби для сохранения его снимка"),
+        name: configNameSchema.optional().describe("Имя в библиотеке. Обязательно при копировании из лобби и при переименовании"),
+      },
     },
-    ({ config, configId }) => run(async () => json({ config: await s.configs.save(user.id, config, configId) })),
+    ({ config, configId, lobbyId, name }) => run(async () => {
+      if (lobbyId !== undefined) {
+        if (config !== undefined || configId !== undefined || name === undefined) {
+          throw badRequest("config_source", "Для сохранения снимка передайте только lobbyId и name");
+        }
+        return json({ config: await s.lobbies.saveConfig(user, lobbyId, name) });
+      }
+      if (config !== undefined) return json({ config: await s.configs.save(user.id, config, { configId, name }) });
+      if (configId !== undefined && name !== undefined) return json({ config: await s.configs.rename(user.id, configId, name) });
+      throw badRequest("config_source", "Передайте config, configId с name или lobbyId с name");
+    }),
   );
 
   server.registerTool(
     "config_list",
-    { title: "Мои конфиги", description: "Сохранённые конфиги пользователя.", inputSchema: { gameId: z.string().optional() }, annotations: { readOnlyHint: true } },
-    ({ gameId }) =>
-      run(async () => {
-        const configs = await s.configs.list(user.id, gameId);
-        return json({ configs: configs.map(({ document: _d, ...rest }) => rest) });
-      }),
+    { title: "Мои конфиги", description: "Имена, ID и текущие статусы своих записей (valid, invalid, unavailable). Для JSON и диагностики используйте config_get.", inputSchema: { gameId: z.string().optional() }, annotations: { readOnlyHint: true } },
+    ({ gameId }) => run(async () => json({ configs: await s.configs.list(user.id, gameId) })),
   );
 
   server.registerTool(
     "config_get",
-    { title: "Конфиг", description: "Свой сохранённый конфиг. Ёмифуда скрывает колоду; revealSecrets:true явно открывает оригинал только автору.", inputSchema: { configId: z.string(), revealSecrets: z.boolean().optional() }, annotations: { readOnlyHint: true } },
+    { title: "Конфиг", description: "Своя запись, текущий статус и ошибки. Для ремонта явно запросите исходный JSON и полную диагностику с revealSecrets:true, исправьте и проверьте документ, затем обновите запись через config_save с configId.", inputSchema: { configId: z.string().min(1).max(80), revealSecrets: z.boolean().optional() }, annotations: { readOnlyHint: true } },
     ({ configId, revealSecrets }) => run(async () => json({ config: await s.configs.get(user.id, configId, { revealSecrets }) })),
   );
 
@@ -302,8 +314,8 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     "lobby_create",
     {
       title: "Создать лобби",
-      description: "Создаёт лобби по сохранённому конфигу (configId) или по конфигу целиком (config). Владелец токена — хозяин и первый игрок. Верните человеку url.",
-      inputSchema: { name: z.string().max(60).describe("Название лобби"), configId: z.string().optional(), config: configArg.optional() },
+      description: "Передайте ровно один источник: свой configId или весь config. Сервер заново проверит его и создаст лобби. По умолчанию имя лобби берётся из title документа. Владелец токена — хозяин и первый игрок. Верните человеку url.",
+      inputSchema: { name: z.string().max(60).optional().describe("Имя лобби, по умолчанию title документа"), configId: z.string().min(1).max(80).optional(), config: configArg.optional() },
     },
     ({ name, configId, config }) =>
       run(async () => {

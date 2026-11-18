@@ -3,6 +3,7 @@ import { AuthProvider, RequireAuth } from "./auth";
 import { Layout } from "./components/Layout";
 import { gamesCss } from "./games";
 import { AccountPage } from "./pages/AccountPage";
+import { GameGuidePage, GamesPage } from "./pages/GamesPage";
 import { HomePage } from "./pages/HomePage";
 import { LobbyEntryPage } from "./pages/LobbyEntryPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -29,6 +30,14 @@ export function AppShell() {
                   <HomePage />
                 </RequireAuth>
               }
+            />
+            <Route
+              path="/games"
+              element={<RequireAuth accountOnly><GamesPage /></RequireAuth>}
+            />
+            <Route
+              path="/games/:id"
+              element={<RequireAuth><GameGuidePage /></RequireAuth>}
             />
             <Route
               path="/new"
