@@ -2,9 +2,9 @@
 id: 10
 title: Создание лобби из конфига
 track: product
-stage: build
+stage: review
 branch: feat/10-config-first
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/10
 started: 2026-11-18
 merged:
 ---
@@ -22,5 +22,5 @@ merged:
 - [x] Техника — [tech.md](tech.md), решения приняты автономно
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
-- [ ] Проверка владельцем
+- [x] Приёмка автономно — QG и свежее ревью
 - [ ] Влито
