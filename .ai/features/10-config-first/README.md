@@ -2,7 +2,7 @@
 id: 10
 title: Создание лобби из конфига
 track: product
-stage: tech
+stage: plan
 branch: feat/10-config-first
 pr:
 started: 2026-11-18
@@ -19,7 +19,7 @@ merged:
 
 - [x] Бриф — [brief.md](brief.md)
 - [x] Продукт — [десять решений агента](product.md), приняты владельцем
-- [ ] Техника
+- [x] Техника — [tech.md](tech.md), решения приняты автономно
 - [ ] План
 - [ ] Реализация и QG
 - [ ] Проверка владельцем
