@@ -25,9 +25,16 @@ export interface GameSummary {
   presets: { id: string; title: string; description: string }[];
 }
 
-export interface GameCapabilities extends GameSummary {
+export interface GameGuide {
+  id: string;
+  title: string;
   info: GameInformation;
   tuning: TuningDirection[];
+  promptExamples: string[];
+  exampleConfig: ConfigDocument | null;
+}
+
+export interface GameCapabilities extends GameSummary, Pick<GameGuide, "info" | "tuning" | "promptExamples"> {
   sdkGuide: string;
   guide: string;
   configSchema: unknown;
@@ -59,12 +66,30 @@ export function configJsonSchema(game: AnyGame): unknown {
   return z.toJSONSchema(documentSchema(game), { io: "input", unrepresentable: "any" });
 }
 
+function guideDetails(game: AnyGame): Pick<GameGuide, "info" | "tuning" | "promptExamples"> {
+  return {
+    info: gameInformation(game),
+    tuning: game.tuning ?? [],
+    promptExamples: game.promptExamples ?? [],
+  };
+}
+
+/** Public, developer-authored help for players. */
+export function describeGameGuide(game: AnyGame): GameGuide {
+  const preset = game.presets.find((candidate) => candidate.id === game.examplePresetId);
+  return {
+    id: game.id,
+    title: game.title,
+    ...guideDetails(game),
+    exampleConfig: preset ? presetDocument(game, preset) : null,
+  };
+}
+
 /** Everything an agent needs to build a config for one game. */
 export function describeGame(game: AnyGame): GameCapabilities {
   return {
     ...summarizeGame(game),
-    info: gameInformation(game),
-    tuning: game.tuning ?? [],
+    ...guideDetails(game),
     sdkGuide: SDK_GUIDE,
     guide: game.guide,
     configSchema: configJsonSchema(game),

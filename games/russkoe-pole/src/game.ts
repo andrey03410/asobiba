@@ -1,5 +1,5 @@
 import { actionError, defineGame, type RoundResult, type Seat } from "@asobiba/sdk";
-import { POLE_INFO, POLE_TUNING, summarizePoleConfig } from "./info";
+import { POLE_INFO, POLE_PROMPT_EXAMPLES, POLE_TUNING, summarizePoleConfig } from "./info";
 import { z } from "zod";
 import { alphabetChars, alphabetSet, canonChar, canonText, isVowel } from "./alphabet";
 import { getWordBank, type BankWord } from "./bank-slot";
@@ -760,6 +760,8 @@ export const russkoePole = defineGame({
   kind: "turn",
   info: POLE_INFO,
   tuning: POLE_TUNING,
+  promptExamples: POLE_PROMPT_EXAMPLES,
+  examplePresetId: "classic",
   summarizeConfig: summarizePoleConfig,
   rulesSchema,
   visualSchema,

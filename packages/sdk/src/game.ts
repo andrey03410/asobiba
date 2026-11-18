@@ -163,6 +163,10 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   /** Public introduction and supported directions for a human conversation. */
   info?: GameInformation;
   tuning?: TuningDirection[];
+  /** Example requests a player can give an agent. */
+  promptExamples?: string[];
+  /** Public developer preset that runs without account-specific resources. */
+  examplePresetId?: string;
   /** Explicit public projection of an original, normalized config. Never serialize raw rules. */
   summarizeConfig?(config: ConfigDocument<R, V>): ConfigSummary;
   presets: ConfigPreset[];

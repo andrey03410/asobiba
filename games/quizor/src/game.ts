@@ -6,7 +6,7 @@ import {
   type SetupContext,
   type VideoDirective,
 } from "@asobiba/sdk";
-import { QUIZOR_INFO, QUIZOR_TUNING, summarizeQuizorConfig } from "./info";
+import { QUIZOR_INFO, QUIZOR_PROMPT_EXAMPLES, QUIZOR_TUNING, summarizeQuizorConfig } from "./info";
 import { z } from "zod";
 import {
   answersSchema,
@@ -3361,6 +3361,8 @@ export const quizor = defineGame<
   kind: "turn",
   info: QUIZOR_INFO,
   tuning: QUIZOR_TUNING,
+  promptExamples: QUIZOR_PROMPT_EXAMPLES,
+  examplePresetId: "classic",
   summarizeConfig: summarizeQuizorConfig,
   rulesSchema,
   visualSchema,

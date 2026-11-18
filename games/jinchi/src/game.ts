@@ -7,7 +7,7 @@ import { captureTerritory } from './capture';
 import { dimensions, findPlacements, hasPlacement, placementCapacity, placementError, samplePlacement, SIDES, CORNERS } from './placement';
 export { createPlacementProbe, findPlacements, placementError } from './placement';
 import { checkVisual, visualSchema } from "./visual";
-import { JINCHI_INFO, JINCHI_TUNING, summarizeJinchiConfig } from './info';
+import { JINCHI_INFO, JINCHI_PROMPT_EXAMPLES, JINCHI_TUNING, summarizeJinchiConfig } from './info';
 
 export const actionSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("roll") }),
@@ -415,7 +415,8 @@ export const jinchi = defineGame({
     const impossibleRoll = Boolean(state.dice && !state.result && !hasPlacement(state));
     return { ...state, canAct, impossibleRoll, canRotate: !state.turnRotationLocked, canReroll: canAct && canReroll(state), canSkip: canAct && impossibleRoll && canReroll(state) };
   },
-  info: JINCHI_INFO, tuning: JINCHI_TUNING, summarizeConfig: summarizeJinchiConfig,
+  info: JINCHI_INFO, tuning: JINCHI_TUNING, promptExamples: JINCHI_PROMPT_EXAMPLES, examplePresetId: "duel",
+  summarizeConfig: summarizeJinchiConfig,
   guide: JINCHI_GUIDE, presets: JINCHI_PRESETS, slots: [], themes: [],
   visualCatalog: { placeAnimations: { pop: "Появление фигуры", none: "Без анимации" }, captureAnimations: { wave: "Волна захвата", none: "Без анимации" } },
 });
