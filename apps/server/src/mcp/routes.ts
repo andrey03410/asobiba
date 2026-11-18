@@ -1,11 +1,12 @@
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance } from "fastify";
 import type { Services } from "../app";
+import { CONFIG_REQUEST_BODY_BYTES } from "../configs/service";
 import { createMcpServer } from "./server";
 
 /** Streamable HTTP without sessions: a fresh MCP server per POST, authorized by a personal token. */
 export function registerMcpRoutes(app: FastifyInstance, s: Services): void {
-  app.post("/mcp", async (req, reply) => {
+  app.post("/mcp", { bodyLimit: CONFIG_REQUEST_BODY_BYTES }, async (req, reply) => {
     const header = req.headers.authorization ?? "";
     const secret = header.startsWith("Bearer ") ? header.slice(7).trim() : undefined;
     const user = await s.auth.userByToken(secret);

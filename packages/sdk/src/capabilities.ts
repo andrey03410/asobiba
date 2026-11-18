@@ -14,7 +14,7 @@ export const SDK_GUIDE = `Конфиг — JSON-документ { sdk, game, ga
   только в слоты из slots: { preset: "<id>" } или { asset: "ast_…" } из своего пула.
 - Конфиг — только данные: выбирайте из того, что описано в схеме. Код не исполняется.
 Порядок: возьмите пресет → поправьте под просьбу → config_validate → config_simulate →
-config_preview → config_save → lobby_create.`;
+config_preview → lobby_create. По просьбе игрока сохраните конфиг через config_save.`;
 
 export interface GameSummary {
   id: string;

@@ -109,8 +109,16 @@ function LobbyConfigEditor({ text: initialText, saved }: LoadedSource) {
     const timer = window.setTimeout(() => {
       api.validateConfig(document).then(({ ok, issues }) => {
         if (alive && id === validationId.current) setCheck({ validationStatus: ok ? "valid" : "invalid", issues });
-      }).catch(() => {
-        if (alive && id === validationId.current) setCheck({ validationStatus: "unavailable", issues: [] });
+      }).catch((err) => {
+        if (!alive || id !== validationId.current) return;
+        if (err instanceof ApiRequestError && err.status === 413) {
+          setCheck({
+            validationStatus: "invalid",
+            issues: [{ path: "", code: "config_limit", severity: "error", message: "Уменьшите размер JSON-конфига." }],
+          });
+        } else {
+          setCheck({ validationStatus: "unavailable", issues: [] });
+        }
       });
     }, 300);
     return () => {
@@ -144,7 +152,15 @@ function LobbyConfigEditor({ text: initialText, saved }: LoadedSource) {
     try {
       const { config } = await api.updateConfig(saved.id, parsed.document);
       validationId.current += 1;
-      setCheck(config);
+      if (config.secretsHidden && config.issues.length > 0 && config.validationStatus !== "unavailable") {
+        setCheck({
+          validationStatus: config.validationStatus,
+          issues: check?.validationStatus === config.validationStatus ? check.issues : [],
+        });
+        setRetry((attempt) => attempt + 1);
+      } else {
+        setCheck(config);
+      }
       const detail = config.validationStatus === "invalid"
         ? " Для запуска исправьте ошибки."
         : config.validationStatus === "unavailable" ? " Проверка сейчас недоступна." : "";

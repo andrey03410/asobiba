@@ -16,7 +16,7 @@ export function ConfigsTab() {
   const toast = useToast();
   const navigate = useNavigate();
   const [configs, setConfigs] = useState<ConfigListItem[] | null>(null);
-  const [games, setGames] = useState<Record<string, string>>({});
+  const [games, setGames] = useState(() => new Map<string, string>());
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
 
@@ -33,7 +33,7 @@ export function ConfigsTab() {
   useEffect(() => {
     void load();
     api.games()
-      .then((res) => setGames(Object.fromEntries(res.games.map((game) => [game.id, game.title]))))
+      .then((res) => setGames(new Map(res.games.map((game) => [game.id, game.title]))))
       .catch(() => {});
   }, [load]);
 
@@ -80,7 +80,7 @@ export function ConfigsTab() {
               <div className="row-main">
                 <b>{config.title}</b>
                 <span className="muted small">
-                  {games[config.gameId] ?? (config.gameId || "Игра не указана")} · изменён {formatDate(config.updatedAt)}
+                  {games.get(config.gameId) ?? (config.gameId || "Игра не указана")} · изменён {formatDate(config.updatedAt)}
                 </span>
                 <span className="small"><code>{config.id}</code> · {statusLabels[config.validationStatus]}</span>
               </div>

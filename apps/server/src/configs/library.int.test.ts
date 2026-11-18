@@ -18,6 +18,17 @@ const source = { sdk: 1, game: "tic-tac-toe", gameVersion: 1, title: "Игров
 const request = (method: "GET" | "POST" | "PUT" | "PATCH", url: string, payload?: Record<string, unknown>, cookie = owner.cookie) =>
   t.app.inject({ method, url, headers: { cookie }, ...(payload ? { payload } : {}) });
 
+it("allows a configuration at its storage limit inside the HTTP transport envelope", async () => {
+  const config = { note: "" };
+  config.note = "x".repeat(MAX_CONFIG_BYTES - Buffer.byteLength(JSON.stringify(config)));
+  const saved = await request("POST", "/api/configs", { config, name: "Полный черновик" });
+  expect(saved.statusCode).toBe(201);
+  expect(saved.json().config.document.note.length).toBe(config.note.length);
+  const tooLarge = await request("POST", "/api/configs", { config: { note: config.note + "x" } });
+  expect(tooLarge.statusCode).toBe(422);
+  expect(tooLarge.json().issues[0].code).toBe("config_limit");
+});
+
 it("stores drafts verbatim, preserves their library name on repair and freezes new lobbies", async () => {
   const draft = { title: "Черновик", unfinished: { note: "сценарий" } };
   const saved = await request("POST", "/api/configs", { config: draft, name: "Пятничная игра" });

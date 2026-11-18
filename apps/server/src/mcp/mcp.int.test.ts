@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestApp, resetDb, SIMPLE_SVG, signUp, type TestApp } from "../test/helpers";
 import { MCP_INSTRUCTIONS, TOOL_NAMES } from "./instructions";
 import { wavSeconds } from "../assets/media-fixtures";
+import { MAX_CONFIG_BYTES } from "../configs/service";
 
 let t: TestApp;
 let base = "";
@@ -30,6 +31,24 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 }
 
 describe("MCP over Streamable HTTP", () => {
+  it("allows a configuration at its storage limit inside the MCP transport envelope", async () => {
+    const owner = await signUp(t, "owner");
+    const { secret } = await t.services.auth.createToken(owner.user.id, "Граница размера");
+    const client = await connect(secret);
+    try {
+      const config = { note: "" };
+      config.note = "x".repeat(MAX_CONFIG_BYTES - Buffer.byteLength(JSON.stringify(config)));
+      const saved = await call(client, "config_save", { config, name: "Полный черновик" });
+      expect(saved.isError).toBe(false);
+      expect(saved.json.config.document.note.length).toBe(config.note.length);
+      const tooLarge = await call(client, "config_save", { config: { note: config.note + "x" } });
+      expect(tooLarge.isError).toBe(true);
+      expect(tooLarge.json.issues[0].code).toBe("config_limit");
+    } finally {
+      await client.close();
+    }
+  });
+
   it("lets an agent repair, rename and copy owned configurations", async () => {
     const owner = await signUp(t, "owner");
     const other = await signUp(t, "other");

@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Services } from "./app";
 import { FailureLimiter } from "./auth/rate-limit";
-import { configNameSchema } from "./configs/service";
+import { CONFIG_REQUEST_BODY_BYTES, configNameSchema } from "./configs/service";
 import { generateJinchiConfiguration } from './games/generate-jinchi';
 import { SESSION_TTL_MS } from "./auth/service";
 import type { AssetBody } from "./assets/service";
@@ -195,7 +195,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   });
 
   // ---------- configs ----------
-  app.post("/api/configs/validate", async (req) => {
+  app.post("/api/configs/validate", { bodyLimit: CONFIG_REQUEST_BODY_BYTES }, async (req) => {
     const user = requireAccount(req);
     const body = parse(z.object({ config: z.unknown() }), req.body);
     return s.configs.validate(user.id, body.config);
@@ -206,14 +206,14 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     const query = parse(z.object({ revealSecrets: z.enum(["true", "false"]).optional() }), req.query);
     return { config: await s.configs.get(user.id, parse(idParam, req.params).id, { revealSecrets: query.revealSecrets === "true" }) };
   });
-  app.post("/api/configs", async (req, reply) => {
+  app.post("/api/configs", { bodyLimit: CONFIG_REQUEST_BODY_BYTES }, async (req, reply) => {
     const user = requireAccount(req);
     const { config: document, name } = parse(saveConfigBody, req.body);
     const config = await s.configs.save(user.id, document, { name });
     reply.code(201);
     return { config };
   });
-  app.put("/api/configs/:id", async (req) => {
+  app.put("/api/configs/:id", { bodyLimit: CONFIG_REQUEST_BODY_BYTES }, async (req) => {
     const user = requireAccount(req);
     const { config, name } = parse(saveConfigBody, req.body);
     return { config: await s.configs.save(user.id, config, { configId: parse(idParam, req.params).id, name }) };
@@ -330,7 +330,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     requireAccount(req);
     return { lobbies: await s.lobbies.list() };
   });
-  app.post("/api/lobbies", async (req, reply) => {
+  app.post("/api/lobbies", { bodyLimit: CONFIG_REQUEST_BODY_BYTES }, async (req, reply) => {
     const user = requireAccount(req);
     const body = parse(
       z.object({ name: z.string().max(60).optional(), configId: z.string().min(1).max(80).optional(), config: z.unknown().optional() }),

@@ -19,6 +19,10 @@ describe("describeGame", () => {
       expect.objectContaining({ id: "race", kind: "turn", presets: [expect.objectContaining({ id: "default" })] }),
     ]);
   });
+
+  it("describes creating a lobby before any optional library save", () => {
+    expect(describeGame(raceGame).sdkGuide).toContain("config_preview → lobby_create");
+  });
 });
 
 describe("describeGameGuide", () => {

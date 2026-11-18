@@ -12,6 +12,8 @@ import { newId } from "../ids";
 
 export const MAX_CONFIGS_PER_USER = 200;
 export const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
+/** Room for the request envelope and its small metadata fields. */
+export const CONFIG_REQUEST_BODY_BYTES = MAX_CONFIG_BYTES + 8 * 1024;
 export const configNameSchema = z.string().trim().min(1).max(80);
 
 export type UserValidation = { ok: true; secretsHidden?: boolean; config: ConfigDocument; issues: ConfigIssue[]; summary: ConfigSummary } | { ok: false; config: null; issues: ConfigIssue[] };
