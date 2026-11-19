@@ -59,13 +59,19 @@ it.each(["reconnect", "human", "algorithm", "finish", "handoff-retry", "restart"
   if (mode === "restart") {
     now += 2_000;
     await lobbies.action(owner.user, id, { type: "unknown" });
+    expect(latest()?.game).toMatchObject({ phase: "preload" });
+    now += 10_000;
+    await lobbies.agentWait(owner.user, id, key, 0, 0);
+    expect(latest()?.game).toMatchObject({ phase: "answer" });
     const before = latest()?.game;
-    expect(before).toMatchObject({ phase: "preload" });
+    now += 10_000;
+    await lobbies.agentWait(owner.user, id, key, 0, 0);
+    const checkpoint = now;
     lobbies.shutdown();
     now += 60_000;
     expect(await lobbies.restoreAll()).toEqual({ restored: 1, aborted: 0 });
     await lobbies.subscribe({ userId: owner.user.id, send: (msg) => views.push(msg) }, id);
-    expect(latest()).toMatchObject({ pause: { reason: "presenter-disconnected" }, game: before });
+    expect(latest()).toMatchObject({ pause: { reason: "presenter-disconnected", since: checkpoint }, game: before });
     return;
   }
   expect((started.log as unknown[])[0]).toMatchObject({ at: started.startedAt.getTime(), action: { type: "presenter-presence", online: true } });

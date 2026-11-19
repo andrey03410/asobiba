@@ -35,11 +35,13 @@ interface Room {
   presenterOnline: boolean | null;
   agent: LobbyAgent;
   agentAssignment: LobbyAgentAssignment | null;
+  agentCheckpointAt: number | null;
 }
 
 type LobbyRow = Prisma.LobbyGetPayload<{ include: { host: true; members: { include: { user: true } } } }>;
 
 const MAX_TIMER_MS = 2 ** 31 - 1;
+const AGENT_CHECKPOINT_INTERVAL_MS = 5_000;
 /** Directives a viewer keeps access to, and viewers remembered at once. */
 const VIDEO_WINDOW = 16;
 const VIDEO_VIEWERS = 2000;
@@ -134,6 +136,7 @@ export class LobbyService {
       presenterOnline: null,
       agent: new LobbyAgent(),
       agentAssignment: lobby.agent as LobbyAgentAssignment | null,
+      agentCheckpointAt: null,
     };
     this.rooms.set(lobbyId, room);
     return room;
@@ -402,8 +405,7 @@ export class LobbyService {
   async agentWait(user: UserDto, lobbyId: string, key: string, after: number, timeoutMs: number, signal?: AbortSignal): Promise<{ event: AgentEvent | null; instructions?: string }> {
     const initial = await this.lock(lobbyId, async () => {
       const room = await this.agentRoom(user, lobbyId, key);
-      room.agent.renew(this.deps.now());
-      this.schedule(room);
+      await this.refreshAgentLease(room);
       const event = room.agent.eventAfter(after);
       return event || timeoutMs === 0
         ? { value: { event: event ?? null, instructions: room.agentAssignment?.instructions } }
@@ -413,10 +415,7 @@ export class LobbyService {
     await initial.pending;
     return this.lock(lobbyId, async () => {
       const room = await this.agentRoom(user, lobbyId, key);
-      if (!signal?.aborted) {
-        room.agent.renew(this.deps.now());
-        this.schedule(room);
-      }
+      if (!signal?.aborted) await this.refreshAgentLease(room);
       return { event: room.agent.eventAfter(after) ?? null, instructions: room.agentAssignment?.instructions };
     });
   }
@@ -553,6 +552,20 @@ export class LobbyService {
     if (expiresAt !== undefined && expiresAt <= now) await this.dropAgent(room, expiresAt);
   }
 
+  private async refreshAgentLease(room: Room): Promise<void> {
+    const now = this.deps.now();
+    room.agent.renew(now);
+    const match = room.match;
+    if (room.agentAssignment?.role === "presenter" && match && !match.pause && match.currentPhase !== "finished"
+      && now - (room.agentCheckpointAt ?? match.startedAt) >= AGENT_CHECKPOINT_INTERVAL_MS) {
+      const advanced = match.advance(now);
+      await this.afterMatchChange(room);
+      if (advanced) this.publishMatch(room);
+    } else {
+      this.schedule(room);
+    }
+  }
+
   private async dropAgent(room: Room, at: number): Promise<void> {
     const role = room.agentAssignment?.role;
     const active = room.match && room.match.currentPhase !== "finished";
@@ -676,6 +689,7 @@ export class LobbyService {
         this.deps.db.lobby.update({ where: { id: lobbyId }, data: { status: "playing" } }),
       ]);
       Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false, hostId: row.hostId, presenterId: row.members.find(m => m.role === "presenter")?.userId ?? null, playerIds: new Set(players), presence: null, presenterOnline: aiPresenter ? true : null });
+      room.agentCheckpointAt = aiPresenter ? match.checkpointAt : null;
       room.agent.resetComments();
       await this.syncPresence(room);
       await this.afterMatchChange(room);
@@ -756,9 +770,12 @@ export class LobbyService {
   }
 
   private async syncPresence(room: Room): Promise<void> {
-    if (!room.match?.game.applyControl || room.match.currentPhase !== "playing" || room.match.pause) return;
-    const advanced = room.match.advance(this.deps.now());
-    if (room.match.currentPhase !== "playing") {
+    const match = room.match;
+    if (!match?.game.applyControl || match.pause) return;
+    const canSync = () => match.currentPhase === "playing" || (match.currentPhase === "intermission" && match.game.applyIntermissionControl);
+    if (!canSync()) return;
+    const advanced = match.advance(this.deps.now());
+    if (!canSync()) {
       if (advanced) { await this.afterMatchChange(room); this.publishMatch(room); }
       return;
     }
@@ -767,12 +784,12 @@ export class LobbyService {
     let changed = advanced;
     for (let seat = 0; seat < room.seatUsers.length; seat++) {
       if (room.presence !== null && room.presence.has(seat) === seats.has(seat)) continue;
-      const result = room.match.dispatchControl("system", { type: "presence", seat, online: seats.has(seat) }, this.deps.now());
+      const result = match.dispatchControl("system", { type: "presence", seat, online: seats.has(seat) }, this.deps.now());
       changed ||= result.ok;
     }
     const presenterOnline = (room.agentAssignment?.role === "presenter" && room.agent.status === "connected") || (room.presenterId !== null && online.has(room.presenterId));
     if (room.presenterOnline !== presenterOnline) {
-      const result = room.match.dispatchControl("system", { type: "presenter-presence", online: presenterOnline, ...(presenterOnline ? { requireAssignment: true } : {}) }, this.deps.now());
+      const result = match.dispatchControl("system", { type: "presenter-presence", online: presenterOnline, ...(presenterOnline ? { requireAssignment: true } : {}) }, this.deps.now());
       changed ||= result.ok;
     }
     room.presenterOnline = presenterOnline;
@@ -903,8 +920,9 @@ export class LobbyService {
         this.deps.db.lobby.update({ where: { id: room.lobbyId }, data: { status: "finished" } }),
       ]);
       await this.publishLobby(room);
-    } else if (room.agentAssignment?.role === "presenter") {
+    } else if (room.agentAssignment?.role === "presenter" && room.agentCheckpointAt !== match.checkpointAt) {
       await this.deps.db.match.update({ where: { id: room.matchId! }, data: { checkpointAt: new Date(match.checkpointAt) } });
+      room.agentCheckpointAt = match.checkpointAt;
     }
     this.schedule(room);
   }
@@ -960,6 +978,7 @@ export class LobbyService {
             : this.deps.now();
           const match = Match.restore({ game, config, record, now: restoreAt });
           Object.assign(room, { match, matchId: row.id, seatUsers, seatNames: row.seatNames as string[], finishedSaved: false, presence: null, presenterOnline: null });
+          room.agentCheckpointAt = row.checkpointAt?.getTime() ?? null;
           if (room.agentAssignment) await this.dropAgent(room, restoreAt);
           await this.syncPresence(room);
           await this.afterMatchChange(room);
