@@ -131,6 +131,7 @@ describe("MatchStage", () => {
     expect(host).not.toContain('<option value="p">');
     expect(host).not.toContain("Включить алгоритмического ведущего");
     expect(host).toContain("Завершить партию");
+    expect(host).not.toContain("Возобновить партию");
 
     const compatible = { ...unavailablePresenter, agent: { ...unavailablePresenter.agent!, canUseAlgorithm: true } };
     expect(render(paused, { lobby: compatible, onAgentAction: () => {} })).toContain("Включить алгоритмического ведущего");
@@ -139,6 +140,25 @@ describe("MatchStage", () => {
     expect(guest).toContain("ИИ отключился");
     expect(guest).not.toContain("Переподключить ИИ");
     expect(guest).not.toContain("Возобновить партию");
+  });
+
+  it("lets the host resume with the selected presenter while keeping recovery alternatives available", () => {
+    const pendingHandoff: LobbyDto = {
+      ...lobby,
+      status: "playing",
+      agent: { role: "presenter", status: "disconnected", canUseAlgorithm: true },
+      members: [{ userId: "s", login: "Анна", role: "presenter", seat: null, joinedAt: "" }],
+    };
+    const html = render(view({ pause: { reason: "presenter-disconnected", since: 40_000 } }), {
+      lobby: pendingHandoff,
+      onAgentAction: () => {},
+      onPauseChange: () => {},
+    });
+    expect(html).toContain("Анна");
+    expect(html).toContain("Возобновить партию");
+    expect(html).toContain("Переподключить ИИ");
+    expect(html).toContain("Включить алгоритмического ведущего");
+    expect(html).toContain("Завершить партию");
   });
 
   it("shows public commentary and a departure notice without pausing the match", () => {

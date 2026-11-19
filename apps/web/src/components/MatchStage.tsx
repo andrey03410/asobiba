@@ -126,6 +126,9 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
   const series = match.rounds > 1;
   const paused = Boolean(match.pause);
   const needsPresenter = lobby.agent?.role === "presenter" && lobby.agent.status !== "connected";
+  const humanPresenter = needsPresenter && match.pause?.reason === "presenter-disconnected"
+    ? lobby.members.find((member) => member.role === "presenter")
+    : undefined;
   const gameClockOffset = clockOffset - (match.clockShiftMs ?? 0);
   const pauseTitleRef = useRef<HTMLHeadingElement>(null);
 
@@ -235,10 +238,12 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
             <section className="card stage-pause-card" aria-label="Пауза">
               <div role="status">
                 <h2 tabIndex={-1} ref={pauseTitleRef}>Партия на паузе</h2>
-                {needsPresenter && <p>ИИ отключился. Ждём ведущего.</p>}
+                {humanPresenter
+                  ? <p>Назначен ведущий · {humanPresenter.login}</p>
+                  : needsPresenter && <p>ИИ отключился. Ждём ведущего.</p>}
               </div>
               {needsPresenter && onAgentAction && <AgentRecovery lobby={lobby} busy={busy} onAction={onAgentAction} />}
-              {!needsPresenter && onPauseChange && (
+              {(!needsPresenter || humanPresenter) && onPauseChange && (
                 <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onPauseChange(false)}>
                   Возобновить партию
                 </button>
