@@ -1,9 +1,10 @@
-import type { LobbyDto } from "@asobiba/api";
+import type { LobbyAgentCommand, LobbyDto } from "@asobiba/api";
 import { type ConfigDocument, INTERMISSION_MS, type MatchView, type RoundResult, type Seat, type StageFullscreen } from "@asobiba/sdk";
 import { type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { assetUrl } from "../api";
 import type { WebGameClient } from "../games";
 import { useNow } from "../util";
+import { AgentParticipation, AgentRecovery } from "./AgentParticipation";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 interface Props {
@@ -18,6 +19,8 @@ interface Props {
   onAction?: (action: unknown) => void;
   onControl?: (action: unknown) => void;
   controlRole?: "host" | "presenter";
+  onPauseChange?: (paused: boolean) => void;
+  onAgentAction?: (action: LobbyAgentCommand) => void;
   /** Host only: start the next match from the result card. */
   onPlayAgain?: () => void;
   /** Leave the stage for the lobby page; offered once the match is over. */
@@ -95,7 +98,7 @@ function FullscreenIcon({ active }: { active: boolean }) {
  * The match stage: once a match is on, the lobby steps aside and the board takes
  * the whole window. A slim bar keeps the turn, the clock and the way back.
  */
-export function MatchStage({ lobby, match, config, client, mySeat, seatName, clockOffset, online, onAction, onControl, controlRole, onPlayAgain, onLeave, busy, drawer, information }: Props) {
+export function MatchStage({ lobby, match, config, client, mySeat, seatName, clockOffset, online, onAction, onControl, controlRole, onPauseChange, onAgentAction, onPlayAgain, onLeave, busy, drawer, information }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(rootRef);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -121,6 +124,10 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
   const others = shown.currentSeats.filter((seat) => seat !== mySeat);
   const result = match.phase === "finished" && !held ? match.result : null;
   const series = match.rounds > 1;
+  const paused = Boolean(match.pause);
+  const needsPresenter = lobby.agent?.role === "presenter" && lobby.agent.status !== "connected";
+  const gameClockOffset = clockOffset - (match.clockShiftMs ?? 0);
+  const pauseTitleRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     const { overflow } = document.body.style;
@@ -135,6 +142,16 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
   useEffect(() => {
     if (match.phase !== "finished") setResultHidden(false);
   }, [match.phase]);
+
+  useEffect(() => {
+    if (!paused) return;
+    // A native modal escapes its inert board ancestor while it is open.
+    for (const dialog of rootRef.current?.querySelectorAll<HTMLDialogElement>(".stage-board dialog[open]") ?? []) {
+      if (dialog.requestClose) dialog.requestClose();
+      else dialog.close();
+    }
+    pauseTitleRef.current?.focus();
+  }, [paused]);
 
   // A board that forgets to release must not freeze the HUD for good.
   useEffect(() => {
@@ -174,10 +191,10 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
               Раунд {match.round} из {match.rounds}
             </span>
           )}
-          {shown.phase === "playing" && <span className={`stage-turn${myTurn ? " is-mine" : ""}`}>{myTurn ? "Ваш ход" : others.length > 0 ? `Ходит ${names(others, seatName)}` : "Игра идёт"}</span>}
-          {shown.phase === "intermission" && <span className="stage-chip">Перерыв</span>}
+          {!paused && shown.phase === "playing" && <span className={`stage-turn${myTurn ? " is-mine" : ""}`}>{myTurn ? "Ваш ход" : others.length > 0 ? `Ходит ${names(others, seatName)}` : "Игра идёт"}</span>}
+          {!paused && shown.phase === "intermission" && <span className="stage-chip">Перерыв</span>}
           {shown.phase === "finished" && <span className="stage-chip">Партия окончена</span>}
-          {shown.phase === "playing" && !held && match.turnDeadline !== null && <StageTimer deadline={match.turnDeadline} clockOffset={clockOffset} max={config.timer.turnSeconds || Infinity} />}
+          {!paused && shown.phase === "playing" && !held && match.turnDeadline !== null && <StageTimer deadline={match.turnDeadline} clockOffset={gameClockOffset} max={config.timer.turnSeconds || Infinity} />}
         </div>}
         {series && (
           <ol className="stage-score" aria-label="Счёт серии">
@@ -192,6 +209,11 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
         <div className="stage-tools">
           {!online && <span className="stage-chip is-warn">нет связи…</span>}
           {mySeat === null && <span className="stage-chip">{controlRole === "presenter" ? "ведущий" : "зритель"}</span>}
+          {!paused && match.phase !== "finished" && onPauseChange && (
+            <button type="button" className="stage-btn" aria-label="Поставить на паузу" disabled={busy} onClick={() => onPauseChange(true)}>
+              Пауза
+            </button>
+          )}
           {fullscreen.available && (
             <button type="button" className="stage-btn" onClick={fullscreen.toggle} title={fullscreen.active ? "Выйти из полного экрана (Esc)" : "Во весь экран"} aria-label={fullscreen.active ? "Выйти из полного экрана" : "Во весь экран"}>
               <FullscreenIcon active={fullscreen.active} />
@@ -199,20 +221,38 @@ export function MatchStage({ lobby, match, config, client, mySeat, seatName, clo
           )}
         </div>
       </header>
+      <AgentParticipation lobby={lobby} compact />
 
       <main className="stage-body">
         <ErrorBoundary resetKey={match}>
-          <div className={`stage-board${mySeat === null ? " is-spectator" : ""}`}>
-            <client.Board lobbyId={lobby.id} match={match} config={config} seat={mySeat} assetUrl={assetUrl} onAction={onAction} onControl={onControl} controlRole={controlRole} connected={online} playerNames={playerNames} clockOffset={clockOffset} stage fullscreen={fullscreen} onHold={onHold} />
+          <div className={`stage-board${mySeat === null ? " is-spectator" : ""}`} inert={paused}>
+            <client.Board lobbyId={lobby.id} match={match} config={config} seat={mySeat} assetUrl={assetUrl} onAction={paused ? undefined : onAction} onControl={paused ? undefined : onControl} controlRole={controlRole} connected={online} playerNames={playerNames} clockOffset={gameClockOffset} stage fullscreen={fullscreen} onHold={onHold} />
           </div>
         </ErrorBoundary>
 
-        {shown.phase === "intermission" && match.lastRound && (
+        {paused && (
+          <div className="stage-pause">
+            <section className="card stage-pause-card" aria-label="Пауза">
+              <div role="status">
+                <h2 tabIndex={-1} ref={pauseTitleRef}>Партия на паузе</h2>
+                {needsPresenter && <p>ИИ отключился. Ждём ведущего.</p>}
+              </div>
+              {needsPresenter && onAgentAction && <AgentRecovery lobby={lobby} busy={busy} onAction={onAgentAction} />}
+              {!needsPresenter && onPauseChange && (
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onPauseChange(false)}>
+                  Возобновить партию
+                </button>
+              )}
+            </section>
+          </div>
+        )}
+
+        {!paused && shown.phase === "intermission" && match.lastRound && (
           <div className="stage-toast" role="status">
             <b>
               Раунд {match.round} окончен: {roundText(match.lastRound, seatName)}
             </b>
-            {match.intermissionUntil !== null && <IntermissionLeft until={match.intermissionUntil} clockOffset={clockOffset} />}
+            {match.intermissionUntil !== null && <IntermissionLeft until={match.intermissionUntil} clockOffset={gameClockOffset} />}
           </div>
         )}
 
