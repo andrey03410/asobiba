@@ -2,9 +2,9 @@
 id: 11
 title: ИИ в живой партии
 track: product
-stage: build
+stage: review
 branch: feat/11-ai-game-roles
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/11
 started: 2026-11-19
 merged:
 ---
