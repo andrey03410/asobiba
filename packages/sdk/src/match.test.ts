@@ -81,6 +81,75 @@ describe("Match: turn game", () => {
     expect(lose.view(null).lastRound?.reason).toBe("timeout");
   });
 
+  it("freezes the turn timer and rejects moves until the match resumes", () => {
+    const m = Match.start({ game: raceGame, config: config("race", { timer: { turnSeconds: 5, onTimeout: "skip" } }), seats: 2, seed: 1, startedAt: T0 });
+    expect(m.setPaused("manual", T0 + 1000)).toEqual({ ok: true });
+    expect(m.view(null)).toMatchObject({
+      pause: { reason: "manual", since: T0 + 1000 },
+      currentSeats: [],
+      turnDeadline: T0 + 5000,
+    });
+    expect(m.nextWakeAt()).toBeNull();
+    expect(m.advance(T0 + 10_000)).toBe(false);
+    expect(m.dispatch(0, { add: 2 }, T0 + 10_001)).toMatchObject({ ok: false, error: { code: "paused" } });
+
+    expect(m.setPaused(null, T0 + 11_000)).toEqual({ ok: true });
+    expect(m.view(null)).toMatchObject({ currentSeats: [0], turnDeadline: T0 + 5000, clockShiftMs: 10_000 });
+    expect(m.view(null).pause).toBeUndefined();
+    expect(m.nextWakeAt()).toBe(T0 + 15_000);
+    expect(m.advance(T0 + 14_999)).toBe(false);
+    expect(m.advance(T0 + 15_000)).toBe(true);
+    expect(m.view(null).currentSeats).toEqual([1]);
+    expect(m.view(null).game).toMatchObject({ total: 0, moves: 1 });
+  });
+
+  it("preserves the remaining intermission when paused between rounds", () => {
+    const m = Match.start({
+      game: raceGame,
+      config: config("race", { rules: { target: 2 }, series: { rounds: 2, stopWhenDecided: false } }),
+      seats: 2,
+      seed: 1,
+      startedAt: T0,
+    });
+    expect(m.dispatch(0, { add: 2 }, T0 + 10)).toEqual({ ok: true });
+    expect(m.setPaused("manual", T0 + 1010)).toEqual({ ok: true });
+    expect(m.advance(T0 + 9000)).toBe(false);
+    expect(m.view(null)).toMatchObject({ phase: "intermission", round: 1, intermissionUntil: T0 + 3010 });
+
+    m.setPaused(null, T0 + 10_010);
+    expect(m.nextWakeAt()).toBe(T0 + 12_010);
+    expect(m.advance(T0 + 12_009)).toBe(false);
+    expect(m.advance(T0 + 12_010)).toBe(true);
+    expect(m.view(null)).toMatchObject({ phase: "playing", round: 2, currentSeats: [1] });
+  });
+
+  it("restores the active pause and replays moves at their original logical times", () => {
+    const cfg = config("race", { timer: { turnSeconds: 5, onTimeout: "skip" } });
+    const m = Match.start({ game: raceGame, config: cfg, seats: 2, seed: 3, startedAt: T0 });
+    m.setPaused("manual", T0 + 750);
+    m.setPaused("presenter-disconnected", T0 + 1000);
+    m.setPaused("manual", T0 + 1250);
+    const restored = Match.restore({ game: raceGame, config: cfg, record: JSON.parse(JSON.stringify(m.record())), now: T0 + 10_000 });
+    expect(restored.view(null)).toEqual(m.view(null));
+    expect(restored.pause).toEqual({ reason: "presenter-disconnected", since: T0 + 750 });
+    expect(restored.nextWakeAt()).toBeNull();
+
+    restored.setPaused(null, T0 + 12_000);
+    expect(restored.nextWakeAt()).toBe(T0 + 16_250);
+    expect(restored.dispatch(0, { add: 2 }, T0 + 16_000)).toEqual({ ok: true });
+    restored.setPaused("manual", T0 + 16_100);
+    expect(restored.view(null).clockShiftMs).toBe(11_250);
+    restored.setPaused(null, T0 + 17_100);
+    expect(restored.view(null)).toMatchObject({ currentSeats: [1], turnDeadline: T0 + 9750, clockShiftMs: 12_250 });
+    expect(restored.nextWakeAt()).toBe(T0 + 22_000);
+    expect(restored.record().log.map((entry) => entry.at)).toEqual([
+      T0 + 750, T0 + 1000, T0 + 12_000, T0 + 16_000, T0 + 16_100, T0 + 17_100,
+    ]);
+    const replay = Match.restore({ game: raceGame, config: cfg, record: restored.record(), now: T0 + 18_000 });
+    expect(replay.view(null)).toEqual(restored.view(null));
+    expect(replay.record()).toEqual(restored.record());
+  });
+
   it("lets the game override the timeout policy of the config", () => {
     const own = defineGame({ ...(raceGame as AnyGame), id: "race-own-timeout", timeoutPolicy: "skip" } as AnyGame);
     const m = Match.start({ game: own, config: config("race", { timer: { turnSeconds: 5, onTimeout: "random" } }), seats: 2, seed: 1, startedAt: T0 });
@@ -122,6 +191,15 @@ describe("Match: turn game", () => {
     expect(restored.view(0)).toEqual(m.view(0));
     expect(restored.record()).toEqual(m.record());
   });
+
+  it("restores legacy entries with only the player seat and action", () => {
+    const cfg = config("race", { timer: { turnSeconds: 5, onTimeout: "skip" } });
+    const record = { seed: 1, startedAt: T0, seats: 2, log: [{ at: T0 + 20, seat: 0, action: { add: 2 } }] };
+    const restored = Match.restore({ game: raceGame, config: cfg, record, now: T0 + 50 });
+    expect(restored.view(null)).toMatchObject({ currentSeats: [1], turnDeadline: T0 + 5020, game: { total: 2 } });
+    expect(restored.view(null)).not.toHaveProperty("clockShiftMs");
+    expect(restored.record()).toEqual(record);
+  });
 });
 
 describe("Match: realtime game", () => {
@@ -147,6 +225,20 @@ describe("Match: realtime game", () => {
     m.advance(now);
     const restored = Match.restore({ game: driftGame, config: cfg, record: m.record(), now });
     expect(restored.view(null)).toEqual(m.view(null));
+  });
+
+  it("resumes the next realtime step without catching up on paused time", () => {
+    const m = Match.start({ game: driftGame, config: config("drift"), seats: 2, seed: 1, startedAt: T0 });
+    expect(m.dispatch(0, { speed: 5 }, T0 + 1)).toEqual({ ok: true });
+    expect(m.setPaused("manual", T0 + 125)).toEqual({ ok: true });
+    expect(m.advance(T0 + 10_000)).toBe(false);
+    expect(m.view(null).game).toMatchObject({ positions: [5, 0] });
+
+    m.setPaused(null, T0 + 10_125);
+    expect(m.nextWakeAt()).toBe(T0 + 10_200);
+    expect(m.advance(T0 + 10_199)).toBe(false);
+    expect(m.advance(T0 + 10_200)).toBe(true);
+    expect(m.view(null).game).toMatchObject({ positions: [10, 0] });
   });
 });
 
@@ -205,12 +297,13 @@ describe("Match: trusted controls and game clocks", () => {
     roundResult: (s: { total: number }) => s.total >= 3 ? { winners: [0], losers: [1], draw: false, reason: "done" } : null,
     applyControl: (s: any, action: any, ctx: any) => {
       const roll = ctx.rng.next();
-      if (ctx.role !== "presenter" || action.type !== "advance") return actionError("forbidden_control", "Нет прав");
-      return { ...s, total: s.total + 1, roll };
+      if (ctx.role === "system" && action.type === "restore-algorithm") return { ...s, total: s.total + 1, restoredAt: ctx.now };
+      if (ctx.role === "presenter" && action.type === "advance") return { ...s, total: s.total + 1, roll };
+      return actionError("forbidden_control", "Нет прав");
     },
     nextWakeAt: (s: any) => s.due,
     wake: (s: any) => ({ ...s, total: s.total + 1, due: null }),
-    view: (s: any) => ({ total: s.total }),
+    view: (s: any) => ({ total: s.total, ...(s.restoredAt === undefined ? {} : { restoredAt: s.restoredAt }) }),
     presenterView: (s: any) => ({ total: s.total, secret: s.secret, ...(s.roll === undefined ? {} : { roll: s.roll }) }),
   } as AnyGame);
 
@@ -224,7 +317,7 @@ describe("Match: trusted controls and game clocks", () => {
     expect(m.view(null, "presenter").game).toEqual({ total: 0, secret: "answer" });
     expect(m.dispatchControl("host", { type: "advance", role: "presenter" }, T0 + 1)).toMatchObject({ ok: false, error: { code: "forbidden_control" } });
     expect(m.dispatchControl("presenter", { type: "advance" }, T0 + 2)).toEqual({ ok: true });
-    expect(m.record().log).toMatchObject([{ at: T0 + 2, seat: -1, controlRole: "presenter", action: { type: "advance" } }]);
+    expect(m.record().log).toEqual([{ at: T0 + 2, seat: -1, controlRole: "presenter", action: { type: "advance" } }]);
     expect(m.advance(T0 + 100)).toBe(true);
     expect(m.view(null).game).toEqual({ total: 2 });
     const restored = Match.restore({ game: controlled, config: cfg, record: m.record(), now: T0 + 100 });
@@ -239,5 +332,23 @@ describe("Match: trusted controls and game clocks", () => {
     live.dispatchControl("presenter", { type: "advance" }, T0 + 2);
     const replay = Match.restore({ game: controlled, config: cfg, record: live.record(), now: T0 + 2 });
     expect(replay.view(null, "presenter")).toEqual(live.view(null, "presenter"));
+  });
+
+  it("freezes game wakes while allowing trusted recovery at the frozen time", () => {
+    const cfg = config("race");
+    const m = Match.start({ game: controlled, config: cfg, seats: 2, seed: 8, startedAt: T0 });
+    expect(m.setPaused("presenter-disconnected", T0 + 40)).toEqual({ ok: true });
+    expect(m.dispatchControl("presenter", { type: "advance" }, T0 + 500)).toMatchObject({ ok: false, error: { code: "paused" } });
+    expect(m.dispatchControl("host", { type: "restore-algorithm" }, T0 + 600)).toMatchObject({ ok: false, error: { code: "paused" } });
+    expect(m.dispatchControl("system", { type: "restore-algorithm" }, T0 + 900)).toEqual({ ok: true });
+    expect(m.view(null).game).toEqual({ total: 1, restoredAt: T0 + 40 });
+    const replay = Match.restore({ game: controlled, config: cfg, record: m.record(), now: T0 + 1000 });
+    expect(replay.view(null)).toEqual(m.view(null));
+
+    replay.setPaused(null, T0 + 1040);
+    expect(replay.nextWakeAt()).toBe(T0 + 1100);
+    expect(replay.advance(T0 + 1099)).toBe(false);
+    expect(replay.advance(T0 + 1100)).toBe(true);
+    expect(replay.view(null).game).toEqual({ total: 2, restoredAt: T0 + 40 });
   });
 });
