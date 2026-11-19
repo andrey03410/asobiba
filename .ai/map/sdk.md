@@ -78,6 +78,19 @@ Capabilities включает info/tuning и `promptExamples`. `describeGameGuid
 `GameClient.previewTarget(config, {kind: "question"|"round"|"intro", id}, seed)` —
 необязательное адресное превью; сервер вызывает его только для авторинга своего конфига.
 
+### Общая пауза партии
+
+`Match.setPaused(reason, at)` замораживает логические часы партии, её тики и действия. Причина
+`manual` или `presenter-disconnected`, при продолжении передаётся `null`. Записи `pauseReason`
+воспроизводятся вместе со старыми действиями и game-control. Планировщик использует wall clock,
+дедлайны игры остаются логическими. Клиент вычитает `clockShiftMs` из серверной поправки часов.
+`MatchView.pause.since` хранит wall time начала паузы. При паузе серверное системное управление
+остаётся доступным для восстановления.
+
+`GameDefinition.ai` описывает роли для сайта и MCP. `observeForAgent(view)` получает только
+проекцию зрителя, выбирает значимые открытые данные и при необходимости возвращает текст
+разрешённого комментария с ключом события. Quizor добавляет `agentTask` в представление ведущего.
+
 ## Бюджет случайного прогона
 
 Необязательный `GameDefinition.simulationBudget(rules)` задаёт maxTotalActions для
