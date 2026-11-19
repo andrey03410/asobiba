@@ -424,10 +424,10 @@ export const jinchi = defineGame({
   ],
   observeForAgent: ({ turn, currentSeat, dice, scores, points, flagCounts, eliminated, events }) => {
     const latest = events.at(-1);
+    const noteworthy = events.findLast(({ type }) => type === "capture" || type === "objects" || type === "eliminate");
     return {
       state: { turn, currentSeat, dice, scores, points, flagCounts, eliminated, latest },
-      ...(latest && ["capture", "objects", "eliminate"].includes(latest.type)
-        ? { comment: { key: String(latest.id), text: latest.text } } : {}),
+      ...(noteworthy ? { comment: { key: String(noteworthy.id), text: noteworthy.text } } : {}),
     };
   },
   visualCatalog: { placeAnimations: { pop: "Появление фигуры", none: "Без анимации" }, captureAnimations: { wave: "Волна захвата", none: "Без анимации" } },

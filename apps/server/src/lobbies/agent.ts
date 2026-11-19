@@ -45,6 +45,7 @@ export class LobbyAgent {
     this.secretHash = sha256(key);
     this.events = [];
     this.previous = undefined;
+    this.publishedComment = undefined;
     this.renew(now);
     this.notify();
     return key;
@@ -134,13 +135,13 @@ function agentEvent(role: AgentRole, matchId: string | null, match: Match | null
   if (role === "presenter") {
     if (phase === "finished") return { kind: "finished", matchId, state };
     const task = (match.view(null, "presenter").game as { agentTask?: PresenterTask }).agentTask;
-    if (view.pause) return { kind: "paused", matchId, state: { ...state, reason: view.pause.reason } };
+    if (view.pause) return { kind: "paused", matchId, state: { ...state, reason: view.pause.reason }, ...(task ? { task } : {}) };
     return { kind: "presenter", matchId, state, ...(task ? { task } : {}) };
   }
   const observed = match.game.observeForAgent?.(view.game);
   const comment = observed?.comment
     ? { ...observed.comment, key: `${round}/${observed.comment.key}` }
-    : lastRound ? { key: `${view.roundResults.length}/result`, text: `Итог раунда ${view.roundResults.length}: ${lastRound.summary}` } : undefined;
+    : lastRound ? { key: `${view.roundResults.length}/result`, text: `Итог раунда ${view.roundResults.length}: ${lastRound.summary ?? "раунд завершён"}` } : undefined;
   return {
     kind: phase === "finished" ? "finished" : "observation",
     matchId,
