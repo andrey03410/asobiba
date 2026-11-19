@@ -2,11 +2,11 @@
 id: 11
 title: ИИ в живой партии
 track: product
-stage: review
+stage: merged
 branch: feat/11-ai-game-roles
 pr: https://github.com/andrey03410/asobiba/pull/11
 started: 2026-11-19
-merged:
+merged: 2026-11-19
 ---
 
 # 11. ИИ в живой партии
@@ -23,8 +23,8 @@ merged:
 - [x] Техника — [tech.md](tech.md)
 - [x] План — [plan.md](plan.md)
 - [x] Реализация и QG — [verify.md](verify.md)
-- [ ] Проверка владельцем
-- [ ] Влито
+- [x] Приёмка в автономном режиме
+- [x] Влито
 
 ## Хвосты
 
