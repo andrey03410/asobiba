@@ -33,7 +33,7 @@ it("delivers a public event and disconnect notice without pausing the game", asy
   expect(await lobbies.action(owner.user, lobby.id, { type: "place", row: 0, col: 0 })).toEqual({ ok: true });
 });
 
-it.each(["reconnect", "human", "algorithm", "finish"] as const)("recovers a disconnected presenter through %s", async (mode) => {
+it.each(["reconnect", "human", "algorithm", "finish", "handoff-retry", "restart"] as const)("recovers a disconnected presenter through %s", async (mode) => {
   const owner = await signUp(test, "quiz-owner");
   const spectator = await signUp(test, "quiz-spectator");
   const lobbies = test.services.lobbies;
@@ -49,16 +49,38 @@ it.each(["reconnect", "human", "algorithm", "finish"] as const)("recovers a disc
   await lobbies.join(spectator.user, id, "spectator");
   const views: ServerMessage[] = [];
   await lobbies.subscribe({ userId: owner.user.id, send: (msg) => views.push(msg) }, id);
-  await lobbies.subscribe({ userId: spectator.user.id, send: () => {} }, id);
+  const spectatorSocket = { userId: spectator.user.id, send: () => {} };
+  await lobbies.subscribe(spectatorSocket, id);
   await expect(lobbies.start(owner.user, id)).rejects.toMatchObject({ code: "presenter_offline" });
   const { key } = await lobbies.agentAttach(owner.user, id);
   await lobbies.start(owner.user, id);
+  const started = await test.db.match.findFirstOrThrow({ where: { lobbyId: id } });
+  const latest = () => views.filter((msg) => msg.type === "match").at(-1)?.match;
+  if (mode === "restart") {
+    now += 2_000;
+    await lobbies.action(owner.user, id, { type: "unknown" });
+    const before = latest()?.game;
+    expect(before).toMatchObject({ phase: "preload" });
+    lobbies.shutdown();
+    now += 60_000;
+    expect(await lobbies.restoreAll()).toEqual({ restored: 1, aborted: 0 });
+    await lobbies.subscribe({ userId: owner.user.id, send: (msg) => views.push(msg) }, id);
+    expect(latest()).toMatchObject({ pause: { reason: "presenter-disconnected" }, game: before });
+    return;
+  }
+  expect((started.log as unknown[])[0]).toMatchObject({ at: started.startedAt.getTime(), action: { type: "presenter-presence", online: true } });
   await lobbies.agentDetach(owner.user, id, key);
   expect(views.filter((msg) => msg.type === "match").at(-1)?.match?.pause?.reason).toBe("presenter-disconnected");
   await expect(lobbies.pause(owner.user, id, false)).rejects.toMatchObject({ code: "presenter_offline" });
   await expect(lobbies.agentWait(owner.user, id, key, 0, 0)).rejects.toMatchObject({ code: "forbidden" });
 
-  await lobbies.manageAgent(owner.user, id, mode === "human" ? { action: mode, userId: spectator.user.id } : { action: mode });
+  await lobbies.manageAgent(owner.user, id, mode === "human" || mode === "handoff-retry"
+    ? { action: "human", userId: spectator.user.id } : { action: mode });
+  if (mode === "handoff-retry") {
+    lobbies.unsubscribe(spectatorSocket, id);
+    await expect(lobbies.pause(owner.user, id, false)).rejects.toMatchObject({ code: "presenter_offline" });
+    await expect(lobbies.manageAgent(owner.user, id, { action: "algorithm" })).resolves.toMatchObject({ status: "playing" });
+  }
   if (mode === "finish") {
     expect(await lobbies.get(id)).toMatchObject({ status: "finished" });
     expect(await test.db.match.findFirst({ where: { lobbyId: id } })).toMatchObject({ status: "aborted" });

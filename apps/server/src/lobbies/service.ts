@@ -1,6 +1,6 @@
 import type { ConfigDto, CreateLobbyRequest, LobbyAgentAssignment, LobbyAgentCommand, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
-import { quizorCanUseAlgorithm, type QuizorRules } from "@asobiba/game-quizor";
+import { quizorCanUseAgentPresenter, quizorCanUseAlgorithm, type QuizorRules } from "@asobiba/game-quizor";
 import { isDeepStrictEqual } from "node:util";
 import { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
@@ -180,7 +180,8 @@ export class LobbyService {
       }),
       config: this.shownConfig(config),
       ...(row.createdByAgent ? { createdByAgent: true } : {}),
-      ...(assignment ? { agent: { role: assignment.role, status: room?.agent.status ?? "waiting", canUseAlgorithm: assignment.role === "presenter" && config.game === "quizor" && quizorCanUseAlgorithm(config.rules as QuizorRules) } } : {}),
+      ...(assignment ? { agent: { role: assignment.role, status: room?.agent.status ?? "waiting", canUseAlgorithm: assignment.role === "presenter" && config.game === "quizor" && (row.status === "playing" && room?.match
+        ? room.match.canRecoverAlgorithm() : quizorCanUseAlgorithm(config.rules as QuizorRules)) } } : {}),
       ...(room?.agent.notice ? { agentNotice: room.agent.notice } : {}),
       ...(room?.agent.comments.length ? { agentComments: room.agent.comments } : {}),
       information: describeConfig(game, config),
@@ -348,15 +349,16 @@ export class LobbyService {
       const room = await this.room(lobbyId);
       await this.expireAgent(room, this.deps.now());
       if (row.status !== "playing" || !room.match) throw conflict("no_match", "Партия не идёт");
-      if (!paused && room.agentAssignment?.role === "presenter" && room.agent.status !== "connected") {
-        throw conflict("presenter_offline", "Сначала подключите ведущего или выберите другой способ продолжить");
-      }
-      if (!paused && room.match.pause?.reason === "presenter-disconnected" && room.presenterId
-        && ![...room.subscribers].some((sub) => sub.userId === room.presenterId && !sub.closed?.())) {
-        throw conflict("presenter_offline", "Назначенный ведущий должен открыть лобби");
+      if (!paused && room.match.pause?.reason === "presenter-disconnected") {
+        if (room.presenterId) {
+          if (!this.isOnline(room, room.presenterId)) throw conflict("presenter_offline", "Назначенный ведущий должен открыть лобби");
+          if (room.agentAssignment?.role === "presenter") await this.clearAgent(room);
+        } else if (room.agentAssignment?.role === "presenter" && room.agent.status !== "connected") {
+          throw conflict("presenter_offline", "Сначала подключите ведущего или выберите другой способ продолжить");
+        }
       }
       await this.applyPause(room, paused ? "manual" : null, this.deps.now());
-      return this.dto(row, room);
+      return this.publishLobby(room);
     });
   }
 
@@ -375,8 +377,19 @@ export class LobbyService {
       if (row.status === "playing" && assignment.role !== previous?.role && (assignment.role === "presenter" || previous?.role === "presenter")) {
         throw conflict("match_in_progress", "Во время партии ведущего заменяет хозяин из лобби");
       }
-      if (assignment.role === "presenter" && room.presenterId !== null) throw conflict("presenter_assigned", "Сначала снимите действующего ведущего");
-      await this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: { ...assignment } } });
+      const changes = [this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: { ...assignment } } })];
+      if (assignment.role === "presenter" && room.presenterId !== null) {
+        if (previous?.role !== "presenter" || room.match?.pause?.reason !== "presenter-disconnected") {
+          throw conflict("presenter_assigned", "Сначала снимите действующего ведущего");
+        }
+        await this.deps.db.$transaction([
+          ...changes,
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
+        ]);
+        room.presenterId = null;
+      } else {
+        await changes[0];
+      }
       room.agentAssignment = assignment;
       const key = room.agent.attach(this.deps.now());
       await this.syncPresence(room);
@@ -467,8 +480,7 @@ export class LobbyService {
         throw conflict("presenter_not_paused", "Эти действия доступны после отключения ИИ-ведущего");
       }
       if (command.action === "algorithm") {
-        const config = row.config as unknown as ConfigDocument;
-        if (config.game !== "quizor" || !quizorCanUseAlgorithm(config.rules as QuizorRules)) {
+        if (!room.match.canRecoverAlgorithm()) {
           throw conflict("algorithm_unavailable", "Этот квиз требует решений ведущего");
         }
         const result = room.match.dispatchControl("system", { type: "presenter-algorithm" }, at);
@@ -476,22 +488,31 @@ export class LobbyService {
         await this.deps.db.$transaction([
           this.deps.db.match.update({ where: { id: room.matchId! }, data: { log: room.match.record().log as unknown as Prisma.InputJsonValue } }),
           this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: Prisma.DbNull } }),
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
         ]);
+        room.presenterId = null;
       } else if (command.action === "human") {
         if (room.seatUsers.includes(command.userId) || !row.members.some((m) => m.userId === command.userId && m.role === "spectator")) {
           throw conflict("presenter_not_spectator", "Выберите зрителя без игрового места");
         }
+        if (!this.isOnline(room, command.userId)) throw conflict("presenter_offline", "Зритель должен открыть лобби, чтобы принять ведение");
         await this.deps.db.$transaction([
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
           this.deps.db.lobbyMember.update({ where: { lobbyId_userId: { lobbyId, userId: command.userId } }, data: { role: "presenter" } }),
-          this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: Prisma.DbNull } }),
         ]);
         room.presenterId = command.userId;
+        room.agent.drop("disconnected", room.agent.notice);
+        this.schedule(room);
+        this.publishMatch(room);
+        return this.publishLobby(room);
       } else {
         await this.deps.db.$transaction([
           this.deps.db.match.update({ where: { id: room.matchId! }, data: { status: "aborted", finishedAt: new Date(at) } }),
           this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: Prisma.DbNull, status: "finished" } }),
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
         ]);
         room.match = null;
+        room.presenterId = null;
       }
       room.agentAssignment = null;
       room.agent.drop("disconnected");
@@ -505,11 +526,17 @@ export class LobbyService {
     if (row.hostId !== user.id) throw forbidden("Только хозяин лобби");
   }
 
+  private isOnline(room: Room, userId: string): boolean {
+    return [...room.subscribers].some((sub) => sub.userId === userId && !sub.closed?.());
+  }
+
   private requireAgentRole(config: ConfigDocument, assignment: LobbyAgentAssignment): void {
     const game = this.deps.catalog.get(config.game);
     if (!game?.ai?.some((support) => support.role === assignment.role)) throw badRequest("agent_role_unavailable", "Игра не поддерживает эту роль ИИ");
-    if (assignment.role === "presenter" && config.game === "quizor" && (config.rules as QuizorRules).presenter === "none") {
-      throw badRequest("presenter_disabled", "Включите ведущего в настройках Quizor");
+    if (assignment.role === "presenter" && config.game === "quizor") {
+      const rules = config.rules as QuizorRules;
+      if (rules.presenter === "none") throw badRequest("presenter_disabled", "Включите ведущего в настройках Quizor");
+      if (!quizorCanUseAgentPresenter(rules)) throw badRequest("oral_requires_human", "Устные ответы, порученные ведущему, требуют человека. Выберите текстовое поле или другой способ проверки");
     }
   }
 
@@ -634,15 +661,21 @@ export class LobbyService {
       const seed = randomSeed();
       const seatNames = seatUsers.map((id) => this.memberName(row.members.find((m) => m.userId === id)!));
       const match = Match.start({ game, config, seats: seatUsers.length, seed, startedAt: now });
+      if (aiPresenter && match.currentPhase === "playing") {
+        const result = match.dispatchControl("system", { type: "presenter-presence", online: true, requireAssignment: true }, now);
+        if (!result.ok) throw conflict(result.error.code, result.error.message);
+      }
       const matchId = newId("mat");
       await this.deps.db.$transaction([
         this.deps.db.match.updateMany({ where: { lobbyId, status: "playing" }, data: { status: "aborted", finishedAt: new Date(now) } }),
         this.deps.db.match.create({
-          data: { id: matchId, lobbyId, seed, startedAt: new Date(now), seatUsers, seatNames, log: [], status: "playing" },
+          data: { id: matchId, lobbyId, seed, startedAt: new Date(now), seatUsers, seatNames,
+            log: match.record().log as unknown as Prisma.InputJsonValue, status: "playing",
+            ...(aiPresenter ? { checkpointAt: new Date(match.checkpointAt) } : {}) },
         }),
         this.deps.db.lobby.update({ where: { id: lobbyId }, data: { status: "playing" } }),
       ]);
-      Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false, hostId: row.hostId, presenterId: row.members.find(m => m.role === "presenter")?.userId ?? null, playerIds: new Set(players), presence: null, presenterOnline: null });
+      Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false, hostId: row.hostId, presenterId: row.members.find(m => m.role === "presenter")?.userId ?? null, playerIds: new Set(players), presence: null, presenterOnline: aiPresenter ? true : null });
       room.agent.resetComments();
       await this.syncPresence(room);
       await this.afterMatchChange(room);
@@ -739,7 +772,7 @@ export class LobbyService {
     }
     const presenterOnline = (room.agentAssignment?.role === "presenter" && room.agent.status === "connected") || (room.presenterId !== null && online.has(room.presenterId));
     if (room.presenterOnline !== presenterOnline) {
-      const result = room.match.dispatchControl("system", { type: "presenter-presence", online: presenterOnline }, this.deps.now());
+      const result = room.match.dispatchControl("system", { type: "presenter-presence", online: presenterOnline, ...(presenterOnline ? { requireAssignment: true } : {}) }, this.deps.now());
       changed ||= result.ok;
     }
     room.presenterOnline = presenterOnline;
@@ -870,6 +903,8 @@ export class LobbyService {
         this.deps.db.lobby.update({ where: { id: room.lobbyId }, data: { status: "finished" } }),
       ]);
       await this.publishLobby(room);
+    } else if (room.agentAssignment?.role === "presenter") {
+      await this.deps.db.match.update({ where: { id: room.matchId! }, data: { checkpointAt: new Date(match.checkpointAt) } });
     }
     this.schedule(room);
   }
@@ -920,7 +955,9 @@ export class LobbyService {
         const record: MatchRecord = { seed: row.seed, startedAt: row.startedAt.getTime(), seats: seatUsers.length, log: row.log as unknown as MatchLogEntry[] };
         try {
           const aiPresenter = room.agentAssignment?.role === "presenter";
-          const restoreAt = aiPresenter ? record.log.at(-1)?.at ?? record.startedAt : this.deps.now();
+          const restoreAt = aiPresenter
+            ? Math.max(row.checkpointAt?.getTime() ?? record.startedAt, record.log.at(-1)?.at ?? record.startedAt)
+            : this.deps.now();
           const match = Match.restore({ game, config, record, now: restoreAt });
           Object.assign(room, { match, matchId: row.id, seatUsers, seatNames: row.seatNames as string[], finishedSaved: false, presence: null, presenterOnline: null });
           if (room.agentAssignment) await this.dropAgent(room, restoreAt);
