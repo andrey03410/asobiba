@@ -2,7 +2,9 @@ import {
   actionError,
   defineGame,
   type GameContext,
+  type GameControlContext,
   type RoundResult,
+  type SeriesProgress,
   type SetupContext,
   type VideoDirective,
 } from "@asobiba/sdk";
@@ -435,6 +437,7 @@ export interface QuizorState {
   presenterAlgorithm: boolean;
   presenterAssigned: boolean;
   requirePresenterAssignment: boolean;
+  carrySeriesPresence: boolean;
   appeal: Appeal | null;
   appealAttempts: string[];
   history: HistoryEntry[];
@@ -731,7 +734,9 @@ export function quizorCanUseAgentPresenter(rules: QuizorRules): boolean {
   );
 }
 
-function canRecoverAlgorithm(s: QuizorState): boolean {
+function canRecoverAlgorithm(s: QuizorState, series?: SeriesProgress): boolean {
+  if (series && series.remainingRounds > 0 && !quizorCanUseAlgorithm(s.rules)) return false;
+  if (series?.betweenRounds) return series.remainingRounds > 0;
   if (s.phase === "done") return false;
   const { rules, active } = s;
   const currentRound = rules.rounds[s.round];
@@ -1879,6 +1884,7 @@ function setup(ctx: SetupContext<QuizorRules>): QuizorState {
     presenterAlgorithm: false,
     presenterAssigned: false,
     requirePresenterAssignment: false,
+    carrySeriesPresence: false,
     appeal: null,
     appealAttempts: [],
     history: [],
@@ -1897,6 +1903,20 @@ function setup(ctx: SetupContext<QuizorRules>): QuizorState {
     tieIndex: 0,
   };
   startRound(s, 0, ctx);
+  return s;
+}
+function setupNextRound(previous: QuizorState, ctx: SetupContext<QuizorRules>) {
+  const s = setup(ctx);
+  const carryPresenter = previous.requirePresenterAssignment || previous.presenterAlgorithm;
+  if (carryPresenter) {
+    s.requirePresenterAssignment = previous.requirePresenterAssignment;
+    s.presenterAlgorithm = previous.presenterAlgorithm;
+    s.presenterOnline = previous.presenterOnline;
+  }
+  if (carryPresenter || previous.carrySeriesPresence) {
+    s.carrySeriesPresence = true;
+    for (const [seat, player] of s.players.entries()) player.online = previous.players[seat].online;
+  }
   return s;
 }
 function nextWakeAt(s: QuizorState): number | null {
@@ -2620,7 +2640,7 @@ function applyAction(
 function applyControl(
   state: QuizorState,
   raw: unknown,
-  ctx: Ctx & { role: "host" | "presenter" | "system" },
+  ctx: GameControlContext<QuizorRules>,
 ) {
   const parsed = controlSchema.safeParse(raw);
   if (!parsed.success)
@@ -2630,10 +2650,19 @@ function applyControl(
   s.now = ctx.now;
   const fail = () =>
     actionError("control_forbidden", "Это управление недоступно роли");
+  const betweenRounds = ctx.series?.betweenRounds;
+  if (
+    betweenRounds &&
+    (ctx.role !== "system" ||
+      (action.type !== "presence" &&
+        action.type !== "presenter-presence" &&
+        action.type !== "presenter-algorithm"))
+  )
+    return fail();
   if (action.type === "presenter-algorithm") {
-    if (ctx.role !== "system" || s.phase === "done") return fail();
+    if (ctx.role !== "system" || (s.phase === "done" && !betweenRounds)) return fail();
     if (!s.presenterAlgorithm) {
-      if (!canRecoverAlgorithm(s))
+      if (!canRecoverAlgorithm(s, ctx.series))
         return actionError("algorithm_unavailable", "Этот квиз требует ведущего");
       s.presenterAlgorithm = true;
       s.presenterOnline = false;
@@ -2647,6 +2676,7 @@ function applyControl(
     if (action.type === "presence") {
       if (!s.players[action.seat]) return fail();
       s.players[action.seat].online = action.online;
+      if (betweenRounds) s.carrySeriesPresence = true;
       if (
         !s.paused &&
         (s.phase === "answer" || s.phase === "show") &&
@@ -3362,7 +3392,7 @@ function presenterTask(s: QuizorState): QuizorView["agentTask"] {
     const submission = s.submissions[target.seat];
     return {
       key: JSON.stringify([
-        "grade", question.id, target.seat, target.fieldId, s.attemptCounts[target.seat],
+        s.startedAt, "grade", question.id, target.seat, target.fieldId, s.attemptCounts[target.seat],
       ]),
       kind: "grade",
       actions: criteria.settings.grades.map(({ id }) => ({
@@ -3424,7 +3454,7 @@ function presenterTask(s: QuizorState): QuizorView["agentTask"] {
   if (!actions.length) return;
   return {
     key: JSON.stringify([
-      actions[0].type, s.phase, question?.id ?? s.roundId,
+      s.startedAt, actions[0].type, s.phase, question?.id ?? s.roundId,
       s.blockIndex, s.revealIndex, s.finalRevealIndex,
     ]),
     kind: "control",
@@ -3643,6 +3673,7 @@ export const quizor = defineGame<
   checkRules,
   checkVisual,
   setup,
+  setupNextRound,
   currentSeats: (s) =>
     s.players.flatMap((_, i) => (legalHints(s, i).length ? [i] : [])),
   turnId: (s) =>
@@ -3652,6 +3683,7 @@ export const quizor = defineGame<
   legalActions,
   applyAction,
   applyControl,
+  applyIntermissionControl: applyControl,
   presenterView,
   canRecoverAlgorithm,
   nextWakeAt,

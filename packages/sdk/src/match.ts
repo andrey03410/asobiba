@@ -1,5 +1,5 @@
 import type { ConfigDocument } from "./config";
-import { type AnyGame, type ControlRole, type GameContext, isActionError, type RoundResult, type Seat } from "./game";
+import { type AnyGame, type ControlRole, type GameContext, isActionError, type RoundResult, type Seat, type SeriesProgress } from "./game";
 import { createRng, type Rng } from "./rng";
 
 /** Pause between rounds so players can see how the round ended. */
@@ -156,7 +156,8 @@ export class Match {
   }
 
   canRecoverAlgorithm(): boolean {
-    return this.phase === "playing" && (this.game.canRecoverAlgorithm?.(this.state) ?? false);
+    return this.phase !== "finished" &&
+      (this.game.canRecoverAlgorithm?.(this.state, this.seriesProgress()) ?? false);
   }
 
   private get gameClock(): number {
@@ -214,18 +215,23 @@ export class Match {
     this.advance(Math.max(at, this.wallClock));
     if (!["host", "presenter", "system"].includes(role)) return fail("bad_control_role", "Неизвестная роль управления");
     if (this.pauseState && role !== "system") return fail("paused", "Партия на паузе");
-    if (!this.game.applyControl) return fail("no_controls", "Игра не поддерживает управление");
+    if (!this.game.applyControl && !this.game.applyIntermissionControl) return fail("no_controls", "Игра не поддерживает управление");
     if (this.phase === "finished") return fail("finished", "Партия закончена");
-    if (this.phase === "intermission") return fail("intermission", "Пауза между раундами");
+    const series = this.seriesProgress();
+    if (series.betweenRounds && (role !== "system" || !this.game.applyIntermissionControl)) {
+      return fail("intermission", "Пауза между раундами");
+    }
+    const applyControl = series.betweenRounds ? this.game.applyIntermissionControl : this.game.applyControl;
+    if (!applyControl) return fail("no_controls", "Игра не поддерживает управление");
     const rngState = this.rng.state();
-    const next = this.game.applyControl(this.state, rawAction, { ...this.ctx(this.gameClock), role });
+    const next = applyControl.call(this.game, this.state, rawAction, { ...this.ctx(this.gameClock), role, series });
     if (isActionError(next)) {
       this.rng.restore(rngState);
       return { ok: false, error: next.error };
     }
     this.state = next;
     this.log.push({ at: this.wallClock, seat: -1, action: structuredClone(rawAction), controlRole: role });
-    this.afterChange(this.gameClock);
+    if (!series.betweenRounds) this.afterChange(this.gameClock);
     return { ok: true };
   }
 
@@ -275,6 +281,13 @@ export class Match {
 
   private ctx(now: number): GameContext<unknown> {
     return { rules: this.config.rules, seats: this.seats, rng: this.rng, now };
+  }
+
+  private seriesProgress(): SeriesProgress {
+    return {
+      betweenRounds: this.phase === "intermission",
+      remainingRounds: this.config.series.rounds - this.round,
+    };
   }
 
   private nextEvent(): { at: number; run: () => void } | null {
@@ -431,7 +444,10 @@ export class Match {
     this.intermissionUntil = null;
     this.roundStartedAt = at;
     this.ticks = 0;
-    this.state = this.game.setup({ ...this.ctx(at), round: this.round, firstSeat: first });
+    const ctx = { ...this.ctx(at), round: this.round, firstSeat: first };
+    this.state = this.game.setupNextRound
+      ? this.game.setupNextRound(this.state, ctx)
+      : this.game.setup(ctx);
     this.turnKey = "";
     this.resetTurnTimer(at, true);
     this.settle(at);
