@@ -347,6 +347,11 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     reply.code(201);
     return { config };
   });
+  app.get("/api/lobbies/:id/config/original", async (req, reply) => {
+    const config = await s.lobbies.originalConfig(requireAccount(req), parse(idParam, req.params).id);
+    reply.header("cache-control", "private, no-store");
+    return { config };
+  });
   app.get("/api/lobbies/:id/invitation", async (req) => ({ invitation: await s.lobbies.invitation(parse(idParam, req.params).id) }));
   app.get("/api/lobbies/:id", async (req) => withUser(req, async (user) => {
     const id = parse(idParam, req.params).id;
@@ -366,6 +371,17 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   });
   app.post("/api/lobbies/:id/leave", async (req) => withUser(req, async (user) => ({ lobby: await s.lobbies.leave(user, parse(idParam, req.params).id) })));
   app.post("/api/lobbies/:id/start", async (req) => ({ lobby: await s.lobbies.start(requireAccount(req), parse(idParam, req.params).id) }));
+  app.post("/api/lobbies/:id/pause", async (req) => {
+    const { paused } = parse(z.strictObject({ paused: z.boolean() }), req.body);
+    return { lobby: await s.lobbies.pause(requireAccount(req), parse(idParam, req.params).id, paused) };
+  });
+  app.post("/api/lobbies/:id/agent", async (req) => {
+    const command = parse(z.union([
+      z.strictObject({ action: z.enum(["disconnect", "reconnect", "algorithm", "finish"]) }),
+      z.strictObject({ action: z.literal("human"), userId: z.string().min(1).max(80) }),
+    ]), req.body);
+    return { lobby: await s.lobbies.manageAgent(requireAccount(req), parse(idParam, req.params).id, command) };
+  });
   app.post("/api/lobbies/:id/close", async (req) => ({ lobby: await s.lobbies.close(requireAccount(req), parse(idParam, req.params).id) }));
 
   // ---------- WebSocket ----------

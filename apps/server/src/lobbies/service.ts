@@ -1,12 +1,15 @@
-import type { ConfigDto, CreateLobbyRequest, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
+import type { ConfigDto, CreateLobbyRequest, LobbyAgentAssignment, LobbyAgentCommand, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
-import type { Prisma } from "../generated/prisma/client";
+import { quizorCanUseAgentPresenter, quizorCanUseAlgorithm, type QuizorRules } from "@asobiba/game-quizor";
+import { isDeepStrictEqual } from "node:util";
+import { Prisma } from "../generated/prisma/client";
 import type { ConfigService } from "../configs/service";
 import type { Db } from "../db";
 import type { Env } from "../env";
 import { quizorMediaRefs, yomifudaMediaRefs } from "../games/media-refs";
 import { badRequest, conflict, forbidden, notFound } from "../http-errors";
 import { newId, randomSeed } from "../ids";
+import { LobbyAgent, type AgentEvent } from "./agent";
 
 export interface Subscriber {
   userId: string;
@@ -30,11 +33,15 @@ interface Room {
   playerIds: Set<string>;
   presence: Set<number> | null;
   presenterOnline: boolean | null;
+  agent: LobbyAgent;
+  agentAssignment: LobbyAgentAssignment | null;
+  agentCheckpointAt: number | null;
 }
 
 type LobbyRow = Prisma.LobbyGetPayload<{ include: { host: true; members: { include: { user: true } } } }>;
 
 const MAX_TIMER_MS = 2 ** 31 - 1;
+const AGENT_CHECKPOINT_INTERVAL_MS = 5_000;
 /** Directives a viewer keeps access to, and viewers remembered at once. */
 const VIDEO_WINDOW = 16;
 const VIDEO_VIEWERS = 2000;
@@ -92,7 +99,7 @@ export class LobbyService {
   private async room(lobbyId: string): Promise<Room> {
     const existing = this.rooms.get(lobbyId);
     if (existing) return existing;
-    const lobby = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { id: true, hostId: true, status: true, config: true, members: { select: { userId: true, role: true } } } });
+    const lobby = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { id: true, hostId: true, status: true, config: true, agent: true, members: { select: { userId: true, role: true } } } });
     if (!lobby) throw notFound("Лобби не найдено");
     const last = await this.deps.db.match.findFirst({ where: { lobbyId }, orderBy: { startedAt: "desc" } });
     const raced = this.rooms.get(lobbyId);
@@ -127,6 +134,9 @@ export class LobbyService {
       playerIds: new Set(lobby.members.filter(member => member.role === "player").map(member => member.userId)),
       presence: null,
       presenterOnline: null,
+      agent: new LobbyAgent(),
+      agentAssignment: lobby.agent as LobbyAgentAssignment | null,
+      agentCheckpointAt: null,
     };
     this.rooms.set(lobbyId, room);
     return room;
@@ -149,6 +159,7 @@ export class LobbyService {
     const config = row.config as unknown as ConfigDocument;
     const { game, min, max } = this.seatsOf(config);
     const seatUsers = room?.seatUsers ?? [];
+    const assignment = row.agent as LobbyAgentAssignment | null;
     return {
       id: row.id,
       name: row.name,
@@ -166,10 +177,16 @@ export class LobbyService {
           login: this.memberName(m),
           role: m.role === "player" ? "player" : m.role === "presenter" ? "presenter" : "spectator",
           seat: m.role === "player" && seat >= 0 ? seat : null,
+          ...(m.role === "spectator" ? { eligiblePresenter: row.status !== "playing" || seat < 0 } : {}),
           joinedAt: m.joinedAt.toISOString(),
         };
       }),
       config: this.shownConfig(config),
+      ...(row.createdByAgent ? { createdByAgent: true } : {}),
+      ...(assignment ? { agent: { role: assignment.role, status: room?.agent.status ?? "waiting", canUseAlgorithm: assignment.role === "presenter" && config.game === "quizor" && (row.status === "playing" && room?.match
+        ? room.match.canRecoverAlgorithm() : quizorCanUseAlgorithm(config.rules as QuizorRules)) } } : {}),
+      ...(room?.agent.notice ? { agentNotice: room.agent.notice } : {}),
+      ...(room?.agent.comments.length ? { agentComments: room.agent.comments } : {}),
       information: describeConfig(game, config),
       url: `${this.deps.env.publicUrl}/lobby/${row.id}`,
       createdAt: row.createdAt.toISOString(),
@@ -287,7 +304,7 @@ export class LobbyService {
 
   // ---------- commands ----------
 
-  async create(user: UserDto, req: CreateLobbyRequest): Promise<LobbyDto> {
+  async create(user: UserDto, req: CreateLobbyRequest, createdByAgent = false): Promise<LobbyDto> {
     if (user.role === "guest") throw forbidden("Создать лобби можно только с аккаунтом");
     if ((req.configId !== undefined) === (req.config !== undefined)) {
       throw badRequest("config_source", "Передайте ровно одно: config или свой configId");
@@ -295,6 +312,7 @@ export class LobbyService {
     const source = req.configId === undefined ? { config: req.config } : { configId: req.configId };
     const config = await this.deps.configs.requireValid(user.id, source);
     const { max } = this.seatsOf(config);
+    if (req.agent) this.requireAgentRole(config, req.agent);
     const name = (req.name ?? "").trim().slice(0, 60) || config.title;
     const id = newId("lob", 10);
     await this.deps.db.lobby.create({
@@ -303,6 +321,8 @@ export class LobbyService {
         name,
         gameId: config.game,
         config: config as unknown as Prisma.InputJsonValue,
+        createdByAgent,
+        ...(req.agent ? { agent: { ...req.agent } } : {}),
         seats: max,
         hostId: user.id,
         members: { create: { userId: user.id, role: "player" } },
@@ -317,6 +337,258 @@ export class LobbyService {
     if (!row) throw notFound("Лобби не найдено");
     if (row.hostId !== user.id) throw forbidden("Только хозяин лобби");
     return this.deps.configs.save(user.id, row.config, { name });
+  }
+
+  async originalConfig(user: UserDto, lobbyId: string): Promise<ConfigDocument> {
+    const row = await this.loadRow(lobbyId);
+    this.requireHost(row, user);
+    return row.config as unknown as ConfigDocument;
+  }
+
+  pause(user: UserDto, lobbyId: string, paused: boolean): Promise<LobbyDto> {
+    return this.lock(lobbyId, async () => {
+      const row = await this.loadRow(lobbyId);
+      this.requireHost(row, user);
+      const room = await this.room(lobbyId);
+      await this.expireAgent(room, this.deps.now());
+      if (row.status !== "playing" || !room.match) throw conflict("no_match", "Партия не идёт");
+      if (!paused && room.match.pause?.reason === "presenter-disconnected") {
+        if (room.presenterId) {
+          if (!this.isOnline(room, room.presenterId)) throw conflict("presenter_offline", "Назначенный ведущий должен открыть лобби");
+          if (room.agentAssignment?.role === "presenter") await this.clearAgent(room);
+        } else if (room.agentAssignment?.role === "presenter" && room.agent.status !== "connected") {
+          throw conflict("presenter_offline", "Сначала подключите ведущего или выберите другой способ продолжить");
+        }
+      }
+      await this.applyPause(room, paused ? "manual" : null, this.deps.now());
+      return this.publishLobby(room);
+    });
+  }
+
+  agentAttach(user: UserDto, lobbyId: string, change?: LobbyAgentAssignment): Promise<{ key: string; lobby: LobbyDto }> {
+    return this.lock(lobbyId, async () => {
+      const row = await this.loadRow(lobbyId);
+      this.requireHost(row, user);
+      if (row.status === "closed") throw conflict("closed", "Лобби закрыто");
+      const room = await this.room(lobbyId);
+      await this.expireAgent(room, this.deps.now());
+      if (room.agent.status === "connected") throw conflict("agent_connected", "Агент уже подключён. Отключите его в лобби для замены");
+      const previous = room.agentAssignment;
+      const assignment = change?.role === previous?.role && change?.instructions === undefined ? previous : change ?? previous;
+      if (!assignment) throw badRequest("agent_role_required", "Выберите роль ИИ");
+      this.requireAgentRole(row.config as unknown as ConfigDocument, assignment);
+      if (row.status === "playing" && assignment.role !== previous?.role && (assignment.role === "presenter" || previous?.role === "presenter")) {
+        throw conflict("match_in_progress", "Во время партии ведущего заменяет хозяин из лобби");
+      }
+      const changes = [this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: { ...assignment } } })];
+      if (assignment.role === "presenter" && room.presenterId !== null) {
+        if (previous?.role !== "presenter" || room.match?.pause?.reason !== "presenter-disconnected") {
+          throw conflict("presenter_assigned", "Сначала снимите действующего ведущего");
+        }
+        await this.deps.db.$transaction([
+          ...changes,
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
+        ]);
+        room.presenterId = null;
+      } else {
+        await changes[0];
+      }
+      room.agentAssignment = assignment;
+      const key = room.agent.attach(this.deps.now());
+      await this.syncPresence(room);
+      this.schedule(room);
+      this.publishMatch(room);
+      return { key, lobby: await this.publishLobby(room) };
+    });
+  }
+
+  async agentWait(user: UserDto, lobbyId: string, key: string, after: number, timeoutMs: number, signal?: AbortSignal): Promise<{ event: AgentEvent | null; instructions?: string }> {
+    const initial = await this.lock(lobbyId, async () => {
+      const room = await this.agentRoom(user, lobbyId, key);
+      await this.refreshAgentLease(room);
+      const event = room.agent.eventAfter(after);
+      return event || timeoutMs === 0
+        ? { value: { event: event ?? null, instructions: room.agentAssignment?.instructions } }
+        : { pending: room.agent.wait(timeoutMs, signal) };
+    });
+    if (initial.value) return initial.value;
+    await initial.pending;
+    return this.lock(lobbyId, async () => {
+      const room = await this.agentRoom(user, lobbyId, key);
+      if (!signal?.aborted) await this.refreshAgentLease(room);
+      return { event: room.agent.eventAfter(after) ?? null, instructions: room.agentAssignment?.instructions };
+    });
+  }
+
+  agentAct(user: UserDto, lobbyId: string, key: string, cursor: number, action: unknown): Promise<void> {
+    return this.lock(lobbyId, async () => {
+      const room = await this.agentRoom(user, lobbyId, key);
+      const role = room.agentAssignment?.role;
+      if (role === "commentator" && isDeepStrictEqual(action, { type: "comment" })) {
+        if (!room.agent.comment(cursor, room.matchId)) throw conflict("no_agent_comment", "Комментарий для этого события уже опубликован или недоступен");
+        room.agent.renew(this.deps.now());
+        this.schedule(room);
+        await this.publishLobby(room);
+        return;
+      }
+      if (role !== "presenter" || !room.match) throw forbidden("У роли нет права управлять партией");
+      const at = this.deps.now();
+      if (room.match.advance(at)) {
+        await this.afterMatchChange(room);
+        this.publishMatch(room);
+      }
+      const latest = room.agent.latest;
+      if (latest?.cursor !== cursor || !latest.task) throw conflict("stale_agent_event", "Событие изменилось. Запросите текущее состояние");
+      if (!latest.task.actions.some((option) => isDeepStrictEqual(option, action))) throw forbidden("Действие недоступно ведущему на этом этапе");
+      const result = room.match.dispatchControl("presenter", action, at);
+      if (!result.ok) throw conflict(result.error.code, result.error.message);
+      room.agent.renew(at);
+      await this.saveLog(room);
+      await this.afterMatchChange(room);
+      this.publishMatch(room);
+    });
+  }
+
+  agentDetach(user: UserDto, lobbyId: string, key: string): Promise<void> {
+    return this.lock(lobbyId, async () => {
+      const room = await this.agentRoom(user, lobbyId, key);
+      await this.dropAgent(room, this.deps.now());
+    });
+  }
+
+  manageAgent(user: UserDto, lobbyId: string, command: LobbyAgentCommand): Promise<LobbyDto> {
+    return this.lock(lobbyId, async () => {
+      const row = await this.loadRow(lobbyId);
+      this.requireHost(row, user);
+      const room = await this.room(lobbyId);
+      const role = room.agentAssignment?.role;
+      if (!role || row.status === "closed") throw conflict("no_agent", "В лобби нет активной роли ИИ");
+      const at = this.deps.now();
+      await this.expireAgent(room, at);
+      if (command.action === "disconnect") {
+        await this.dropAgent(room, at);
+        if (row.status === "playing" && role === "presenter") return this.dto(row, room);
+        await this.clearAgent(room);
+        return this.publishLobby(room);
+      }
+      if (command.action === "reconnect") {
+        if (room.agent.status !== "connected") room.agent.drop("waiting", room.agent.notice);
+        return this.publishLobby(room);
+      }
+      if (role !== "presenter" || room.match?.pause?.reason !== "presenter-disconnected") {
+        throw conflict("presenter_not_paused", "Эти действия доступны после отключения ИИ-ведущего");
+      }
+      if (command.action === "algorithm") {
+        if (!room.match.canRecoverAlgorithm()) {
+          throw conflict("algorithm_unavailable", "Этот квиз требует решений ведущего");
+        }
+        const result = room.match.dispatchControl("system", { type: "presenter-algorithm" }, at);
+        if (!result.ok) throw conflict(result.error.code, result.error.message);
+        await this.deps.db.$transaction([
+          this.deps.db.match.update({ where: { id: room.matchId! }, data: { log: room.match.record().log as unknown as Prisma.InputJsonValue } }),
+          this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: Prisma.DbNull } }),
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
+        ]);
+        room.presenterId = null;
+      } else if (command.action === "human") {
+        if (room.seatUsers.includes(command.userId) || !row.members.some((m) => m.userId === command.userId && m.role === "spectator")) {
+          throw conflict("presenter_not_spectator", "Выберите зрителя без игрового места");
+        }
+        if (!this.isOnline(room, command.userId)) throw conflict("presenter_offline", "Зритель должен открыть лобби, чтобы принять ведение");
+        await this.deps.db.$transaction([
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
+          this.deps.db.lobbyMember.update({ where: { lobbyId_userId: { lobbyId, userId: command.userId } }, data: { role: "presenter" } }),
+        ]);
+        room.presenterId = command.userId;
+        room.agent.drop("disconnected", room.agent.notice);
+        this.schedule(room);
+        this.publishMatch(room);
+        return this.publishLobby(room);
+      } else {
+        await this.deps.db.$transaction([
+          this.deps.db.match.update({ where: { id: room.matchId! }, data: { status: "aborted", finishedAt: new Date(at) } }),
+          this.deps.db.lobby.update({ where: { id: lobbyId }, data: { agent: Prisma.DbNull, status: "finished" } }),
+          this.deps.db.lobbyMember.updateMany({ where: { lobbyId, role: "presenter" }, data: { role: "spectator" } }),
+        ]);
+        room.match = null;
+        room.presenterId = null;
+      }
+      room.agentAssignment = null;
+      room.agent.drop("disconnected");
+      this.schedule(room);
+      this.publishMatch(room);
+      return this.publishLobby(room);
+    });
+  }
+
+  private requireHost(row: LobbyRow, user: UserDto): void {
+    if (row.hostId !== user.id) throw forbidden("Только хозяин лобби");
+  }
+
+  private isOnline(room: Room, userId: string): boolean {
+    return [...room.subscribers].some((sub) => sub.userId === userId && !sub.closed?.());
+  }
+
+  private requireAgentRole(config: ConfigDocument, assignment: LobbyAgentAssignment): void {
+    const game = this.deps.catalog.get(config.game);
+    if (!game?.ai?.some((support) => support.role === assignment.role)) throw badRequest("agent_role_unavailable", "Игра не поддерживает эту роль ИИ");
+    if (assignment.role === "presenter" && config.game === "quizor") {
+      const rules = config.rules as QuizorRules;
+      if (rules.presenter === "none") throw badRequest("presenter_disabled", "Включите ведущего в настройках Quizor");
+      if (!quizorCanUseAgentPresenter(rules)) throw badRequest("oral_requires_human", "Устные ответы, порученные ведущему, требуют человека. Выберите текстовое поле или другой способ проверки");
+    }
+  }
+
+  private async agentRoom(user: UserDto, lobbyId: string, key: string): Promise<Room> {
+    const room = await this.room(lobbyId);
+    if (room.hostId !== user.id) throw forbidden("Только хозяин лобби");
+    await this.expireAgent(room, this.deps.now());
+    if (!room.agent.hasKey(key)) throw forbidden("Подключение ИИ завершено. Подключитесь снова");
+    return room;
+  }
+
+  private async expireAgent(room: Room, now: number): Promise<void> {
+    const expiresAt = room.agent.expiresAt;
+    if (expiresAt !== undefined && expiresAt <= now) await this.dropAgent(room, expiresAt);
+  }
+
+  private async refreshAgentLease(room: Room): Promise<void> {
+    const now = this.deps.now();
+    room.agent.renew(now);
+    const match = room.match;
+    if (room.agentAssignment?.role === "presenter" && match && !match.pause && match.currentPhase !== "finished"
+      && now - (room.agentCheckpointAt ?? match.startedAt) >= AGENT_CHECKPOINT_INTERVAL_MS) {
+      const advanced = match.advance(now);
+      await this.afterMatchChange(room);
+      if (advanced) this.publishMatch(room);
+    } else {
+      this.schedule(room);
+    }
+  }
+
+  private async dropAgent(room: Room, at: number): Promise<void> {
+    const role = room.agentAssignment?.role;
+    const active = room.match && room.match.currentPhase !== "finished";
+    const label = { observer: "ИИ-наблюдатель", commentator: "ИИ-комментатор", presenter: "ИИ-ведущий" };
+    room.agent.drop("disconnected", role && (!room.match || active) ? `${label[role]} отключился` : undefined);
+    if (active && role === "presenter") await this.applyPause(room, "presenter-disconnected", at);
+    else this.schedule(room);
+    await this.publishLobby(room);
+  }
+
+  private async clearAgent(room: Room): Promise<void> {
+    await this.deps.db.lobby.update({ where: { id: room.lobbyId }, data: { agent: Prisma.DbNull } });
+    room.agentAssignment = null;
+  }
+
+  private async applyPause(room: Room, reason: "manual" | "presenter-disconnected" | null, at: number): Promise<void> {
+    if (!room.match) return;
+    const result = room.match.setPaused(reason, at);
+    if (!result.ok && reason !== "presenter-disconnected") throw conflict(result.error.code, result.error.message);
+    if (result.ok) await this.saveLog(room);
+    if (reason === null) await this.syncPresence(room);
+    await this.afterMatchChange(room);
+    this.publishMatch(room);
   }
 
   join(user: UserDto, lobbyId: string, role: "player" | "spectator"): Promise<LobbyDto> {
@@ -361,6 +633,7 @@ export class LobbyService {
       if (row.status === "closed") throw conflict("closed", "Лобби закрыто");
       const config = row.config as unknown as ConfigDocument;
       if (config.game !== "quizor" || (config.rules as { presenter?: string }).presenter === "none") throw conflict("no_presenter", "В этом квизе ведущий отключён");
+      if (userId !== null && (row.agent as LobbyAgentAssignment | null)?.role === "presenter") throw conflict("agent_presenter_assigned", "Сначала снимите ИИ-ведущего");
       const member = row.members.find(m => m.userId === userId);
       if (userId !== null && !member) throw conflict("presenter_not_member", "Ведущий должен сначала войти в лобби");
       if (member?.role === "player") throw conflict("presenter_is_player", "Ведущий не может занимать игровое место: сначала перейдите в зрители");
@@ -384,13 +657,16 @@ export class LobbyService {
       const config = row.config as unknown as ConfigDocument;
       const { game, min, max } = this.seatsOf(config);
       const players = row.members.filter((m) => m.role === "player").map((m) => m.userId);
-      if (config.game === "quizor" && (config.rules as { presenter?: string }).presenter === "required" && !row.members.some(m => m.role === "presenter")) {
+      const room = await this.room(lobbyId);
+      await this.expireAgent(room, this.deps.now());
+      const aiPresenter = room.agentAssignment?.role === "presenter";
+      if (aiPresenter && room.agent.status !== "connected") throw conflict("presenter_offline", "Сначала подключите ИИ-ведущего");
+      if (config.game === "quizor" && (config.rules as { presenter?: string }).presenter === "required" && !aiPresenter && !row.members.some(m => m.role === "presenter")) {
         throw conflict("presenter_required", "Для этого квиза назначьте ведущего");
       }
       if (players.length < min || players.length > max) {
         throw conflict("not_enough_players", min === max ? `Нужно ровно ${min} игрока` : `Нужно от ${min} до ${max} игроков`);
       }
-      const room = await this.room(lobbyId);
       let seatUsers = players;
       const prev = room.seatUsers;
       if (prev.length === players.length && prev.every((u) => players.includes(u))) seatUsers = [...prev.slice(1), ...prev.slice(0, 1)];
@@ -398,15 +674,23 @@ export class LobbyService {
       const seed = randomSeed();
       const seatNames = seatUsers.map((id) => this.memberName(row.members.find((m) => m.userId === id)!));
       const match = Match.start({ game, config, seats: seatUsers.length, seed, startedAt: now });
+      if (aiPresenter && match.currentPhase === "playing") {
+        const result = match.dispatchControl("system", { type: "presenter-presence", online: true, requireAssignment: true }, now);
+        if (!result.ok) throw conflict(result.error.code, result.error.message);
+      }
       const matchId = newId("mat");
       await this.deps.db.$transaction([
         this.deps.db.match.updateMany({ where: { lobbyId, status: "playing" }, data: { status: "aborted", finishedAt: new Date(now) } }),
         this.deps.db.match.create({
-          data: { id: matchId, lobbyId, seed, startedAt: new Date(now), seatUsers, seatNames, log: [], status: "playing" },
+          data: { id: matchId, lobbyId, seed, startedAt: new Date(now), seatUsers, seatNames,
+            log: match.record().log as unknown as Prisma.InputJsonValue, status: "playing",
+            ...(aiPresenter ? { checkpointAt: new Date(match.checkpointAt) } : {}) },
         }),
         this.deps.db.lobby.update({ where: { id: lobbyId }, data: { status: "playing" } }),
       ]);
-      Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false, hostId: row.hostId, presenterId: row.members.find(m => m.role === "presenter")?.userId ?? null, playerIds: new Set(players), presence: null, presenterOnline: null });
+      Object.assign(room, { match, matchId, seatUsers, seatNames, finishedSaved: false, hostId: row.hostId, presenterId: row.members.find(m => m.role === "presenter")?.userId ?? null, playerIds: new Set(players), presence: null, presenterOnline: aiPresenter ? true : null });
+      room.agentCheckpointAt = aiPresenter ? match.checkpointAt : null;
+      room.agent.resetComments();
       await this.syncPresence(room);
       await this.afterMatchChange(room);
       const dto = await this.publishLobby(room);
@@ -428,6 +712,7 @@ export class LobbyService {
       if (room.timer) clearTimeout(room.timer);
       room.timer = null;
       room.match = null;
+      room.agent.drop("disconnected");
       const dto = await this.publishLobby(room);
       this.publishMatch(room);
       return dto;
@@ -441,6 +726,7 @@ export class LobbyService {
       const seat = room.seatUsers.indexOf(user.id);
       if (seat < 0) return { ok: false, error: { code: "not_a_player", message: "Вы не играете в этой партии" } };
       const now = this.deps.now();
+      await this.expireAgent(room, now);
       // run due timers first: a late action may be rejected after a timeout or the
       // final round already happened, and clients must still see that change
       const advanced = room.match.advance(now);
@@ -470,6 +756,7 @@ export class LobbyService {
       if (!role) return { ok: false, error: { code: "forbidden_control", message: "Управлять могут хозяин и назначенный ведущий" } };
       if (!room.match) return { ok: false, error: { code: "no_match", message: "Партия не идёт" } };
       const now = this.deps.now();
+      await this.expireAgent(room, now);
       const advanced = room.match.advance(now);
       const result = room.match.dispatchControl(role, action, now);
       if (result.ok) await this.saveLog(room);
@@ -483,9 +770,12 @@ export class LobbyService {
   }
 
   private async syncPresence(room: Room): Promise<void> {
-    if (!room.match?.game.applyControl || room.match.currentPhase !== "playing") return;
-    const advanced = room.match.advance(this.deps.now());
-    if (room.match.currentPhase !== "playing") {
+    const match = room.match;
+    if (!match?.game.applyControl || match.pause) return;
+    const canSync = () => match.currentPhase === "playing" || (match.currentPhase === "intermission" && match.game.applyIntermissionControl);
+    if (!canSync()) return;
+    const advanced = match.advance(this.deps.now());
+    if (!canSync()) {
       if (advanced) { await this.afterMatchChange(room); this.publishMatch(room); }
       return;
     }
@@ -494,12 +784,12 @@ export class LobbyService {
     let changed = advanced;
     for (let seat = 0; seat < room.seatUsers.length; seat++) {
       if (room.presence !== null && room.presence.has(seat) === seats.has(seat)) continue;
-      const result = room.match.dispatchControl("system", { type: "presence", seat, online: seats.has(seat) }, this.deps.now());
+      const result = match.dispatchControl("system", { type: "presence", seat, online: seats.has(seat) }, this.deps.now());
       changed ||= result.ok;
     }
-    const presenterOnline = room.presenterId !== null && online.has(room.presenterId);
+    const presenterOnline = (room.agentAssignment?.role === "presenter" && room.agent.status === "connected") || (room.presenterId !== null && online.has(room.presenterId));
     if (room.presenterOnline !== presenterOnline) {
-      const result = room.match.dispatchControl("system", { type: "presenter-presence", online: presenterOnline }, this.deps.now());
+      const result = match.dispatchControl("system", { type: "presenter-presence", online: presenterOnline, ...(presenterOnline ? { requireAssignment: true } : {}) }, this.deps.now());
       changed ||= result.ok;
     }
     room.presenterOnline = presenterOnline;
@@ -612,6 +902,7 @@ export class LobbyService {
   }
 
   private publishMatch(room: Room) {
+    room.agent.publish(room.agentAssignment?.role, room.matchId, room.match);
     for (const sub of room.subscribers) this.sendMatch(room, sub);
   }
 
@@ -629,6 +920,9 @@ export class LobbyService {
         this.deps.db.lobby.update({ where: { id: room.lobbyId }, data: { status: "finished" } }),
       ]);
       await this.publishLobby(room);
+    } else if (room.agentAssignment?.role === "presenter" && room.agentCheckpointAt !== match.checkpointAt) {
+      await this.deps.db.match.update({ where: { id: room.matchId! }, data: { checkpointAt: new Date(match.checkpointAt) } });
+      room.agentCheckpointAt = match.checkpointAt;
     }
     this.schedule(room);
   }
@@ -636,8 +930,8 @@ export class LobbyService {
   private schedule(room: Room) {
     if (room.timer) clearTimeout(room.timer);
     room.timer = null;
-    const at = room.match?.nextWakeAt();
-    if (at === null || at === undefined) return;
+    const at = Math.min(room.match?.nextWakeAt() ?? Infinity, room.agent.expiresAt ?? Infinity);
+    if (!Number.isFinite(at)) return;
     const delay = Math.min(Math.max(0, at - this.deps.now()), MAX_TIMER_MS);
     room.timer = setTimeout(() => void this.wake(room.lobbyId), delay);
     room.timer.unref?.();
@@ -646,8 +940,11 @@ export class LobbyService {
   private wake(lobbyId: string): Promise<void> {
     return this.lock(lobbyId, async () => {
       const room = this.rooms.get(lobbyId);
-      if (!room?.match) return;
-      const changed = room.match.advance(this.deps.now());
+      if (!room) return;
+      const now = this.deps.now();
+      await this.expireAgent(room, now);
+      if (!room.match) return;
+      const changed = room.match.advance(now);
       await this.afterMatchChange(room);
       if (changed) this.publishMatch(room);
     }).catch((e) => this.deps.log.error({ err: e, lobbyId }, "lobby wake failed"));
@@ -675,8 +972,14 @@ export class LobbyService {
         const seatUsers = row.seatUsers as string[];
         const record: MatchRecord = { seed: row.seed, startedAt: row.startedAt.getTime(), seats: seatUsers.length, log: row.log as unknown as MatchLogEntry[] };
         try {
-          const match = Match.restore({ game, config, record, now: this.deps.now() });
+          const aiPresenter = room.agentAssignment?.role === "presenter";
+          const restoreAt = aiPresenter
+            ? Math.max(row.checkpointAt?.getTime() ?? record.startedAt, record.log.at(-1)?.at ?? record.startedAt)
+            : this.deps.now();
+          const match = Match.restore({ game, config, record, now: restoreAt });
           Object.assign(room, { match, matchId: row.id, seatUsers, seatNames: row.seatNames as string[], finishedSaved: false, presence: null, presenterOnline: null });
+          room.agentCheckpointAt = row.checkpointAt?.getTime() ?? null;
+          if (room.agentAssignment) await this.dropAgent(room, restoreAt);
           await this.syncPresence(room);
           await this.afterMatchChange(room);
           restored++;
@@ -694,7 +997,10 @@ export class LobbyService {
   }
 
   shutdown(): void {
-    for (const room of this.rooms.values()) if (room.timer) clearTimeout(room.timer);
+    for (const room of this.rooms.values()) {
+      if (room.timer) clearTimeout(room.timer);
+      room.agent.drop("disconnected");
+    }
     this.rooms.clear();
   }
 }

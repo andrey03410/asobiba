@@ -2,7 +2,7 @@
  * HTTP and WebSocket contract between apps/server and apps/web. Types only.
  * Errors: non-2xx responses carry `ApiError`.
  */
-import type { ConfigDocument, ConfigInformation, ConfigIssue, ConfigSummary, GameCapabilities, GameGuide, GameSummary, MatchView, Seat } from "@asobiba/sdk";
+import type { AgentRole, ConfigDocument, ConfigInformation, ConfigIssue, ConfigSummary, GameCapabilities, GameGuide, GameSummary, MatchView, Seat } from "@asobiba/sdk";
 
 export interface ApiError {
   error: { code: string; message: string };
@@ -195,12 +195,33 @@ export interface AssetsResponse {
 // ---------- lobbies ----------
 export type LobbyStatus = "waiting" | "playing" | "finished" | "closed";
 
+export interface LobbyAgentAssignment {
+  role: AgentRole;
+  instructions?: string;
+}
+
+export interface LobbyAgentStatus {
+  role: AgentRole;
+  status: "waiting" | "connected" | "disconnected";
+  canUseAlgorithm: boolean;
+}
+
+export interface LobbyAgentComment {
+  id: string;
+  text: string;
+}
+
+export type LobbyAgentCommand =
+  | { action: "disconnect" | "reconnect" | "algorithm" | "finish" }
+  | { action: "human"; userId: string };
+
 export interface LobbyMemberDto {
   userId: string;
   login: string;
   role: "player" | "spectator" | "presenter";
   /** Seat in the current/last match; null before the first start or for spectators. */
   seat: Seat | null;
+  eligiblePresenter?: boolean;
   joinedAt: string;
 }
 
@@ -218,6 +239,10 @@ export interface LobbyDto {
   /** Names captured at the start of the current/last match, even after a member leaves. */
   seatNames?: string[];
   config: ConfigDocument;
+  createdByAgent?: boolean;
+  agent?: LobbyAgentStatus;
+  agentNotice?: string;
+  agentComments?: LobbyAgentComment[];
   /** Safe system projection from the original config, not the displayed rules. */
   information: ConfigInformation;
   /** Absolute link to the lobby page. */
@@ -258,6 +283,7 @@ export interface CreateLobbyRequest {
   name?: string;
   configId?: string;
   config?: unknown;
+  agent?: LobbyAgentAssignment;
 }
 
 // ---------- WebSocket /ws (session cookie auth) ----------

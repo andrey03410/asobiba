@@ -205,6 +205,19 @@ export const yomifuda = defineGame<YomifudaRules, YomifudaVisual, YomifudaState,
     revealSeconds: r.revealSeconds, choiceSeconds: r.choiceSeconds, winPoints: r.winPoints, tiePoints: r.tiePoints,
     attributeMode: r.attributeMode, pool: { profiles: [...r.pool.profiles], minViewers: r.pool.minViewers } }),
   guide: YOMIFUDA_GUIDE, presets: PRESETS,
+  ai: [
+    { role: "observer", description: "Следит за открытым столом и очками участников.", example: "Дай сводку после последнего боя." },
+    { role: "commentator", description: "Комментирует результаты раскрытых боёв.", example: "Отмечай исход каждого боя после раскрытия." },
+  ],
+  observeForAgent: ({ phase, round, attribute, players, table }) => {
+    const shown = table.flatMap((entry) => entry.hidden ? [] : [entry]);
+    const winners = shown.filter((entry) => entry.winner).map(({ card }) => card.name);
+    return {
+      state: { phase, round, attribute: attribute.label, players, table: shown },
+      ...(shown.length > 0 ? { comment: { key: String(round), text: winners.length === 1
+        ? `Победа в бою №${round}: ${winners[0]}` : `Бой №${round} завершился вничью` } } : {}),
+    };
+  },
   slots: [{ path: "rules.cards[].image", title: "Портрет персонажа", accepts: ["asset"], advice: "Необязательный портрет из своего пула; без картинки будет нейтральная замена" }],
   themes: [ { id: "night", title: "Ночь", description: "Тёмная арена" }, { id: "paper", title: "Бумага", description: "Светлая арена" }, { id: "sakura", title: "Сакура", description: "Розовая арена" } ],
   visualCatalog: {},

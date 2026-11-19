@@ -2,6 +2,7 @@ import { yomifuda, type YomifudaView } from '@asobiba/game-yomifuda';
 import { Match, presetDocument } from '@asobiba/sdk';
 import type { LobbyDto } from "@asobiba/api";
 import type { BoardProps, ConfigDocument, MatchView } from "@asobiba/sdk";
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { WebGameClient } from "../games";
@@ -15,8 +16,10 @@ const client = {
       data-fullscreen={String(Boolean(props.fullscreen))}
       data-hold={String(typeof props.onHold)}
       data-control={String(typeof props.onControl)}
+      data-action={String(typeof props.onAction)}
       data-control-role={props.controlRole}
       data-connected={String(props.connected)}
+      data-clock-offset={props.clockOffset}
     />
   ),
   SeatIcon: () => null,
@@ -58,7 +61,7 @@ function view(patch: Partial<MatchView>): MatchView {
   } as MatchView;
 }
 
-function render(match: MatchView) {
+function render(match: MatchView, props: Partial<ComponentProps<typeof MatchStage>> = {}) {
   return renderToStaticMarkup(
     <MatchStage
       lobby={lobby}
@@ -72,11 +75,108 @@ function render(match: MatchView) {
       onLeave={() => {}}
       busy={false}
       drawer={null}
+      {...props}
     />,
   );
 }
 
 describe("MatchStage", () => {
+  it("lets the host pause any active game", () => {
+    const html = render(view({}), { onPauseChange: () => {} });
+    expect(html).toContain("Поставить на паузу");
+    expect(render(view({}))).not.toContain("Поставить на паузу");
+  });
+
+  it("hides turn clocks and disables both board channels during a manual pause", () => {
+    const html = render(view({ turnDeadline: 50_000, pause: { reason: "manual", since: 40_000 } }), {
+      onAction: () => {},
+      onControl: () => {},
+      onPauseChange: () => {},
+    });
+    expect(html).toContain("Партия на паузе");
+    expect(html).toContain("Возобновить партию");
+    expect(html).toContain('inert=""');
+    expect(html).not.toContain("stage-timer");
+    expect(html).not.toContain("Ваш ход");
+    expect(html).toContain('data-action="undefined"');
+    expect(html).toContain('data-control="undefined"');
+  });
+
+  it("passes logical time to the board after resuming", () => {
+    const html = render(view({ clockShiftMs: 6_000 }), { clockOffset: 500 });
+    expect(html).toContain('data-clock-offset="-5500"');
+  });
+
+  it("offers the host recovery with only compatible options and unseated spectators", () => {
+    const unavailablePresenter: LobbyDto = {
+      ...lobby,
+      status: "playing",
+      agent: { role: "presenter", status: "disconnected", canUseAlgorithm: false },
+      members: [
+        { userId: "p", login: "Игрок", role: "player", seat: 0, joinedAt: "" },
+        { userId: "h", login: "Бывший игрок", role: "spectator", seat: null, joinedAt: "", eligiblePresenter: false },
+        { userId: "s", login: "Зритель", role: "spectator", seat: null, joinedAt: "", eligiblePresenter: true },
+      ],
+      url: "https://asobiba.example/lobby/lob_test",
+    };
+    const paused = view({ pause: { reason: "presenter-disconnected", since: 40_000 } });
+    const host = render(paused, { lobby: unavailablePresenter, onAgentAction: () => {}, onPauseChange: () => {} });
+    expect(host).toContain("ИИ отключился");
+    expect(host).toContain("Переподключить ИИ");
+    expect(host).toContain("тот же чат");
+    expect(host).toContain(unavailablePresenter.url);
+    expect(host).toContain("Назначить человека");
+    expect(host).toContain('<option value="s">Зритель</option>');
+    expect(host).not.toContain('<option value="h">');
+    expect(host).not.toContain('<option value="p">');
+    expect(host).not.toContain("Включить алгоритмического ведущего");
+    expect(host).toContain("Завершить партию");
+    expect(host).not.toContain("Возобновить партию");
+
+    const compatible = { ...unavailablePresenter, agent: { ...unavailablePresenter.agent!, canUseAlgorithm: true } };
+    expect(render(paused, { lobby: compatible, onAgentAction: () => {} })).toContain("Включить алгоритмического ведущего");
+
+    const guest = render(paused, { lobby: compatible });
+    expect(guest).toContain("ИИ отключился");
+    expect(guest).not.toContain("Переподключить ИИ");
+    expect(guest).not.toContain("Возобновить партию");
+  });
+
+  it("lets the host resume with the selected presenter while keeping recovery alternatives available", () => {
+    const pendingHandoff: LobbyDto = {
+      ...lobby,
+      status: "playing",
+      agent: { role: "presenter", status: "disconnected", canUseAlgorithm: true },
+      members: [{ userId: "s", login: "Анна", role: "presenter", seat: null, joinedAt: "" }],
+    };
+    const html = render(view({ pause: { reason: "presenter-disconnected", since: 40_000 } }), {
+      lobby: pendingHandoff,
+      onAgentAction: () => {},
+      onPauseChange: () => {},
+    });
+    expect(html).toContain("Анна");
+    expect(html).toContain("Возобновить партию");
+    expect(html).toContain("Переподключить ИИ");
+    expect(html).toContain("Включить алгоритмического ведущего");
+    expect(html).toContain("Завершить партию");
+  });
+
+  it("shows public commentary and a departure notice without pausing the match", () => {
+    const html = render(view({}), {
+      lobby: {
+        ...lobby,
+        agent: { role: "commentator", status: "disconnected", canUseAlgorithm: false },
+        agentNotice: "ИИ отключился. Партия продолжается.",
+        agentComments: [{ id: "round-1", text: "Итог боя — ничья." }],
+      },
+      onAction: () => {},
+    });
+    expect(html).toContain("Комментатор · ИИ");
+    expect(html).toContain("ИИ отключился. Партия продолжается.");
+    expect(html).toContain("Итог боя — ничья.");
+    expect(html).toContain('data-action="function"');
+  });
+
   it("lets a board own its turn HUD without duplicating the turn", () => {
     const html = renderToStaticMarkup(<MatchStage lobby={lobby} match={view({})} config={config} client={{ ...client, stageHud: 'board' } as WebGameClient} mySeat={0} seatName={() => 'Аня'} clockOffset={0} online onLeave={() => {}} busy={false} drawer={null} information={<p>Правила этой партии</p>} />);
     expect(html).not.toContain('stage-turn');

@@ -1,0 +1,2 @@
+ALTER TABLE "Lobby" ADD COLUMN "createdByAgent" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Lobby" ADD COLUMN "agent" JSONB;

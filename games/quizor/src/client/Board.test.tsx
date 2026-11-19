@@ -91,11 +91,14 @@ it("includes the current round background image in the SVG preview", () => {
   expect(html).toContain('href="/files/ast_RoundBG0001"');
   expect(html).toContain('preserveAspectRatio="xMidYMid slice"');
 });
-it("conceals question contents on pause and preserves the score panel", () => {
+it.each(["quiz", "match"] as const)("conceals question contents on %s pause and preserves the score panel", (pause) => {
+  const match = pause === "quiz"
+    ? { ...props.match, game: { ...view, paused: true } }
+    : { ...props.match, pause: { reason: "manual" as const, since: 0 } };
   const html = renderToStaticMarkup(
     <QuizorBoard
       {...props}
-      match={{ ...props.match, game: { ...view, paused: true } }}
+      match={match}
     />,
   );
   expect(html).toContain("Пауза");

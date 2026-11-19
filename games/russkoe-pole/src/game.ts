@@ -1206,6 +1206,14 @@ export const russkoePole = defineGame({
   },
 
   guide: POLE_GUIDE,
+  ai: [
+    { role: "observer", description: "Видит открытые буквы, ход и счёт.", example: "Понаблюдай и подведи итоги игры." },
+    { role: "commentator", description: "Подводит итог после раскрытия слова.", example: "Отмечай разгаданные слова." },
+  ],
+  observeForAgent: ({ phase, turn, wordIndex, tiles, players, reveal }) => ({
+    state: { phase, turn, wordIndex, letters: tiles.map(({ open, ch }) => open ? ch : "_"), scores: players.map(({ total }) => total), reveal },
+    ...(reveal ? { comment: { key: String(reveal.word), text: `Слово открыто: ${reveal.answer}` } } : {}),
+  }),
   presets: PRESETS,
   slots: [{ path: "visual.center", title: "Центр барабана", accepts: ["asset"], advice: "Квадратная картинка, её видно в середине барабана. Прозрачный фон подходит." }],
   themes: (Object.entries(THEMES) as [keyof typeof THEMES, string][]).map(([id, description]) => ({ id, title: id, description })),

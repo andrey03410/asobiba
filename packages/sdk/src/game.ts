@@ -49,6 +49,16 @@ export interface SetupContext<R> extends GameContext<R> {
   firstSeat: Seat;
 }
 
+export interface SeriesProgress {
+  betweenRounds: boolean;
+  remainingRounds: number;
+}
+
+export interface GameControlContext<R> extends GameContext<R> {
+  role: ControlRole;
+  series?: SeriesProgress;
+}
+
 export interface TickContext<R> extends GameContext<R> {
   tick: number;
   dtMs: number;
@@ -84,6 +94,20 @@ export interface ConfigPreset {
     timer?: Record<string, unknown>;
     visual?: Record<string, unknown>;
   };
+}
+
+export type AgentRole = "observer" | "commentator" | "presenter";
+
+export interface AgentRoleInfo {
+  role: AgentRole;
+  description: string;
+  example: string;
+}
+
+/** A compact observation derived only from the spectator view. */
+export interface AgentObservation {
+  state: unknown;
+  comment?: { key: string; text: string };
 }
 
 export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unknown, PV = unknown> {
@@ -133,6 +157,8 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   presentRules?(rules: R): R;
 
   setup(ctx: SetupContext<R>): S;
+  /** Initialize a new series round with any game-specific continuity. */
+  setupNextRound?(previous: S, ctx: SetupContext<R>): S;
   /** Seats allowed to act now. Empty for realtime games where everybody may act. */
   currentSeats(state: S): Seat[];
   /** Identity of the current turn; a new value restarts the turn timer. */
@@ -144,7 +170,9 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   sampleAction?(state: S, seat: Seat, ctx: GameContext<R>): A | null;
   applyAction(state: S, seat: Seat, action: A, ctx: GameContext<R>): S | ActionError;
   /** Trusted orchestration outside player seats. Controls validate their own payload. */
-  applyControl?(state: S, action: unknown, ctx: GameContext<R> & { role: ControlRole }): S | ActionError;
+  applyControl?(state: S, action: unknown, ctx: GameControlContext<R>): S | ActionError;
+  /** Optional system controls that can update continuity while the round result stands. */
+  applyIntermissionControl?(state: S, action: unknown, ctx: GameControlContext<R>): S | ActionError;
   /** Nearest game-owned server deadline, independent of the ordinary turn timer. */
   nextWakeAt?(state: S): number | null;
   wake?(state: S, ctx: GameContext<R>): S;
@@ -157,6 +185,8 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   view(state: S, seat: Seat | null): PV;
   /** Secrets for the separately authorized presenter; hosts do not receive this view. */
   presenterView?(state: S): PV;
+  /** Whether the remaining work can proceed without the current presenter. */
+  canRecoverAlgorithm?(state: S, series: SeriesProgress): boolean;
 
   /** Markdown guide for agents: how details combine, what is fun, limits. */
   guide: string;
@@ -165,6 +195,10 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   tuning?: TuningDirection[];
   /** Example requests a player can give an agent. */
   promptExamples?: string[];
+  /** Supported roles, shared by the site and MCP. */
+  ai?: AgentRoleInfo[];
+  /** Select meaningful public state and a safe candidate comment. */
+  observeForAgent?(spectatorView: PV): AgentObservation;
   /** Public developer preset that runs without account-specific resources. */
   examplePresetId?: string;
   /** Explicit public projection of an original, normalized config. Never serialize raw rules. */

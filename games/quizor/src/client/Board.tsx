@@ -548,7 +548,7 @@ export function QuizorBoard(props: BoardProps) {
   if (props.staticRender) return <StaticBoard {...props} />;
   const visual = resolveVisual(view.roundVisual ?? (config.visual as never));
   const now = clock + clockOffset;
-  const frozen = view.paused || (view.resumeAt !== null && now < view.resumeAt);
+  const frozen = Boolean(props.match.pause) || view.paused || (view.resumeAt !== null && now < view.resumeAt);
   const shownNow = frozen ? view.serverNow : now;
   const act = (a: unknown) => onAction?.(a);
   const name = (s: number) => playerNames[s] ?? `Игрок ${s + 1}`;

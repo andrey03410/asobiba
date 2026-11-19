@@ -1,17 +1,28 @@
 import type { ConfigDocument } from "./config";
-import { type AnyGame, type ControlRole, type GameContext, isActionError, type RoundResult, type Seat } from "./game";
+import { type AnyGame, type ControlRole, type GameContext, isActionError, type RoundResult, type Seat, type SeriesProgress } from "./game";
 import { createRng, type Rng } from "./rng";
 
 /** Pause between rounds so players can see how the round ended. */
 export const INTERMISSION_MS = 3000;
 const MAX_EVENTS_PER_ADVANCE = 100_000;
 
+export type MatchPauseReason = "manual" | "presenter-disconnected";
+
+export interface MatchPause {
+  readonly reason: MatchPauseReason;
+  /** Wall time at which the game clock stopped. */
+  readonly since: number;
+}
+
 export interface MatchLogEntry {
+  /** Wall time. */
   at: number;
   seat: Seat;
   action: unknown;
   /** A control uses seat -1 and is replayed through the trusted control channel. */
   controlRole?: ControlRole;
+  /** A match-level pause uses seat -1 and a null action. A null reason resumes play. */
+  pauseReason?: MatchPauseReason | null;
 }
 
 /** Everything needed to rebuild a match: config + this record. */
@@ -40,6 +51,9 @@ export interface MatchView<PV = unknown> {
   currentSeats: Seat[];
   turnDeadline: number | null;
   intermissionUntil: number | null;
+  pause?: MatchPause;
+  /** Elapsed wall time spent in completed pauses. Deadlines use the game clock. */
+  clockShiftMs?: number;
   lastRound: RoundResult | null;
   roundResults: RoundResult[];
   result: MatchResult | null;
@@ -58,9 +72,8 @@ export interface StartOptions {
 
 /**
  * Runs a match of any game: rounds of a series, the pause between rounds, the
- * turn timer and fixed realtime steps. Only human actions are logged; timer
- * and tick events are derived from time, so replaying the log reproduces the
- * state exactly.
+ * turn timer and fixed realtime steps. Actions, controls and match pauses are
+ * logged. Timer and tick events are derived from the game clock during replay.
  */
 export class Match {
   readonly game: AnyGame;
@@ -83,7 +96,9 @@ export class Match {
   private intermissionUntil: number | null = null;
   private roundStartedAt: number;
   private ticks = 0;
-  private clock: number;
+  private wallClock: number;
+  private pauseState: MatchPause | null = null;
+  private clockShiftMs = 0;
 
   private constructor(options: StartOptions) {
     this.game = options.game;
@@ -93,7 +108,7 @@ export class Match {
     this.startedAt = options.startedAt;
     this.rng = createRng(options.seed);
     this.scores = Array.from({ length: options.seats }, () => 0);
-    this.clock = options.startedAt;
+    this.wallClock = options.startedAt;
     this.roundStartedAt = options.startedAt;
     this.state = this.game.setup({ ...this.ctx(options.startedAt), round: 1, firstSeat: 0 });
     this.resetTurnTimer(options.startedAt, true);
@@ -114,9 +129,10 @@ export class Match {
     const { record } = options;
     const match = Match.start({ game: options.game, config: options.config, seats: record.seats, seed: record.seed, startedAt: record.startedAt });
     for (const entry of record.log) {
-      const res = entry.controlRole
-        ? match.dispatchControl(entry.controlRole, entry.action, entry.at)
-        : match.dispatch(entry.seat, entry.action, entry.at);
+      let res: DispatchResult;
+      if (entry.pauseReason !== undefined) res = match.setPaused(entry.pauseReason, entry.at);
+      else if (entry.controlRole) res = match.dispatchControl(entry.controlRole, entry.action, entry.at);
+      else res = match.dispatch(entry.seat, entry.action, entry.at);
       if (!res.ok) throw new Error(`Match.restore: log entry rejected at ${entry.at}: ${res.error.code}`);
     }
     match.advance(options.now);
@@ -131,16 +147,50 @@ export class Match {
     return this.result;
   }
 
+  get checkpointAt(): number {
+    return this.wallClock;
+  }
+
+  get pause(): MatchPause | null {
+    return this.pauseState;
+  }
+
+  canRecoverAlgorithm(): boolean {
+    return this.phase !== "finished" &&
+      (this.game.canRecoverAlgorithm?.(this.state, this.seriesProgress()) ?? false);
+  }
+
+  private get gameClock(): number {
+    return (this.pauseState?.since ?? this.wallClock) - this.clockShiftMs;
+  }
+
   record(): MatchRecord {
     return { seed: this.seed, startedAt: this.startedAt, seats: this.seats, log: [...this.log] };
   }
 
+  /** Changes the match pause at wall time `at`. A presenter disconnect takes precedence. */
+  setPaused(reason: MatchPauseReason | null, at: number): DispatchResult {
+    this.advance(Math.max(at, this.wallClock));
+    const previous = this.pauseState;
+    if (reason === (previous?.reason ?? null)) return { ok: true };
+    if (reason === "manual" && previous?.reason === "presenter-disconnected") return { ok: true };
+    if (reason === null) {
+      if (previous) this.clockShiftMs += this.wallClock - previous.since;
+      this.pauseState = null;
+    } else {
+      if (this.phase === "finished") return fail("finished", "Партия закончена");
+      this.pauseState = { reason, since: previous?.since ?? this.wallClock };
+    }
+    this.log.push({ at: this.wallClock, seat: -1, action: null, pauseReason: reason });
+    return { ok: true };
+  }
+
   /** Applies a human action. Pending timer and round events up to `at` are processed first. */
   dispatch(seat: Seat, rawAction: unknown, at: number): DispatchResult {
-    const time = Math.max(at, this.clock);
-    this.advance(time);
+    this.advance(Math.max(at, this.wallClock));
     if (seat < 0 || seat >= this.seats || !Number.isInteger(seat)) return fail("bad_seat", "Нет такого места");
     if (this.phase === "finished") return fail("finished", "Партия закончена");
+    if (this.pauseState) return fail("paused", "Партия на паузе");
     if (this.phase === "intermission") return fail("intermission", "Пауза между раундами");
     const parsed = this.game.actionSchema.safeParse(rawAction);
     if (!parsed.success) return fail("bad_action", parsed.error.issues[0]?.message ?? "Неверное действие");
@@ -148,54 +198,66 @@ export class Match {
       return fail("not_your_turn", "Сейчас не ваш ход");
     }
     const rngState = this.rng.state();
-    const next = this.game.applyAction(this.state, seat, parsed.data, this.ctx(time));
+    const next = this.game.applyAction(this.state, seat, parsed.data, this.ctx(this.gameClock));
     if (isActionError(next)) {
       // rejected actions are not logged, so they must not move the generator either
       this.rng.restore(rngState);
       return { ok: false, error: next.error };
     }
     this.state = next;
-    this.log.push({ at: time, seat, action: parsed.data });
-    this.afterChange(time);
+    this.log.push({ at: this.wallClock, seat, action: parsed.data });
+    this.afterChange(this.gameClock);
     return { ok: true };
   }
 
   /** Applies an independently authorized control; payload fields never grant a role. */
   dispatchControl(role: ControlRole, rawAction: unknown, at: number): DispatchResult {
-    const time = Math.max(at, this.clock);
-    this.advance(time);
+    this.advance(Math.max(at, this.wallClock));
     if (!["host", "presenter", "system"].includes(role)) return fail("bad_control_role", "Неизвестная роль управления");
-    if (!this.game.applyControl) return fail("no_controls", "Игра не поддерживает управление");
+    if (this.pauseState && role !== "system") return fail("paused", "Партия на паузе");
+    if (!this.game.applyControl && !this.game.applyIntermissionControl) return fail("no_controls", "Игра не поддерживает управление");
     if (this.phase === "finished") return fail("finished", "Партия закончена");
-    if (this.phase === "intermission") return fail("intermission", "Пауза между раундами");
+    const series = this.seriesProgress();
+    if (series.betweenRounds && (role !== "system" || !this.game.applyIntermissionControl)) {
+      return fail("intermission", "Пауза между раундами");
+    }
+    const applyControl = series.betweenRounds ? this.game.applyIntermissionControl : this.game.applyControl;
+    if (!applyControl) return fail("no_controls", "Игра не поддерживает управление");
     const rngState = this.rng.state();
-    const next = this.game.applyControl(this.state, rawAction, { ...this.ctx(time), role });
+    const next = applyControl.call(this.game, this.state, rawAction, { ...this.ctx(this.gameClock), role, series });
     if (isActionError(next)) {
       this.rng.restore(rngState);
       return { ok: false, error: next.error };
     }
     this.state = next;
-    this.log.push({ at: time, seat: -1, action: structuredClone(rawAction), controlRole: role });
-    this.afterChange(time);
+    this.log.push({ at: this.wallClock, seat: -1, action: structuredClone(rawAction), controlRole: role });
+    if (!series.betweenRounds) this.afterChange(this.gameClock);
     return { ok: true };
   }
 
-  /** Processes timers, pauses and realtime steps up to `now`. Returns true if anything happened. */
+  /** Processes timers, intermissions and realtime steps up to wall time `now`. */
   advance(now: number): boolean {
+    if (this.pauseState) {
+      this.wallClock = Math.max(this.wallClock, now);
+      return false;
+    }
+    const until = now - this.clockShiftMs;
     let changed = false;
     for (let i = 0; i < MAX_EVENTS_PER_ADVANCE; i++) {
       const next = this.nextEvent();
-      if (!next || next.at > now) break;
+      if (!next || next.at > until) break;
       next.run();
       changed = true;
     }
-    this.clock = Math.max(this.clock, now);
+    this.wallClock = Math.max(this.wallClock, now);
     return changed;
   }
 
   /** When the server should call `advance` next, or null if nothing is scheduled. */
   nextWakeAt(): number | null {
-    return this.nextEvent()?.at ?? null;
+    if (this.pauseState) return null;
+    const next = this.nextEvent();
+    return next ? next.at + this.clockShiftMs : null;
   }
 
   view(seat: Seat | null, role?: ControlRole): MatchView {
@@ -205,9 +267,11 @@ export class Match {
       rounds: this.config.series.rounds,
       scores: [...this.scores],
       seats: this.seats,
-      currentSeats: this.phase === "playing" ? this.game.currentSeats(this.state) : [],
+      currentSeats: this.phase === "playing" && !this.pauseState ? this.game.currentSeats(this.state) : [],
       turnDeadline: this.turnDeadline,
       intermissionUntil: this.intermissionUntil,
+      ...(this.pauseState && { pause: this.pauseState }),
+      ...(this.clockShiftMs && { clockShiftMs: this.clockShiftMs }),
       lastRound: this.roundResults.at(-1) ?? null,
       roundResults: [...this.roundResults],
       result: this.result,
@@ -219,6 +283,13 @@ export class Match {
     return { rules: this.config.rules, seats: this.seats, rng: this.rng, now };
   }
 
+  private seriesProgress(): SeriesProgress {
+    return {
+      betweenRounds: this.phase === "intermission",
+      remainingRounds: this.config.series.rounds - this.round,
+    };
+  }
+
   private nextEvent(): { at: number; run: () => void } | null {
     if (this.phase === "intermission" && this.intermissionUntil !== null) {
       const at = this.intermissionUntil;
@@ -228,7 +299,7 @@ export class Match {
     const candidates: { at: number; run: () => void }[] = [];
     const gameWake = this.game.nextWakeAt?.(this.state);
     if (this.game.wake && typeof gameWake === "number" && Number.isFinite(gameWake)) {
-      const at = Math.max(this.clock, gameWake);
+      const at = Math.max(this.gameClock, gameWake);
       candidates.push({ at, run: () => {
         this.state = this.game.wake!(this.state, this.ctx(at));
         this.afterChange(at);
@@ -373,7 +444,10 @@ export class Match {
     this.intermissionUntil = null;
     this.roundStartedAt = at;
     this.ticks = 0;
-    this.state = this.game.setup({ ...this.ctx(at), round: this.round, firstSeat: first });
+    const ctx = { ...this.ctx(at), round: this.round, firstSeat: first };
+    this.state = this.game.setupNextRound
+      ? this.game.setupNextRound(this.state, ctx)
+      : this.game.setup(ctx);
     this.turnKey = "";
     this.resetTurnTimer(at, true);
     this.settle(at);

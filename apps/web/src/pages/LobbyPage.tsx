@@ -1,13 +1,15 @@
-import type { LobbyDto, LobbyMemberDto } from "@asobiba/api";
+import type { LobbyAgentCommand, LobbyDto, LobbyMemberDto } from "@asobiba/api";
 import type { Seat } from "@asobiba/sdk";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiRequestError, api, assetUrl, errorMessage } from "../api";
 import { useUser } from "../auth";
+import { AgentParticipation } from "../components/AgentParticipation";
 import { ConfigNameAction } from "../components/ConfigNameAction";
 import { ConfigPreview } from "../components/ConfigPreview";
 import { CopyButton } from "../components/CopyButton";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { LobbyConfigSpoiler } from "../components/LobbyConfigSpoiler";
 import { MatchHud } from "../components/MatchHud";
 import { MatchStage } from "../components/MatchStage";
 import { SessionActions } from "../components/SessionActions";
@@ -176,7 +178,8 @@ export function LobbyPage() {
     setBusy(true);
     try {
       const res = await action();
-      setLobby(res.lobby);
+      // A newer socket push may reach the browser before this command response.
+      setLobby((current) => (current === lobby ? res.lobby : current));
       if (done) toast(done, "success");
     } catch (err) {
       toast(errorMessage(err), "error");
@@ -237,13 +240,26 @@ export function LobbyPage() {
     lobby.gameId === "quizor"
       ? (lobby.config.rules as { presenter?: string }).presenter
       : "none";
+  const aiPresenter = lobby.agent?.role === "presenter" ? lobby.agent : undefined;
+  const waitingForAi = aiPresenter !== undefined && aiPresenter.status !== "connected";
   const missingPresenter =
-    presenterPolicy === "required" &&
-    !lobby.members.some((m) => m.role === "presenter");
+    waitingForAi ||
+    (!aiPresenter && presenterPolicy === "required" && !lobby.members.some((m) => m.role === "presenter"));
+  const presenterHint = waitingForAi
+    ? "Дождитесь, пока подключится ИИ-ведущий."
+    : "Для начала квиза назначьте ведущего.";
   const canStart =
     isHost && open && players >= lobby.minPlayers && !missingPresenter;
   const missing = Math.max(0, lobby.minPlayers - players);
   const link = lobby.url || window.location.href;
+  const canDisconnectAgent = isHost && lobby.agent && lobby.status !== "closed" &&
+    (open || !aiPresenter || aiPresenter.status === "connected");
+  const paused = Boolean(match?.pause);
+  const gameClockOffset = socket.clockOffset - (match?.clockShiftMs ?? 0);
+
+  const onAgentAction = (command: LobbyAgentCommand) => {
+    void run(() => api.lobbyAgentAction(lobby.id, command));
+  };
 
   const onAction = (action: unknown) => {
     if (!socket.sendAction(action))
@@ -263,8 +279,10 @@ export function LobbyPage() {
       )}
       <section className="card">
         <MemberList lobby={lobby} client={client} meId={user.id} />
+        <AgentParticipation lobby={lobby} />
         {lobby.gameId === "quizor" &&
           presenterPolicy !== "none" &&
+          !aiPresenter &&
           isHost &&
           open && (
             <label className="sf-field">
@@ -356,7 +374,7 @@ export function LobbyPage() {
                 canStart
                   ? undefined
                   : missingPresenter
-                    ? "Назначьте ведущего"
+                    ? presenterHint
                     : `Нужно ещё ${missing} ${plural(missing, ["игрок", "игрока", "игроков"])}`
               }
               onClick={() => run(() => api.startLobby(lobby.id))}
@@ -381,6 +399,11 @@ export function LobbyPage() {
               }
             >
               Выйти из лобби
+            </button>
+          )}
+          {canDisconnectAgent && (
+            <button type="button" className="btn" disabled={busy} onClick={() => onAgentAction({ action: "disconnect" })}>
+              Отключить ИИ
             </button>
           )}
           {isHost && lobby.status !== "closed" && (
@@ -408,7 +431,7 @@ export function LobbyPage() {
           </p>
         )}
         {isHost && open && missingPresenter && (
-          <p className="muted small">Для начала квиза назначьте ведущего.</p>
+          <p className="muted small">{presenterHint}</p>
         )}
       </section>
 
@@ -426,6 +449,7 @@ export function LobbyPage() {
             />
           )}
         </div>
+        {isHost && lobby.createdByAgent && <LobbyConfigSpoiler key={lobby.id} lobbyId={lobby.id} />}
       </section>
     </>
   );
@@ -450,8 +474,12 @@ export function LobbyPage() {
         onAction={mySeat !== null ? onAction : undefined}
         onControl={socket.controlRole ? onControl : undefined}
         controlRole={socket.controlRole}
+        onPauseChange={isHost && lobby.status === "playing"
+          ? (paused) => void run(() => api.setLobbyPaused(lobby.id, paused))
+          : undefined}
+        onAgentAction={isHost && lobby.status === "playing" ? onAgentAction : undefined}
         onPlayAgain={
-          isHost && lobby.status === "finished"
+          canStart && lobby.status === "finished"
             ? () => void run(() => api.startLobby(lobby.id))
             : undefined
         }
@@ -517,7 +545,7 @@ export function LobbyPage() {
                 client={client}
                 mySeat={mySeat}
                 seatName={seatName}
-                clockOffset={socket.clockOffset}
+                clockOffset={gameClockOffset}
               />
               <ErrorBoundary resetKey={match}>
                 <div
@@ -529,14 +557,14 @@ export function LobbyPage() {
                     config={lobby.config}
                     seat={mySeat}
                     assetUrl={assetUrl}
-                    onAction={mySeat !== null ? onAction : undefined}
-                    onControl={socket.controlRole ? onControl : undefined}
+                    onAction={!paused && mySeat !== null ? onAction : undefined}
+                    onControl={!paused && socket.controlRole ? onControl : undefined}
                     controlRole={socket.controlRole}
                     connected={socket.status === "open"}
                     playerNames={Array.from({ length: match.seats }, (_, i) =>
                       seatName(i),
                     )}
-                    clockOffset={socket.clockOffset}
+                    clockOffset={gameClockOffset}
                   />
                 </div>
               </ErrorBoundary>
@@ -553,9 +581,11 @@ export function LobbyPage() {
                   ? "Лобби закрыто."
                   : missing > 0
                     ? `Ждём ${missing} ${plural(missing, ["игрока", "игроков", "игроков"])}, потом хозяин начнёт партию.`
-                    : isHost
-                      ? "Все в сборе — можно начинать."
-                      : "Все в сборе — ждём, когда хозяин начнёт."}
+                    : waitingForAi
+                      ? "Ждём ИИ-ведущего."
+                      : isHost
+                        ? "Все в сборе — можно начинать."
+                        : "Все в сборе — ждём, когда хозяин начнёт."}
               </p>
               <ConfigPreview config={lobby.config} moment="start" seed={1} />
             </div>

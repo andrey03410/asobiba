@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import { api, errorMessage } from "../api";
 import { lastLobbyPath, useUser } from "../auth";
+import { agentRoleName } from "../components/AgentParticipation";
 import { CopyBlock } from "../components/CopyButton";
 import { useTitle } from "../util";
 
@@ -102,6 +103,20 @@ function GameGuideContent({ id, guest }: { id: string; guest: boolean }) {
               ))}
             </div>
           </section>
+          {!!guide.ai?.length && (
+            <section className="card">
+              <h2>ИИ в игре</h2>
+              <div className="game-tuning">
+                {guide.ai.map(({ role, description, example }) => (
+                  <section key={role}>
+                    <h3>{agentRoleName[role]}</h3>
+                    <p>{description}</p>
+                    <p>«{example}»</p>
+                  </section>
+                ))}
+              </div>
+            </section>
+          )}
           {guide.promptExamples.length > 0 && (
             <section className="card">
               <h2>Примеры запросов агенту</h2>
