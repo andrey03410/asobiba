@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { type ConfigDocument, documentSchema, type GameCatalog, presetDocument } from "./config";
-import type { AnyGame, SlotDescriptor, ThemeDescriptor } from "./game";
+import type { AgentRoleInfo, AnyGame, SlotDescriptor, ThemeDescriptor } from "./game";
 import { gameInformation, type GameInformation, type TuningDirection } from "./info";
 
 /** Explains the parts of a config document that are the same for every game. */
@@ -31,10 +31,11 @@ export interface GameGuide {
   info: GameInformation;
   tuning: TuningDirection[];
   promptExamples: string[];
+  ai?: AgentRoleInfo[];
   exampleConfig: ConfigDocument | null;
 }
 
-export interface GameCapabilities extends GameSummary, Pick<GameGuide, "info" | "tuning" | "promptExamples"> {
+export interface GameCapabilities extends GameSummary, Pick<GameGuide, "info" | "tuning" | "promptExamples" | "ai"> {
   sdkGuide: string;
   guide: string;
   configSchema: unknown;
@@ -66,11 +67,12 @@ export function configJsonSchema(game: AnyGame): unknown {
   return z.toJSONSchema(documentSchema(game), { io: "input", unrepresentable: "any" });
 }
 
-function guideDetails(game: AnyGame): Pick<GameGuide, "info" | "tuning" | "promptExamples"> {
+function guideDetails(game: AnyGame): Pick<GameGuide, "info" | "tuning" | "promptExamples" | "ai"> {
   return {
     info: gameInformation(game),
     tuning: game.tuning ?? [],
     promptExamples: game.promptExamples ?? [],
+    ...(game.ai ? { ai: game.ai } : {}),
   };
 }
 

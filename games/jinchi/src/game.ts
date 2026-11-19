@@ -418,5 +418,17 @@ export const jinchi = defineGame({
   info: JINCHI_INFO, tuning: JINCHI_TUNING, promptExamples: JINCHI_PROMPT_EXAMPLES, examplePresetId: "duel",
   summarizeConfig: summarizeJinchiConfig,
   guide: JINCHI_GUIDE, presets: JINCHI_PRESETS, slots: [], themes: [],
+  ai: [
+    { role: "observer", description: "Следит за территориями, очками и открытыми событиями.", example: "Дай сводку по захватам после партии." },
+    { role: "commentator", description: "Отмечает захваты, флаги и итоги раунда.", example: "Комментируй захват флагов и итог." },
+  ],
+  observeForAgent: ({ turn, currentSeat, dice, scores, points, flagCounts, eliminated, events }) => {
+    const latest = events.at(-1);
+    return {
+      state: { turn, currentSeat, dice, scores, points, flagCounts, eliminated, latest },
+      ...(latest && ["capture", "objects", "eliminate"].includes(latest.type)
+        ? { comment: { key: String(latest.id), text: latest.text } } : {}),
+    };
+  },
   visualCatalog: { placeAnimations: { pop: "Появление фигуры", none: "Без анимации" }, captureAnimations: { wave: "Волна захвата", none: "Без анимации" } },
 });

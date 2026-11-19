@@ -116,6 +116,8 @@ model Lobby {
   name      String
   gameId    String
   config    Json
+  createdByAgent Boolean @default(false)
+  agent     Json?
   seats     Int
   hostId    String
   host      User          @relation("LobbyHost", fields: [hostId], references: [id], onDelete: Cascade)

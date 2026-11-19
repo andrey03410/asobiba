@@ -86,6 +86,20 @@ export interface ConfigPreset {
   };
 }
 
+export type AgentRole = "observer" | "commentator" | "presenter";
+
+export interface AgentRoleInfo {
+  role: AgentRole;
+  description: string;
+  example: string;
+}
+
+/** A compact observation derived only from the spectator view. */
+export interface AgentObservation {
+  state: unknown;
+  comment?: { key: string; text: string };
+}
+
 export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unknown, PV = unknown> {
   id: string;
   /** Bump when the config schema changes incompatibly. */
@@ -165,6 +179,10 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   tuning?: TuningDirection[];
   /** Example requests a player can give an agent. */
   promptExamples?: string[];
+  /** Supported roles, shared by the site and MCP. */
+  ai?: AgentRoleInfo[];
+  /** Select meaningful public state and a safe candidate comment. */
+  observeForAgent?(spectatorView: PV): AgentObservation;
   /** Public developer preset that runs without account-specific resources. */
   examplePresetId?: string;
   /** Explicit public projection of an original, normalized config. Never serialize raw rules. */

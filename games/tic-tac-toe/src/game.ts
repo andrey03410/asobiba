@@ -218,6 +218,13 @@ export const ticTacToe = defineGame({
   }),
 
   guide: TIC_TAC_TOE_GUIDE,
+  ai: [
+    { role: "observer", description: "Следит за доской и результатами раундов.", example: "После партии дай сводку по раундам." },
+    { role: "commentator", description: "Отмечает победную линию и итоги раунда.", example: "Прокомментируй результат каждого раунда." },
+  ],
+  observeForAgent: ({ width, height, cells, turnSeat, moveCount, lineCounts, winLines }) => ({
+    state: { width, height, cells, turnSeat, moveCount, lineCounts, winLines },
+  }),
   presets: PRESETS,
   slots: [
     { path: "visual.pieces[i]", title: "Фигура игрока i (с нуля)", accepts: ["preset", "asset"], presets: Object.keys(PIECE_PRESETS), advice: "Квадрат с прозрачным фоном, от 256 px. Фигура вписывается в клетку с полями" },
