@@ -147,8 +147,16 @@ export class Match {
     return this.result;
   }
 
+  get checkpointAt(): number {
+    return this.wallClock;
+  }
+
   get pause(): MatchPause | null {
     return this.pauseState;
+  }
+
+  canRecoverAlgorithm(): boolean {
+    return this.phase === "playing" && (this.game.canRecoverAlgorithm?.(this.state) ?? false);
   }
 
   private get gameClock(): number {

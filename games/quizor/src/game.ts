@@ -147,6 +147,7 @@ export const controlSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("presenter-presence"),
     online: z.boolean(),
+    requireAssignment: z.literal(true).optional(),
   }),
   z.strictObject({ type: z.literal("presenter-algorithm") }),
 ]);
@@ -433,6 +434,7 @@ export interface QuizorState {
   presenterOnline: boolean;
   presenterAlgorithm: boolean;
   presenterAssigned: boolean;
+  requirePresenterAssignment: boolean;
   appeal: Appeal | null;
   appealAttempts: string[];
   history: HistoryEntry[];
@@ -550,6 +552,28 @@ const settings = (s: QuizorState): Settings =>
     ["quiz", s.rules.defaults],
     ["round", s.rules.rounds[s.round]?.settings],
   ).settings;
+function presenterAssignment(s: QuizorState): "chooser" | "recipient" | null {
+  if (s.presenterAssigned) return null;
+  if (
+    s.phase === "board" &&
+    !s.played.length &&
+    s.rules.rounds[s.round]?.firstChooser === "presenter"
+  )
+    return "chooser";
+  if (
+    s.active?.settings.recipient === "presenter" &&
+    !s.active.question.special &&
+    (s.phase === "preload" || s.phase === "show" || s.phase === "answer") &&
+    s.answerOpenedAt === null &&
+    !Object.keys(s.personalOpenedAt).length
+  )
+    return "recipient";
+  return null;
+}
+const awaitsPresenterAssignment = (s: QuizorState) =>
+  s.requirePresenterAssignment &&
+  hasPresenter(s) &&
+  presenterAssignment(s) !== null;
 function event(s: QuizorState, text: string, seat: number | null = null) {
   s.events.push({ id: (s.events.at(-1)?.id ?? 0) + 1, text, seat, at: s.now });
   if (s.events.length > 200) s.events.shift();
@@ -666,14 +690,14 @@ function cycle(seats: number[], seat: number): number {
   return seats[(seats.indexOf(seat) + 1) % seats.length] ?? seats[0] ?? 0;
 }
 function openAnswers(s: QuizorState) {
-  if (s.answerOpenedAt !== null) return;
+  if (s.answerOpenedAt !== null || awaitsPresenterAssignment(s)) return;
   s.answerOpenedAt = s.now;
   if (s.phase !== "show") s.phase = "answer";
   setDeadline(s, settings(s).timers.answerSeconds);
   s.questionDeadline = s.deadline;
 }
 function openPersonal(s: QuizorState, seat: number) {
-  if (s.personalOpenedAt[seat] !== undefined) return;
+  if (s.personalOpenedAt[seat] !== undefined || awaitsPresenterAssignment(s)) return;
   s.personalOpenedAt[seat] = s.now;
   if (settings(s).timers.answerSeconds)
     s.personalDeadlines[seat] = s.now + settings(s).timers.answerSeconds * 1000;
@@ -683,20 +707,74 @@ function openForPacing(s: QuizorState) {
     for (const seat of s.eligible) openPersonal(s, seat);
   } else openAnswers(s);
 }
+const algorithmCanGrade = ({ field, settings }: ResolvedQuestion["fields"][number]) =>
+  field.type !== "oral" &&
+  settings.judge !== "ai" &&
+  (field.type !== "text" || field.answers.some((variant) => variant.text.trim()));
+
+function algorithmCanRunQuestion({ settings, fields }: ResolvedQuestion): boolean {
+  return settings.recipient !== "presenter" && fields.every(algorithmCanGrade);
+}
+
 export function quizorCanUseAlgorithm(rules: QuizorRules): boolean {
-  if (rules.rounds.some((round) => round.firstChooser === "presenter"))
+  return (
+    rules.rounds.every((round) => round.firstChooser !== "presenter") &&
+    allQuestions(rules).every(({ id }) => algorithmCanRunQuestion(resolveQuestion(rules, id)))
+  );
+}
+
+export function quizorCanUseAgentPresenter(rules: QuizorRules): boolean {
+  return allQuestions(rules).every(({ id }) =>
+    resolveQuestion(rules, id).fields.every(({ field, settings }) =>
+      field.type !== "oral" || ["self", "vote", "best"].includes(settings.judge),
+    ),
+  );
+}
+
+function canRecoverAlgorithm(s: QuizorState): boolean {
+  if (s.phase === "done") return false;
+  const { rules, active } = s;
+  const currentRound = rules.rounds[s.round];
+  const laterRounds = s.finalStarted ? [] : rules.rounds.slice(s.round + 1);
+  if (
+    laterRounds.some((round) => round.firstChooser === "presenter") ||
+    (!s.finalStarted &&
+      (s.phase === "intro" || s.phase === "board") &&
+      s.remaining.length > 0 &&
+      !s.played.length &&
+      !s.presenterAssigned &&
+      currentRound?.firstChooser === "presenter")
+  )
     return false;
-  return allQuestions(rules).every(({ id }) => {
-    const { settings: cfg, fields } = resolveQuestion(rules, id);
+  const laterQuestions = [
+    ...(s.finalStarted && s.roundId === "tiebreak" ? [] : s.remaining),
+    ...laterRounds.flatMap((round) => round.questions.map(({ id }) => id)),
+    ...(!s.finalStarted && rules.final.type !== "none"
+      ? rules.final.questions.map(({ id }) => id)
+      : []),
+    ...rules.tiebreak.slice(s.tieIndex).map(({ id }) => id),
+  ];
+  if (laterQuestions.some((id) => !algorithmCanRunQuestion(resolveQuestion(rules, id)))) return false;
+  if (!active || s.phase === "reveal" || s.phase === "round-reveal") return true;
+  if (s.phase !== "judging")
     return (
-      cfg.recipient !== "presenter" &&
-      fields.every(({ field, settings }) =>
-        field.type !== "oral" &&
-        settings.judge !== "ai" &&
-        (field.type !== "text" || field.answers.some((variant) => variant.text.trim())),
-      )
+      (active.settings.recipient !== "presenter" || s.presenterAssigned) &&
+      active.fields.every(algorithmCanGrade)
     );
-  });
+
+  // A rejected buzzer decision can reopen the same question for another attempt.
+  const seat = s.judgingSeat;
+  const mayReopenBuzz =
+    seat !== null &&
+    active.settings.mode === "buzz" &&
+    active.settings.interception &&
+    (s.judgingQuestionDeadline === null || s.now < s.judgingQuestionDeadline) &&
+    (s.attemptCounts[seat] + 1 < active.settings.attempts || s.judgingAutoFilled.length > 0) &&
+    (!s.submissions[seat]?.grade?.correct ||
+      s.pending.some((pending) => pending.seat === seat && pending.judge !== "presenter"));
+  return active.fields
+    .filter(({ field }) => mayReopenBuzz || s.pending.some((pending) => pending.fieldId === field.id))
+    .every(algorithmCanGrade);
 }
 function afterPresenterGrading(s: QuizorState, ctx: Ctx) {
   if (!s.pending.length) finishScores(s, ctx);
@@ -732,9 +810,17 @@ function presenterFallback(s: QuizorState, ctx: Ctx) {
   else if (
     s.phase === "answer" &&
     s.answerOpenedAt === null &&
-    settings(s).answerOpen === "presenter"
+    (settings(s).answerOpen === "presenter" ||
+      (s.requirePresenterAssignment && presenterAssignment(s) === "recipient"))
   )
     openForPacing(s);
+  else if (
+    s.phase === "board" &&
+    s.deadline === null &&
+    s.requirePresenterAssignment &&
+    presenterAssignment(s) === "chooser"
+  )
+    setDeadline(s, settings(s).timers.selectionSeconds);
   else if (
     (s.phase === "reveal" || s.phase === "round-reveal") &&
     s.deadline === null
@@ -1022,7 +1108,7 @@ function afterIntro(s: QuizorState, ctx: Ctx) {
     s.phase = "board";
     s.active = null;
     s.ready = [];
-    setDeadline(s, settings(s).timers.selectionSeconds);
+    setDeadline(s, awaitsPresenterAssignment(s) ? 0 : settings(s).timers.selectionSeconds);
   } else if (s.remaining[0]) beginQuestion(s, s.remaining[0], ctx);
   else endRound(s, ctx);
 }
@@ -1792,6 +1878,7 @@ function setup(ctx: SetupContext<QuizorRules>): QuizorState {
     presenterOnline: false,
     presenterAlgorithm: false,
     presenterAssigned: false,
+    requirePresenterAssignment: false,
     appeal: null,
     appealAttempts: [],
     history: [],
@@ -2060,6 +2147,8 @@ function applyAction(
     return actionError("finished", "Партия завершена");
   if (state.paused && action.type !== "appeal-vote")
     return actionError("paused", "Партия на паузе");
+  if (action.type !== "appeal-vote" && awaitsPresenterAssignment(state))
+    return actionError("assignment_pending", "Ведущий ещё не назначил игрока");
   const s = copy(state);
   s.now = ctx.now;
   const fail = (message = "Сейчас это действие недоступно") =>
@@ -2544,7 +2633,7 @@ function applyControl(
   if (action.type === "presenter-algorithm") {
     if (ctx.role !== "system" || s.phase === "done") return fail();
     if (!s.presenterAlgorithm) {
-      if (!quizorCanUseAlgorithm(s.rules))
+      if (!canRecoverAlgorithm(s))
         return actionError("algorithm_unavailable", "Этот квиз требует ведущего");
       s.presenterAlgorithm = true;
       s.presenterOnline = false;
@@ -2565,7 +2654,9 @@ function applyControl(
       )
         closeQuestion(s, ctx);
     } else if (!s.presenterAlgorithm) {
+      if (action.requireAssignment) s.requirePresenterAssignment = true;
       s.presenterOnline = action.online;
+      if (s.phase === "board" && awaitsPresenterAssignment(s)) s.deadline = null;
       presenterFallback(s, ctx);
     }
     return s;
@@ -2634,6 +2725,7 @@ function applyControl(
   }
   if (action.type === "open") {
     if (s.phase !== "answer" && s.phase !== "show") return fail();
+    if (awaitsPresenterAssignment(s)) return fail();
     if (s.phase === "answer" && settings(s).answerOpen === "presenter")
       openForPacing(s);
     else openAnswers(s);
@@ -2748,18 +2840,33 @@ function applyControl(
     return s;
   }
   if (action.type === "select") {
-    if (s.phase !== "board" || !s.remaining.includes(action.questionId))
+    if (
+      s.phase !== "board" ||
+      awaitsPresenterAssignment(s) ||
+      !s.remaining.includes(action.questionId)
+    )
       return fail();
     beginQuestion(s, action.questionId, ctx);
     return s;
   }
   if (action.type === "assign") {
     if (!s.players[action.seat] || s.players[action.seat].out) return fail();
+    const resumeAssignment = awaitsPresenterAssignment(s) ? presenterAssignment(s) : null;
     s.presenterAssigned = true;
     s.owner = action.seat;
     s.chooser = action.seat;
     if (s.active?.settings.recipient === "presenter")
       s.eligible = [action.seat];
+    if (resumeAssignment === "chooser") setDeadline(s, settings(s).timers.selectionSeconds);
+    else if (resumeAssignment === "recipient") {
+      const cfg = settings(s);
+      if (
+        (s.phase === "answer" && cfg.answerOpen !== "presenter") ||
+        (s.phase === "show" &&
+          (cfg.answerOpen === "first" || (cfg.answerOpen === "block" && s.blockIndex >= cfg.openBlock)))
+      )
+        openForPacing(s);
+    }
     return s;
   }
   return fail();
@@ -2816,6 +2923,7 @@ function legalHints(s: QuizorState, seat: number | null): string[] {
     legal.push("appeal-vote");
   if (
     s.paused ||
+    awaitsPresenterAssignment(s) ||
     s.players[seat]?.out ||
     s.roundOut.includes(seat) ||
     !s.players[seat]?.online
@@ -3287,19 +3395,7 @@ function presenterTask(s: QuizorState): QuizorView["agentTask"] {
     };
   }
 
-  const chooserAssignment =
-    s.phase === "board" &&
-    !s.played.length &&
-    s.rules.rounds[s.round]?.firstChooser === "presenter";
-  const recipientAssignment =
-    cfg.recipient === "presenter" &&
-    !active?.question.special &&
-    (s.phase === "preload" || s.phase === "show" || s.phase === "answer") &&
-    s.answerOpenedAt === null &&
-    !Object.keys(s.personalOpenedAt).length;
-  const assignment = s.presenterAssigned
-    ? null
-    : chooserAssignment ? "chooser" : recipientAssignment ? "recipient" : null;
+  const assignment = presenterAssignment(s);
   const available = assignment ? connected(s, s.finalStarted ? s.finalSeats : alive(s)) : [];
   let actions: QuizorControl[] = [];
   if (assignment && available.length)
@@ -3557,6 +3653,7 @@ export const quizor = defineGame<
   applyAction,
   applyControl,
   presenterView,
+  canRecoverAlgorithm,
   nextWakeAt,
   wake,
   roundResult: (s) => s.result,

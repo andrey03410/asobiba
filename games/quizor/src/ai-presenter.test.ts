@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { documentSchema, Match } from "@asobiba/sdk";
-import { quizor, quizorCanUseAlgorithm, type QuizorView } from "./index";
+import { quizor, quizorCanUseAgentPresenter, quizorCanUseAlgorithm, type QuizorView } from "./index";
 import { rulesSchema } from "./rules";
 
 function config(rules: unknown) {
@@ -151,6 +151,35 @@ describe("Quizor AI presenter", () => {
     expect(gameView(match, 1).canAnswer).toBe(false);
   });
 
+  it("holds a presenter-assigned board and automatically opened answer form until each assignment", () => {
+    const { match } = start({
+      presenter: "required",
+      defaults: { judge: "algorithm", recipient: "presenter", timers: { preloadSeconds: 0 } },
+      rounds: [{
+        id: "r", format: "board", firstChooser: "presenter", questions: [{
+          id: "q", fields: [{ id: "a", type: "number", target: 100 }],
+        }],
+      }],
+    });
+    control(match, "system", { type: "presenter-presence", online: true, requireAssignment: true });
+    wake(match);
+    expect(match.view(null).currentSeats).toEqual([]);
+    expect(match.nextWakeAt()).toBeNull();
+    expect(match.canRecoverAlgorithm()).toBe(false);
+    expect(match.dispatch(0, { type: "select", questionId: "q" }, now(match))).toMatchObject({ ok: false });
+    control(match, "presenter", { type: "assign", seat: 1 });
+    act(match, 1, { type: "select", questionId: "q" });
+    expect(match.view(null).currentSeats).toEqual([]);
+    expect(match.canRecoverAlgorithm()).toBe(false);
+    expect(gameView(match, 1).canAnswer).toBe(false);
+    expect(match.dispatch(1, { type: "answer", answers: { a: 100 } }, now(match))).toMatchObject({ ok: false });
+    control(match, "presenter", { type: "assign", seat: 0 });
+    expect(gameView(match, 0).canAnswer).toBe(true);
+    expect(match.canRecoverAlgorithm()).toBe(true);
+    act(match, 0, { type: "answer", answers: { a: 100 } });
+    expect(gameView(match).answers[0]).toMatchObject({ seat: 0, points: 100 });
+  });
+
   it("preserves a presenter grade and finishes remaining text evaluations after switching to the algorithm", () => {
     const { match, options } = start({
       presenter: "required",
@@ -219,6 +248,89 @@ describe("Quizor AI presenter", () => {
     expect(gameView(match).players.map((p) => p.score)).toEqual([-100, 100]);
   });
 
+  it("recovers after a completed oral round and grades the remaining written answers", () => {
+    const { match, options } = start({
+      presenter: "required",
+      defaults: { judge: "presenter", timers: { preloadSeconds: 0 } },
+      rounds: [
+        {
+          id: "oral-round",
+          questions: [{ id: "oral", fields: [{ id: "a", type: "oral", reference: "Токио" }] }],
+        },
+        {
+          id: "written-round",
+          questions: [{ id: "written", fields: [{ id: "a", type: "number", target: 100 }] }],
+        },
+      ],
+    });
+    expect(quizorCanUseAlgorithm(options.config.rules)).toBe(false);
+    wake(match);
+    act(match, 0, { type: "answer", answers: { a: true } });
+    act(match, 1, { type: "answer", answers: { a: true } });
+    expect(match.dispatchControl("system", { type: "presenter-algorithm" }, now(match)))
+      .toMatchObject({ ok: false, error: { code: "algorithm_unavailable" } });
+    control(match, "presenter", { type: "grade", seat: 0, fieldId: "a", grade: "partial" });
+    control(match, "presenter", { type: "grade", seat: 1, fieldId: "a", grade: "miss" });
+    control(match, "presenter", { type: "next" });
+    wake(match);
+    act(match, 0, { type: "answer", answers: { a: 100 } });
+    act(match, 1, { type: "answer", answers: { a: 100 } });
+    expect(gameView(match).phase).toBe("judging");
+    control(match, "system", { type: "presenter-algorithm" });
+    expect(gameView(match).players.map((player) => player.score)).toEqual([150, 100]);
+    expect(gameView(match).history.map(({ questionId }) => questionId)).toEqual(["oral", "written"]);
+  });
+
+  it("checks live work including outstanding presenter assignments and pending fields", () => {
+    const { match } = start({
+      presenter: "required",
+      defaults: { judge: "presenter", recipient: "presenter", answerOpen: "presenter", timers: { preloadSeconds: 0 } },
+      rounds: [{
+        id: "board", format: "board", firstChooser: "presenter", questions: [{
+          id: "q", fields: [
+            { id: "oral", type: "oral", reference: "Токио" },
+            { id: "written", type: "number", target: 100 },
+          ],
+        }],
+      }],
+    });
+    wake(match);
+    expect(match.canRecoverAlgorithm()).toBe(false);
+    control(match, "presenter", { type: "assign", seat: 1 });
+    act(match, 1, { type: "select", questionId: "q" });
+    expect(match.canRecoverAlgorithm()).toBe(false);
+    control(match, "presenter", { type: "assign", seat: 0 });
+    expect(match.canRecoverAlgorithm()).toBe(false);
+    control(match, "presenter", { type: "open" });
+    act(match, 0, { type: "answer", answers: { oral: true, written: 100 } });
+    expect(match.canRecoverAlgorithm()).toBe(false);
+    control(match, "presenter", { type: "grade", seat: 0, fieldId: "oral", grade: "correct" });
+    expect(match.canRecoverAlgorithm()).toBe(true);
+    control(match, "system", { type: "presenter-algorithm" });
+    expect(gameView(match).players[0].score).toBe(200);
+  });
+
+  it("keeps fallback unavailable when a future round or final still needs an oral answer", () => {
+    const oral = { id: "oral", fields: [{ id: "a", type: "oral", reference: "Токио" }] };
+    const written = { id: "written", fields: [{ id: "a", type: "number", target: 100 }] };
+    const rules = {
+      presenter: "required",
+      defaults: { judge: "presenter", timers: { preloadSeconds: 0 } },
+      rounds: [{ id: "first", questions: [written] }],
+    };
+    for (const configured of [
+      { ...rules, rounds: [...rules.rounds, { id: "second", questions: [oral] }] },
+      { ...rules, final: { type: "survival", questions: [oral] } },
+      { ...rules, tiebreak: [oral] },
+    ]) {
+      const { match } = start(configured);
+      wake(match);
+      expect(match.canRecoverAlgorithm()).toBe(false);
+      expect(match.dispatchControl("system", { type: "presenter-algorithm" }, now(match)))
+        .toMatchObject({ ok: false, error: { code: "algorithm_unavailable" } });
+    }
+  });
+
   it("checks whether the resolved rules provide a deterministic fallback", () => {
     const supported = {
       id: "q", fields: [{ id: "a", type: "text", answers: [{ text: "Токио" }] }],
@@ -236,5 +348,19 @@ describe("Quizor AI presenter", () => {
     expect(quizorCanUseAlgorithm(rulesSchema.parse({
       ...rules, rounds: [{ id: "r", questions: [{ ...supported, fields: [{ id: "a", type: "text" }] }] }],
     }))).toBe(false);
+  });
+
+  it("permits an AI presenter only when oral answers are graded by players", () => {
+    const oral = { id: "a", type: "oral", reference: "Токио" };
+    for (const [judge, expected] of [
+      [undefined, false], ["presenter", false], ["assisted", false], ["self", true], ["vote", true], ["best", true],
+    ] as const) {
+      const rules = rulesSchema.parse({
+        presenter: "required",
+        defaults: { judge: "presenter" },
+        rounds: [{ id: "r", questions: [{ id: "q", fields: [{ ...oral, settings: judge ? { judge } : undefined }] }] }],
+      });
+      expect(quizorCanUseAgentPresenter(rules)).toBe(expected);
+    }
   });
 });

@@ -171,6 +171,8 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   view(state: S, seat: Seat | null): PV;
   /** Secrets for the separately authorized presenter; hosts do not receive this view. */
   presenterView?(state: S): PV;
+  /** Whether the remaining work can proceed without the current presenter. */
+  canRecoverAlgorithm?(state: S): boolean;
 
   /** Markdown guide for agents: how details combine, what is fun, limits. */
   guide: string;
