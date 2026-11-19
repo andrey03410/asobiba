@@ -1,0 +1,240 @@
+import { describe, expect, it } from "vitest";
+import { documentSchema, Match } from "@asobiba/sdk";
+import { quizor, quizorCanUseAlgorithm, type QuizorView } from "./index";
+import { rulesSchema } from "./rules";
+
+function config(rules: unknown) {
+  return documentSchema(quizor).parse({
+    sdk: 1,
+    game: "quizor",
+    gameVersion: 1,
+    rules,
+    series: { rounds: 1 },
+    timer: { turnSeconds: 0 },
+    visual: {},
+  });
+}
+
+function start(rules: unknown) {
+  const options = { game: quizor, config: config(rules), seats: 2, seed: 42, startedAt: 1000 };
+  const match = Match.start(options);
+  control(match, "system", { type: "presenter-presence", online: true });
+  return { match, options };
+}
+
+const gameView = (match: Match, seat: number | null = null, role?: "presenter") =>
+  match.view(seat, role).game as QuizorView;
+const now = (match: Match) => gameView(match).serverNow;
+const wake = (match: Match) => {
+  const at = match.nextWakeAt();
+  expect(at).not.toBeNull();
+  match.advance(at!);
+};
+const control = (match: Match, role: "presenter" | "system", action: unknown) =>
+  expect(match.dispatchControl(role, action, now(match))).toEqual({ ok: true });
+const act = (match: Match, seat: number, action: unknown) =>
+  expect(match.dispatch(seat, action, now(match))).toEqual({ ok: true });
+
+describe("Quizor AI presenter", () => {
+  it("offers one field decision from the finalized answers in the private presenter view", () => {
+    const { match } = start({
+      presenter: "required",
+      defaults: { judge: "presenter", timers: { preloadSeconds: 0 } },
+      rounds: [{
+        id: "r",
+        questions: [{
+          id: "q", prompt: "Столица Японии?",
+          fields: [{
+            id: "city", type: "text", answers: [{ text: "Токио" }],
+            notes: "Разрешена транслитерация",
+            settings: {
+              grades: [
+                { id: "exact", label: "Верно", correct: true, points: 50 },
+                { id: "incorrect", label: "Неверно", points: 0 },
+              ],
+            },
+          }],
+        }, {
+          id: "later", prompt: "Будущий вопрос",
+          fields: [{ id: "later", type: "text", answers: [{ text: "Скрытый эталон" }] }],
+        }],
+      }],
+    });
+    wake(match);
+    act(match, 0, { type: "draft", answers: { city: "Личный черновик" } });
+    expect(gameView(match, null, "presenter").agentTask).toBeUndefined();
+    act(match, 0, { type: "answer", answers: { city: "Tokyo" } });
+    act(match, 1, { type: "answer", answers: { city: "Киото" } });
+
+    expect(gameView(match, 0).agentTask).toBeUndefined();
+    expect(gameView(match).agentTask).toBeUndefined();
+    const task = gameView(match, null, "presenter").agentTask!;
+    expect(task).toMatchObject({
+      kind: "grade",
+      actions: [
+        { type: "grade", seat: 0, fieldId: "city", grade: "exact" },
+        { type: "grade", seat: 0, fieldId: "city", grade: "incorrect" },
+      ],
+      context: {
+        question: { id: "q", prompt: "Столица Японии?", reference: "Токио" },
+        pending: [
+          { seat: 0, fieldId: "city", answer: "Tokyo" },
+          { seat: 1, fieldId: "city", answer: "Киото" },
+        ],
+      },
+    });
+    expect(JSON.stringify(task.context)).toContain("Разрешена транслитерация");
+    expect(JSON.stringify(task.context)).not.toMatch(/Личный черновик|Будущий вопрос|Скрытый эталон/);
+    control(match, "presenter", task.actions[0]);
+    expect(gameView(match, null, "presenter").agentTask).toMatchObject({
+      kind: "grade",
+      actions: [
+        { type: "grade", seat: 1, fieldId: "city", grade: "exact" },
+        { type: "grade", seat: 1, fieldId: "city", grade: "incorrect" },
+      ],
+    });
+    expect(gameView(match, null, "presenter").agentTask!.key).not.toBe(task.key);
+  });
+
+  it("opens the answer window and advances a manual reveal without offering to close live answers", () => {
+    const { match } = start({
+      presenter: "required",
+      defaults: {
+        judge: "algorithm", pacing: "presenter", answerOpen: "presenter",
+        advance: "presenter", timers: { preloadSeconds: 0 },
+      },
+      rounds: [{
+        id: "r", questions: [{
+          id: "q", blocks: [{ type: "text", text: "Показ" }],
+          fields: [{ id: "a", type: "number", target: 100 }],
+        }],
+      }],
+    });
+    wake(match);
+    expect(gameView(match, null, "presenter").agentTask?.actions).toEqual([{ type: "next-block" }]);
+    control(match, "presenter", { type: "next-block" });
+    expect(gameView(match, null, "presenter").agentTask?.actions).toEqual([{ type: "open" }]);
+    control(match, "presenter", { type: "open" });
+    expect(gameView(match, 0).canAnswer).toBe(true);
+    expect(gameView(match, null, "presenter").agentTask).toBeUndefined();
+    act(match, 0, { type: "answer", answers: { a: 100 } });
+    act(match, 1, { type: "answer", answers: { a: 100 } });
+    expect(gameView(match, null, "presenter").agentTask?.actions).toEqual([{ type: "next" }]);
+    control(match, "presenter", { type: "next" });
+    expect(match.view(null).phase).toBe("finished");
+  });
+
+  it("offers presenter assignments before players choose a question or start answering", () => {
+    const { match } = start({
+      presenter: "required",
+      defaults: { judge: "algorithm", recipient: "presenter", answerOpen: "presenter", timers: { preloadSeconds: 0 } },
+      rounds: [{
+        id: "r", format: "board", firstChooser: "presenter", questions: [{
+          id: "q", fields: [{ id: "a", type: "number", target: 100 }],
+        }],
+      }],
+    });
+    wake(match);
+    const chooserTask = gameView(match, null, "presenter").agentTask;
+    expect(chooserTask?.actions).toEqual([{ type: "assign", seat: 0 }, { type: "assign", seat: 1 }]);
+    control(match, "presenter", { type: "assign", seat: 1 });
+    expect(gameView(match, null, "presenter").agentTask).toBeUndefined();
+    act(match, 1, { type: "select", questionId: "q" });
+    const recipientTask = gameView(match, null, "presenter").agentTask;
+    expect(recipientTask?.actions).toEqual(chooserTask?.actions);
+    control(match, "presenter", { type: "assign", seat: 0 });
+    const openTask = gameView(match, null, "presenter").agentTask;
+    expect(openTask?.actions).toEqual([{ type: "open" }]);
+    expect(openTask?.key).not.toBe(recipientTask?.key);
+    control(match, "presenter", { type: "open" });
+    expect(gameView(match, 0).canAnswer).toBe(true);
+    expect(gameView(match, 1).canAnswer).toBe(false);
+  });
+
+  it("preserves a presenter grade and finishes remaining text evaluations after switching to the algorithm", () => {
+    const { match, options } = start({
+      presenter: "required",
+      defaults: { judge: "presenter", timers: { preloadSeconds: 0 } },
+      rounds: [{
+        id: "r", questions: [
+          { id: "q", fields: [{ id: "a", type: "text", answers: [{ text: "Токио" }] }] },
+          { id: "q2", fields: [{ id: "a", type: "text", answers: [{ text: "Москва" }] }] },
+        ],
+      }],
+    });
+    wake(match);
+    act(match, 0, { type: "answer", answers: { a: "Tokyo" } });
+    act(match, 1, { type: "answer", answers: { a: "Токио" } });
+    control(match, "presenter", { type: "grade", seat: 0, fieldId: "a", grade: "partial" });
+    expect(match.dispatchControl("presenter", { type: "presenter-algorithm" }, now(match)))
+      .toMatchObject({ ok: false, error: { code: "control_forbidden" } });
+    const pausedAt = now(match);
+    expect(match.setPaused("presenter-disconnected", pausedAt)).toEqual({ ok: true });
+    expect(match.dispatchControl("system", { type: "presenter-algorithm" }, pausedAt + 10_000))
+      .toEqual({ ok: true });
+    expect(match.nextWakeAt()).toBeNull();
+    expect(match.setPaused(null, pausedAt + 20_000)).toEqual({ ok: true });
+
+    expect(gameView(match).answers.map(({ seat, points }) => ({ seat, points }))).toEqual([
+      { seat: 0, points: 50 }, { seat: 1, points: 100 },
+    ]);
+    expect(options.config.rules.presenter).toBe("required");
+    control(match, "system", { type: "presenter-presence", online: true });
+    expect(gameView(match).presenterOnline).toBe(false);
+    wake(match);
+    act(match, 0, { type: "answer", answers: { a: "Москва" } });
+    act(match, 1, { type: "answer", answers: { a: "Москва" } });
+    expect(gameView(match).phase).toBe("reveal");
+    expect(gameView(match, null, "presenter").agentTask).toBeUndefined();
+    const finishedAt = match.nextWakeAt()!;
+    wake(match);
+    expect(match.view(null).phase).toBe("finished");
+    const restored = Match.restore({
+      game: quizor, config: options.config, record: match.record(), now: finishedAt,
+    });
+    expect(restored.view(null)).toEqual(match.view(null));
+  });
+
+  it("uses the provisional grade to reopen a buzz attempt when switching to the algorithm", () => {
+    const { match } = start({
+      presenter: "required",
+      defaults: { mode: "buzz", judge: "presenter", attempts: 2, timers: { preloadSeconds: 0, answerSeconds: 30 } },
+      rounds: [{
+        id: "r", questions: [{ id: "q", fields: [{ id: "a", type: "number", target: 100 }] }],
+      }],
+    });
+    wake(match);
+    act(match, 0, { type: "buzz", reactionMs: 0 });
+    wake(match);
+    act(match, 0, { type: "answer", answers: { a: 1 } });
+    expect(gameView(match).phase).toBe("judging");
+
+    control(match, "system", { type: "presenter-algorithm" });
+    expect(gameView(match).phase).toBe("answer");
+    expect(gameView(match, 0).legal).toContain("buzz");
+    act(match, 1, { type: "buzz", reactionMs: 0 });
+    wake(match);
+    act(match, 1, { type: "answer", answers: { a: 100 } });
+    expect(gameView(match).phase).toBe("reveal");
+    expect(gameView(match).players.map((p) => p.score)).toEqual([-100, 100]);
+  });
+
+  it("checks whether the resolved rules provide a deterministic fallback", () => {
+    const supported = {
+      id: "q", fields: [{ id: "a", type: "text", answers: [{ text: "Токио" }] }],
+    };
+    const oral = { id: "t", fields: [{ id: "a", type: "oral", reference: "Токио" }] };
+    const rules = {
+      presenter: "required", defaults: { judge: "presenter", pacing: "presenter" },
+      rounds: [{ id: "r", questions: [supported] }],
+    };
+    expect(quizorCanUseAlgorithm(rulesSchema.parse(rules))).toBe(true);
+    expect(quizorCanUseAlgorithm(rulesSchema.parse({ ...rules, tiebreak: [oral] }))).toBe(false);
+    expect(quizorCanUseAlgorithm(rulesSchema.parse({
+      ...rules, defaults: { ...rules.defaults, recipient: "presenter" },
+    }))).toBe(false);
+    expect(quizorCanUseAlgorithm(rulesSchema.parse({
+      ...rules, rounds: [{ id: "r", questions: [{ ...supported, fields: [{ id: "a", type: "text" }] }] }],
+    }))).toBe(false);
+  });
+});
