@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { redactUrl } from "../app";
 import { createTestApp, resetDb, signUp, type TestApp } from "../test/helpers";
 
@@ -11,6 +11,20 @@ beforeEach(async () => {
 afterAll(() => t?.close());
 
 describe("auth", () => {
+  it("blocks registration and guest creation in provisioned account mode", async () => {
+    vi.stubEnv("PROVISIONED_ACCOUNTS_ONLY", "1");
+    const managed = await createTestApp();
+    try {
+      const { code } = await managed.services.auth.createInvite(null, "user");
+      expect((await managed.app.inject({ method: "POST", url: "/api/auth/register", payload: {
+        login: "blocked", password: "test-password", invite: code,
+      } })).statusCode).toBe(403);
+      expect((await managed.app.inject({ method: "POST", url: "/api/auth/guest", payload: {
+        name: "Guest", attempt: "x".repeat(40), lobbyId: "unavailable", role: "player",
+      } })).statusCode).toBe(403);
+    } finally { await managed.close(); vi.unstubAllEnvs(); }
+  });
+
   it("registers only with a valid single-use invite", async () => {
     const noInvite = await t.app.inject({ method: "POST", url: "/api/auth/register", payload: { login: "ann", password: "password-1", invite: "nope" } });
     expect(noInvite.statusCode).toBe(400);

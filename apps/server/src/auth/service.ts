@@ -18,9 +18,9 @@ function normalizeLogin(login: string): string {
   return login.trim().toLowerCase();
 }
 
-function checkCredentials(login: string, password: string) {
+function checkCredentials(login: string, password: string, minimumLength = 8) {
   if (!LOGIN_RE.test(login)) throw badRequest("bad_login", "Логин: 3–24 символа, буквы, цифры, точка, дефис, подчёркивание");
-  if (password.length < 8 || password.length > 200) throw badRequest("bad_password", "Пароль: от 8 символов");
+  if (password.length < minimumLength || password.length > 200) throw badRequest("bad_password", `Пароль: от ${minimumLength} символов`);
 }
 
 export class AuthService {
@@ -79,9 +79,9 @@ export class AuthService {
     return row?.expiresAt.getTime() ?? null;
   }
 
-  async createUser(input: { login: string; password: string; role?: Role }): Promise<UserDto> {
+  async createUser(input: { login: string; password: string; role?: Role; provisioned?: boolean }): Promise<UserDto> {
     const login = normalizeLogin(input.login);
-    checkCredentials(login, input.password);
+    checkCredentials(login, input.password, input.provisioned ? 1 : 8);
     if (await this.db.user.findUnique({ where: { login } })) throw conflict("login_taken", "Такой логин уже занят");
     const user = await this.db.user.create({
       data: { id: newId("usr"), login, passwordHash: await bcrypt.hash(input.password, 10), role: input.role ?? "user" },

@@ -92,3 +92,9 @@ Cookies peers для возобновления лежат только в иг�
 - [задача 01](../features/01-rebuild/README.md) — пересборка на TypeScript, монорепо, SQLite и миграции
 - [задача 03](../features/03-prisma-7/README.md) — переход на Prisma 7.10.1, `prisma.config.ts`, клиент в `src/generated`
 - [задача 07](../features/07-video-games/README.md) — `DOUGA_URL` и пакеты douga из соседней папки
+
+## Деплой
+
+`Dockerfile` собирает Linux-образ asobiba. Workflow `Production` проверяет запуск, публикует тег полного SHA в GHCR и выкатывает его по команде [deploy](../../.claude/skills/deploy/SKILL.md). Данные SQLite и медиа находятся в отдельном каталоге данных на сервере. HTTPS обслуживает Caddy на порту `8445`.
+
+Образ включает режим `PROVISIONED_ACCOUNTS_ONLY=1`. Новые аккаунты создаёт администратор через `scripts/provision-account.ts`. Пароль передаётся через stdin.

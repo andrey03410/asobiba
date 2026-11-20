@@ -19,7 +19,7 @@ export function AccountPage() {
   useTitle("Кабинет");
   const user = useUser();
   const [params, setParams] = useSearchParams();
-  const tabs = TABS.filter((t) => !("admin" in t) || user.role === "admin");
+  const tabs = TABS.filter((t) => !("admin" in t) || (user.role === "admin" && import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY !== "1"));
   const wanted = params.get("tab");
   const tab: TabId = tabs.find((t) => t.id === wanted)?.id ?? "agent";
 
