@@ -2,9 +2,9 @@
 id: 12
 title: Деплой asobiba на VPS
 track: product
-stage: build
+stage: review
 branch: chore/12-docker-deploy
-pr:
+pr: https://github.com/andrey03410/asobiba/pull/12
 started: 2026-11-20
 merged:
 ---
@@ -21,6 +21,6 @@ merged:
 - [x] Продукт — [product.md](product.md)
 - [x] Техника — [tech.md](tech.md)
 - [x] План — [plan.md](plan.md)
-- [ ] Реализация и QG — [verify.md](verify.md)
+- [x] Реализация и QG — [verify.md](verify.md)
 - [ ] Влито
 - Деплой — статус среды `production` в GitHub Actions.
