@@ -1,6 +1,6 @@
 import type { LobbyInvitationDto } from "@asobiba/api";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { Navigate, useParams } from "react-router";
 import { ApiRequestError, api, errorMessage } from "../api";
 import { useAuth } from "../auth";
 import { LobbyInvitation } from "../components/LobbyInvitation";
@@ -44,5 +44,6 @@ export function LobbyEntryPage() {
   const { user } = useAuth();
   useEffect(() => { try { sessionStorage.setItem("asobiba_last_lobby", `/lobby/${id}`); } catch { /* optional navigation hint */ } }, [id]);
   if (user === undefined) return <div className="page-loading">Проверяю вход…</div>;
+  if (!user && import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY === "1") return <Navigate to={`/login?next=${encodeURIComponent(`/lobby/${id}`)}`} replace />;
   return user ? <LobbyPage key={`${id}:${user.id}`} /> : <InvitationPage key={id} id={id} />;
 }

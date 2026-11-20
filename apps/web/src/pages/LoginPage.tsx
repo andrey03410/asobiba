@@ -41,7 +41,7 @@ export function LoginPage() {
     <div className="auth-page">
       <form className="card auth-card" onSubmit={submit}>
         <h1>Вход</h1>
-        <p className="muted">Площадка для своих. Аккаунт создаётся по приглашению от друга.</p>
+        <p className="muted">{import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY === "1" ? "Войдите в свой аккаунт Asobiba." : "Площадка для своих. Аккаунт создаётся по приглашению от друга."}</p>
         <label className="field">
           <span className="field-label">Логин</span>
           <input autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} required autoFocus />

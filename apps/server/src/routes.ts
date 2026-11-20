@@ -75,6 +75,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
 
   // ---------- auth ----------
   app.post("/api/auth/register", async (req, reply) => {
+    if (s.env.provisionedAccountsOnly) throw forbidden("Аккаунты создаёт администратор");
     if (req.user) throw new HttpError(409, "already_signed_in", "Сначала выйдите из текущей сессии");
     const body = parse(z.object({ login: z.string(), password: z.string(), invite: z.string() }), req.body);
     const user = await s.auth.register(body);
@@ -116,6 +117,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       await s.lobbies.visit(user, body.lobbyId);
       return { user, lobby: await s.lobbies.join(user, body.lobbyId, body.role) };
     });
+    if (s.env.provisionedAccountsOnly) throw forbidden("Войдите в аккаунт, чтобы открыть лобби");
     const invitation = await s.lobbies.invitation(body.lobbyId);
     if (invitation.status === "closed") throw new HttpError(409, "closed", "Лобби закрыто");
     guestLimit.check([req.ip]);
@@ -144,6 +146,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   app.get("/api/invites/check/:code", async (req) => s.auth.checkInvite(parse(z.object({ code: z.string().max(100) }), req.params).code));
 
   app.post("/api/invites", async (req, reply) => {
+    if (s.env.provisionedAccountsOnly) throw forbidden("Аккаунты создаёт администратор");
     const admin = requireAdmin(req);
     const body = parse(z.object({ role: z.enum(["user", "admin"]).optional() }).optional(), req.body);
     const { invite, code } = await s.auth.createInvite(admin.id, body?.role ?? "user");

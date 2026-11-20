@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { AuthProvider, RequireAuth } from "./auth";
 import { Layout } from "./components/Layout";
 import { gamesCss } from "./games";
@@ -22,7 +22,7 @@ export function AppShell() {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/register" element={import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY === "1" ? <Navigate to="/login" replace /> : <RegisterPage />} />
             <Route
               index
               element={
