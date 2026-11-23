@@ -1,6 +1,7 @@
 ---
 track: product
-stage: review
+stage: merged
+merged: 2026-11-23
 branch: codex/13-kaname
 pr: https://github.com/andrey03410/asobiba/pull/13
 ---

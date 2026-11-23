@@ -18,3 +18,4 @@
 | 10 | 2026-11-18 | Создание лобби из конфига: агент и JSON-редактор, именованная библиотека с черновиками и актуальной проверкой, сохранение снимка из лобби, справка о настройках пяти игр | [10-config-first](features/10-config-first/README.md) · [PR #10](https://github.com/andrey03410/asobiba/pull/10) |
 | 11 | 2026-11-19 | ИИ из того же чата ведёт Quizor через MCP, наблюдает и комментирует четыре другие игры. Общая пауза, восстановление ведущего и раскрытие конфига хозяином по кнопке | [11-ai-game-roles](features/11-ai-game-roles/README.md) · [PR #11](https://github.com/andrey03410/asobiba/pull/11) |
 | 12 | 2026-11-20 | Docker, GitHub Actions и вход по созданным аккаунтам | [Деплой на VPS](features/12-docker-deploy/README.md) · [PR #12](https://github.com/andrey03410/asobiba/pull/12) |
+| 13 | 2026-11-23 | Единый вход, локальная модерация, квоты игр и файлов. | [Приёмка](features/13-kaname/verify.md) |
