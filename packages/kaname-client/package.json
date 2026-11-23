@@ -1,0 +1,1 @@
+{"name":"@kaname/service-client","version":"0.1.0","type":"module","files":["index.js","index.d.ts"],"exports":{".":{"types":"./index.d.ts","import":"./index.js"}},"dependencies":{"openid-client":"^6.9.1"}}

@@ -1,3 +1,5 @@
+import { grantForUser } from "../kaname";
+import { checkPublishedBytes, withOwnerPool } from "../pool-lock";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -52,7 +54,6 @@ function safeDecode(segment: string): string {
 
 export class AssetService {
   private readonly thumbs = new Map<string, string>();
-  private readonly saves = new Map<string, Promise<void>>();
   private readonly durations = new Map<string, Promise<number | null>>();
   constructor(
     private readonly db: Db,
@@ -66,7 +67,20 @@ export class AssetService {
   }
 
   async save(ownerId: string, input: { name?: string; body: AssetBody; source: AssetDto["source"] }): Promise<AssetDto> {
+    return withOwnerPool(ownerId, () => this.saveInPool(ownerId,input));
+  }
+
+  private async saveInPool(ownerId:string, input:{name?:string;body:AssetBody;source:AssetDto["source"]}):Promise<AssetDto> {
+    const grant=await grantForUser(this.db,ownerId);
+    const limit=grant ? grant.limits.storageBytes : MAX_USER_ASSET_BYTES;
     const id = newId("ast");
+    const [assets,files,snapshots] = await Promise.all([
+      this.db.asset.aggregate({where:{ownerId},_sum:{bytes:true},_count:true}),
+      this.db.videoFile.findMany({where:{snapshots:{some:{snapshot:{ownerId}}}},select:{bytes:true}}),
+      this.db.videoSnapshot.aggregate({where:{ownerId},_sum:{manifestBytes:true}}),
+    ]);
+    if (assets._count >= MAX_ASSETS_PER_USER) throw conflict("too_many_assets","Достигнут лимит файлов.");
+    const used = files.reduce((sum,file)=>sum+Number(file.bytes),(assets._sum.bytes ?? 0)+(snapshots._sum.manifestBytes ?? 0));
     const temp = this.abs(join("assets", ownerId, `${id}.part`));
     await mkdir(dirname(temp), { recursive: true });
     let bytes = 0;
@@ -74,36 +88,25 @@ export class AssetService {
     try {
       const limiter = new Transform({ transform(chunk: Buffer, _encoding, callback) {
         bytes += chunk.length;
+        if (limit !== null && used + bytes > limit) return callback(conflict("asset_quota","Недостаточно места в пуле."));
         callback(bytes > MAX_MEDIA_BYTES ? new HttpError(413, "too_big", "Файл больше 1 ГиБ") : null, chunk);
       } });
       // Backpressure bounds memory independently of a file's length or declared Content-Length.
       await pipeline(Readable.from(Buffer.isBuffer(input.body) ? [input.body] : input.body), limiter, createWriteStream(temp, { flags: "wx" }));
       const info = await inspectAssetFile(temp, bytes);
       const relPath = join("assets", ownerId, `${id}.${info.ext}`);
-      // Serialize quota check + persistence for this owner; simultaneous uploads cannot both spend the last bytes.
-      const previous = this.saves.get(ownerId) ?? Promise.resolve();
-      let release!: () => void;
-      const pending = new Promise<void>((r) => { release = r; });
-      this.saves.set(ownerId, pending);
-      await previous;
-      try {
-        const usage = await this.db.asset.aggregate({ where: { ownerId }, _count: true, _sum: { bytes: true } });
-        if (usage._count >= MAX_ASSETS_PER_USER) throw conflict("too_many_assets", `В пуле уже ${usage._count} файлов: удалите ненужные`);
-        // Douga snapshot files share the same 10 GiB pool (task 07).
-        const video = await this.db.videoFile.findMany({ where: { snapshots: { some: { snapshot: { ownerId } } } }, select: { bytes: true } });
-        const videoBytes = video.reduce((sum, file) => sum + Number(file.bytes), 0);
-        if ((usage._sum.bytes ?? 0) + videoBytes + bytes > MAX_USER_ASSET_BYTES) throw conflict("asset_quota", "Пул превышает 10 ГиБ: удалите ненужные файлы");
-        finalPath = this.abs(relPath);
-        await rename(temp, finalPath);
-        const asset = await this.db.asset.create({ data: {
+      const currentGrant = await grantForUser(this.db, ownerId);
+      finalPath = this.abs(relPath);
+      await rename(temp, finalPath);
+      const asset = await this.db.$transaction(async tx => {
+        const row = await tx.asset.create({ data: {
           id, ownerId, name: cleanName(input.name, `${id}.${info.ext}`), mime: info.mime,
           width: info.width, height: info.height, bytes, path: relPath, source: input.source,
         } });
-        return assetDto(asset);
-      } finally {
-        release();
-        if (this.saves.get(ownerId) === pending) this.saves.delete(ownerId);
-      }
+        await checkPublishedBytes(tx, ownerId, currentGrant ? currentGrant.limits.storageBytes : MAX_USER_ASSET_BYTES);
+        return row;
+      });
+      return assetDto(asset);
     } catch (error) {
       if (finalPath) await rm(finalPath, { force: true });
       throw error;

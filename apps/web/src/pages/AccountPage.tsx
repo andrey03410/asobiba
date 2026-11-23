@@ -1,3 +1,4 @@
+import { KanameAccount, useKaname } from "../Kaname";
 import { useSearchParams } from "react-router";
 import { useUser } from "../auth";
 import { useTitle } from "../util";
@@ -18,8 +19,9 @@ type TabId = (typeof TABS)[number]["id"];
 export function AccountPage() {
   useTitle("Кабинет");
   const user = useUser();
+  const kaname = useKaname();
   const [params, setParams] = useSearchParams();
-  const tabs = TABS.filter((t) => !("admin" in t) || (user.role === "admin" && import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY !== "1"));
+  const tabs = TABS.filter((t) => !("admin" in t) || (user.role === "admin" && !kaname?.enabled && import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY !== "1"));
   const wanted = params.get("tab");
   const tab: TabId = tabs.find((t) => t.id === wanted)?.id ?? "agent";
 
@@ -34,6 +36,7 @@ export function AccountPage() {
           </p>
         </div>
       </div>
+      <KanameAccount admin={user.role === "admin"}/>
       <div className="tabs tabs-page" role="tablist">
         {tabs.map((t) => (
           <button

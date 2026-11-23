@@ -164,3 +164,7 @@ MCP by-id и LobbyService.create читают оригинал, DTO/WS прод�
 - [задача 07](../features/07-video-games/README.md) — импорт снимков douga, куски видео по ключу и файлы `/files/video`
 
 - [задача 08](../features/08-jinchi-playtest/README.md) — генерация, безопасная information и компактные lossless WS снимки
+
+## Федеративный режим
+
+При KANAME_ENABLED=1 браузер входит через /api/auth/kaname/login. Назначение Asobiba проверяется с Kaname для защищённых HTTP-операций, личных MCP-токенов и отправки событий игрового WebSocket. Проверка простоя закрывает отозванный сокет в интервале до 15 секунд. Локальный профиль и суточная активность привязаны к issuer и subject. Локальные администраторы открывают /admin. Гостевая ссылка работает только при KANAME_GUESTS=1, независимо от сборки Vite. Проверки приведены в [приёмке интеграции](../features/13-kaname/verify.md).
