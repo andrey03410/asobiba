@@ -1,8 +1,8 @@
 ---
 track: product
-stage: build
+stage: review
 branch: codex/13-kaname
-pr: null
+pr: https://github.com/andrey03410/asobiba/pull/13
 ---
 # Единый доступ Kaname
 
