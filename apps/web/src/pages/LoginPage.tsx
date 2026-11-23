@@ -1,3 +1,4 @@
+import { useKaname } from "../Kaname";
 import { type FormEvent, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api";
@@ -7,6 +8,7 @@ import { safeNext, useTitle } from "../util";
 
 export function LoginPage() {
   useTitle("Вход");
+  const kaname=useKaname();
   const { user, setUser } = useAuth();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -21,6 +23,8 @@ export function LoginPage() {
     <SessionActions next={next} />
   </div></div>;
   if (user) return <Navigate to={next} replace />;
+
+  if(kaname?.enabled) return <div className="auth-page"><section className="card auth-card"><h1>Вход в Asobiba</h1><a className="btn btn-primary" href={"/api/auth/kaname/login?next=" + encodeURIComponent(next)}>Войти через Kaname</a></section></div>;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

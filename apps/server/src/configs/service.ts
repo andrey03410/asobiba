@@ -1,3 +1,4 @@
+import { grantForUser } from "../kaname";
 import type { ConfigDto, ConfigListItem, ConfigValidationStatus } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type ConfigIssue, type ConfigSummary, type GameCatalog, validateConfig, type VideoPlay, type VideoSnapshotSummary } from "@asobiba/sdk";
 import { z } from "zod";
@@ -224,9 +225,11 @@ export class ConfigService {
     }
     const documentTitle = typeof document.title === "string" ? document.title.trim().slice(0, 80) : "";
     const title = name ?? (documentTitle || this.catalog.get(gameId)?.title || "Без названия");
+    const grant = await grantForUser(this.db,userId);
+    const limit = grant ? grant.limits.configs : MAX_CONFIGS_PER_USER;
     const row = await this.db.$transaction(async (tx) => {
       const count = await tx.gameConfig.count({ where: { ownerId: userId } });
-      if (count >= MAX_CONFIGS_PER_USER) throw conflict("too_many_configs", "Слишком много конфигов: удалите ненужные");
+      if (limit !== null && count >= limit) throw conflict("too_many_configs", "Слишком много конфигов: удалите ненужные");
       return tx.gameConfig.create({ data: { id: newId("cfg"), ownerId: userId, gameId, title, document } });
     });
     return this.detail(row);

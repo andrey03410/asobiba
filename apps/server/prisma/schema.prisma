@@ -8,6 +8,10 @@ datasource db {
 }
 
 model User {
+  kanameSubject String?
+  kanameIssuer String?
+  @@unique([kanameIssuer, kanameSubject])
+  kanameSuspended Boolean @default(false)
   id             String         @id
   login          String         @unique
   passwordHash   String?
@@ -29,6 +33,7 @@ model User {
 
 /// Browser session. id is the sha256 of the cookie token.
 model Session {
+  kanameSession Boolean @default(false)
   id        String   @id
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -54,6 +59,7 @@ model Invite {
 
 /// Personal MCP token (asb_…). Only the sha256 is stored.
 model ApiToken {
+  kanameToken Boolean @default(false)
   id         String    @id
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -181,6 +187,7 @@ model VideoSnapshot {
   title        String
   projectId    String
   revision     Int
+  manifestBytes Int @default(0)
   manifestHash String
   contract     Int
   engine       Json
@@ -211,4 +218,12 @@ model VideoSnapshotFile {
 
   @@id([snapshotId, hash])
   @@index([hash])
+}
+
+model KanameActivity {
+  subject String
+  day String
+  lastActiveAt DateTime
+  issuer String
+  @@id([issuer, subject, day])
 }

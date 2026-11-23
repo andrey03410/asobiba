@@ -1,3 +1,5 @@
+import { kanameEnabled } from "@kaname/service-client";
+import { recordActivity } from "../kaname";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance } from "fastify";
 import type { Services } from "../app";
@@ -17,6 +19,10 @@ export function registerMcpRoutes(app: FastifyInstance, s: Services): void {
         error: { code: -32001, message: "Нужен личный токен: Authorization: Bearer asb_… (создаётся в кабинете на сайте)" },
         id: null,
       };
+    }
+    if (kanameEnabled() && (req.body as { method?: string })?.method === "tools/call") {
+      const identity = await s.db.user.findUnique({ where: { id: user.id }, select: { kanameSubject: true } });
+      if (identity?.kanameSubject) await recordActivity(s, identity.kanameSubject);
     }
     const server = createMcpServer(user, s);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

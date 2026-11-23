@@ -1,3 +1,4 @@
+import { useKaname } from "../Kaname";
 import type { LobbyInvitationDto } from "@asobiba/api";
 import { useEffect, useState } from "react";
 import { Navigate, useParams } from "react-router";
@@ -40,10 +41,12 @@ function InvitationPage({ id }: { id: string }) {
 }
 
 export function LobbyEntryPage() {
+  const kaname = useKaname();
   const { id = "" } = useParams();
   const { user } = useAuth();
   useEffect(() => { try { sessionStorage.setItem("asobiba_last_lobby", `/lobby/${id}`); } catch { /* optional navigation hint */ } }, [id]);
   if (user === undefined) return <div className="page-loading">Проверяю вход…</div>;
-  if (!user && import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY === "1") return <Navigate to={`/login?next=${encodeURIComponent(`/lobby/${id}`)}`} replace />;
+  if (!user && !kaname) return null;
+  if (!user && (kaname?.enabled ? !kaname.guestsEnabled : import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY === "1")) return <Navigate to={`/login?next=${encodeURIComponent(`/lobby/${id}`)}`} replace />;
   return user ? <LobbyPage key={`${id}:${user.id}`} /> : <InvitationPage key={id} id={id} />;
 }

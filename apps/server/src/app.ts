@@ -51,6 +51,7 @@ export interface AppOptions {
 /** One-time secrets that travel in URLs must not end up in logs. */
 export function redactUrl(url: string): string {
   return url
+    .replace(/(\/api\/auth\/kaname\/callback)\?.*/, "$1")
     .replace(/(\/api\/uploads\/)[^/?#]+/, "$1<ticket>")
     .replace(/(\/api\/invites\/check\/)[^/?#]+/, "$1<code>")
     .replace(/([?&]invite=)[^&#]+/, "$1<code>");
@@ -80,10 +81,12 @@ export async function buildApp(options: AppOptions): Promise<{ app: FastifyInsta
 
   app.decorateRequest("user", null);
   app.addHook("onRequest", async (req) => {
+    if (req.url.startsWith("/api/auth/kaname/") || req.url.startsWith("/internal/")) return;
     req.user = await auth.userBySession(req.cookies[SESSION_COOKIE]);
   });
 
   app.setErrorHandler((err: Error & { statusCode?: number; code?: string }, req, reply) => {
+    if (err.statusCode === 503) return reply.code(503).send({error:{code:"access_unavailable",message:"Проверка доступа временно недоступна."}});
     if (err instanceof HttpError) {
       return reply.code(err.status).send({ error: { code: err.code, message: err.message }, ...(err.issues ? { issues: err.issues } : {}) });
     }

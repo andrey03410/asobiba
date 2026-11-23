@@ -1,3 +1,5 @@
+import { grantForUser } from "../kaname";
+import { checkPublishedBytes, withOwnerPool } from "../pool-lock";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -137,7 +139,8 @@ export class VideoService {
       where: { snapshots: { some: { snapshot: { ownerId } } } },
       select: { bytes: true },
     });
-    return rows.reduce((sum, row) => sum + Number(row.bytes), 0);
+    const manifests = await this.db.videoSnapshot.aggregate({where:{ownerId},_sum:{manifestBytes:true}});
+    return rows.reduce((sum, row) => sum + Number(row.bytes), manifests._sum.manifestBytes ?? 0);
   }
 
   /** Bytes of the unique files of one snapshot (config media quota). */
@@ -148,7 +151,7 @@ export class VideoService {
 
   async importSnapshot(ownerId: string, token: string): Promise<VideoSnapshotDto & { reused: boolean }> {
     if (!TOKEN.test(token)) throw new HttpError(400, "bad_token", "Токен douga — строка base64url из video_interactive_publish");
-    return this.withFiles(() => this.importNow(ownerId, token));
+    return this.withFiles(() => withOwnerPool(ownerId,()=>this.importNow(ownerId, token)));
   }
 
   private withFiles<T>(fn: () => Promise<T>): Promise<T> {
@@ -217,8 +220,11 @@ export class VideoService {
     );
     const added = [...files.values()].filter((f) => !known.has(f.hash)).reduce((sum, f) => sum + f.bytes, 0);
     const assets = await this.db.asset.aggregate({ where: { ownerId }, _sum: { bytes: true } });
-    if ((assets._sum.bytes ?? 0) + (await this.poolBytes(ownerId)) + added > MAX_USER_ASSET_BYTES)
-      throw conflict("asset_quota", "Пул превышает 10 ГиБ: удалите ненужные файлы или снимки");
+    const grant=await grantForUser(this.db,ownerId);
+    const limit=grant ? grant.limits.storageBytes : MAX_USER_ASSET_BYTES;
+    const manifestBytes = grant ? Buffer.byteLength(JSON.stringify(parsed)) : 0;
+    if (limit !== null && (assets._sum.bytes ?? 0) + (await this.poolBytes(ownerId)) + added + manifestBytes > limit)
+      throw conflict("asset_quota", "Недостаточно свободного места в пуле. Удалите файлы или снимки.");
 
     // Files this import brought: a failed import takes them away again.
     const fresh: string[] = [];
@@ -234,6 +240,7 @@ export class VideoService {
       }
       await mkdir(dirname(this.abs(path)), { recursive: true });
       await writeFile(this.abs(path), JSON.stringify(parsed));
+      const currentGrant = await grantForUser(this.db, ownerId);
       const row = await this.db.$transaction(async (tx) => {
         for (const file of files.values())
           await tx.videoFile.upsert({
@@ -241,7 +248,7 @@ export class VideoService {
             create: { hash: file.hash, ext: file.ext, bytes: BigInt(file.bytes), kind: file.kind },
             update: {},
           });
-        return tx.videoSnapshot.create({
+        const snapshot = await tx.videoSnapshot.create({
           data: {
             id,
             ownerId,
@@ -249,6 +256,7 @@ export class VideoService {
             projectId: parsed.project.id,
             revision: parsed.project.revision,
             manifestHash: parsed.hash,
+            manifestBytes,
             contract: parsed.contract,
             engine: parsed.engine,
             bytes: BigInt(total),
@@ -257,6 +265,8 @@ export class VideoService {
             files: { create: [...new Set([...files.values()].map((f) => f.hash))].map((hash) => ({ hash })) },
           },
         });
+        await checkPublishedBytes(tx, ownerId, currentGrant ? currentGrant.limits.storageBytes : MAX_USER_ASSET_BYTES);
+        return snapshot;
       });
       return { ...snapshotDto(row), reused: false };
     } catch (error) {

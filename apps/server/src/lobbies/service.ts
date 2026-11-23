@@ -1,3 +1,4 @@
+import { grantForUser } from "../kaname";
 import type { ConfigDto, CreateLobbyRequest, LobbyAgentAssignment, LobbyAgentCommand, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
 import { quizorCanUseAgentPresenter, quizorCanUseAlgorithm, type QuizorRules } from "@asobiba/game-quizor";
@@ -166,7 +167,7 @@ export class LobbyService {
       gameId: row.gameId,
       gameTitle: game.title,
       status: row.status as LobbyStatus,
-      host: { id: row.host.id, login: row.host.login },
+      host: { id: row.host.id, login: (row.host.displayName ?? row.host.login) },
       seats: max,
       minPlayers: min,
       seatNames: room?.seatNames ?? [],
@@ -196,7 +197,7 @@ export class LobbyService {
   // ---------- queries ----------
 
   private memberName(member: LobbyRow["members"][number]): string {
-    return member.user.role === "guest" ? `${member.user.displayName} · гость ${member.guestNumber}` : member.user.login;
+    return member.user.role === "guest" ? `${member.user.displayName} · гость ${member.guestNumber}` : (member.user.displayName ?? member.user.login);
   }
 
   async invitation(lobbyId: string): Promise<LobbyInvitationDto> {
@@ -205,7 +206,7 @@ export class LobbyService {
     const summary = game ? describeConfig(game, row.config as unknown as ConfigDocument).summary : null;
     return { id: row.id, name: row.name, gameTitle: game?.title ?? row.gameId,
       description: game?.summary ?? "Игра с друзьями", parameters: summary?.highlights.slice(0, 3) ?? [],
-      host: row.host.login, status: row.status as LobbyStatus,
+      host: (row.host.displayName ?? row.host.login), status: row.status as LobbyStatus,
       players: row.members.filter((m) => m.role === "player").length, seats: row.seats };
   }
 
@@ -286,7 +287,7 @@ export class LobbyService {
         gameTitle: game?.title ?? row.gameId,
         configTitle: config.title,
         status: row.status as LobbyStatus,
-        host: row.host.login,
+        host: (row.host.displayName ?? row.host.login),
         players: row.members.length,
         seats: row.seats,
         createdAt: row.createdAt.toISOString(),
@@ -315,7 +316,12 @@ export class LobbyService {
     if (req.agent) this.requireAgentRole(config, req.agent);
     const name = (req.name ?? "").trim().slice(0, 60) || config.title;
     const id = newId("lob", 10);
-    await this.deps.db.lobby.create({
+    const grant = await grantForUser(this.deps.db,user.id);
+    await this.deps.db.$transaction(async tx => {
+      const limit = grant?.limits.lobbies;
+      if (limit != null && await tx.lobby.count({where:{hostId:user.id,status:{not:"closed"}}}) >= limit)
+        throw conflict("lobby_quota","Достигнут лимит открытых лобби.");
+      await tx.lobby.create({
       data: {
         id,
         name,
@@ -327,6 +333,7 @@ export class LobbyService {
         hostId: user.id,
         members: { create: { userId: user.id, role: "player" } },
       },
+    });
     });
     return this.get(id);
   }
@@ -699,10 +706,10 @@ export class LobbyService {
     });
   }
 
-  close(user: UserDto, lobbyId: string): Promise<LobbyDto> {
+  close(user: UserDto, lobbyId: string, moderate = false): Promise<LobbyDto> {
     return this.lock(lobbyId, async () => {
       const row = await this.loadRow(lobbyId);
-      if (row.hostId !== user.id) throw forbidden("Закрыть лобби может только хозяин");
+      if (row.hostId !== user.id && !(moderate && user.role === "admin")) throw forbidden("Требуются права хозяина или администратора лобби.");
       const room = await this.room(lobbyId);
       const now = new Date(this.deps.now());
       await this.deps.db.$transaction([

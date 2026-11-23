@@ -1,3 +1,5 @@
+import { kanameEnabled } from "@kaname/service-client";
+import { grantForUser } from "../kaname";
 import type { InviteDto, Role, TokenDto, UserDto } from "@asobiba/api";
 import type { User } from "../generated/prisma/client";
 import bcrypt from "bcryptjs";
@@ -118,10 +120,10 @@ export class AuthService {
 
   // ---------- sessions ----------
 
-  async createSession(userId: string): Promise<{ token: string; expiresAt: Date }> {
+  async createSession(userId: string, kanameSession = false): Promise<{ token: string; expiresAt: Date }> {
     const token = `ses_${randomString(40)}`;
     const expiresAt = new Date(this.now() + SESSION_TTL_MS);
-    await this.db.session.create({ data: { id: sha256(token), userId, expiresAt } });
+    await this.db.session.create({ data: { id: sha256(token), userId, expiresAt, kanameSession } });
     return { token, expiresAt };
   }
 
@@ -129,7 +131,20 @@ export class AuthService {
     if (!token) return null;
     const session = await this.db.session.findUnique({ where: { id: sha256(token) }, include: { user: true } });
     if (!session || session.expiresAt.getTime() <= this.now()) return null;
-    return userDto(session.user);
+    if (kanameEnabled()) {
+      if (session.user.role === "guest") return process.env.KANAME_GUESTS === "1" ? userDto(session.user) : null;
+      if (!session.kanameSession) return null;
+      return this.kanameUser(session.user);
+    }
+    return session.kanameSession ? null : userDto(session.user);
+  }
+
+  private async kanameUser(user: User) {
+    const grant = await grantForUser(this.db,user.id).catch(error => {
+      if (error.statusCode === 403) return null;
+      throw error;
+    });
+    return grant ? userDto({...user,role:grant.role === "user" ? "user" : "admin"}) : null;
   }
 
   async deleteSession(token: string | undefined): Promise<void> {
@@ -169,7 +184,7 @@ export class AuthService {
     const count = await this.db.apiToken.count({ where: { userId, revokedAt: null } });
     if (count >= 20) throw conflict("too_many_tokens", "Слишком много токенов: отзовите ненужные");
     const token = await this.db.apiToken.create({
-      data: { id: newId("tok"), userId, name: clean, tokenHash: sha256(secret), prefix: secret.slice(0, 10) },
+      data: { id: newId("tok"), userId, name: clean, kanameToken: kanameEnabled(), tokenHash: sha256(secret), prefix: secret.slice(0, 10) },
     });
     return { token: tokenDto(token), secret };
   }
@@ -177,11 +192,11 @@ export class AuthService {
   async userByToken(secret: string | undefined): Promise<UserDto | null> {
     if (!secret?.startsWith("asb_")) return null;
     const token = await this.db.apiToken.findUnique({ where: { tokenHash: sha256(secret) }, include: { user: true } });
-    if (!token || token.revokedAt || token.user.role === "guest") return null;
+    if (!token || token.kanameToken !== kanameEnabled() || token.revokedAt || token.user.role === "guest") return null;
     if (!token.lastUsedAt || Date.now() - token.lastUsedAt.getTime() > 60_000) {
       await this.db.apiToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } });
     }
-    return userDto(token.user);
+    return kanameEnabled() ? this.kanameUser(token.user) : userDto(token.user);
   }
 
   async listTokens(userId: string): Promise<TokenDto[]> {

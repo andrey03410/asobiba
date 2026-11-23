@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { kanameEnabled, registerLogin } from "@kaname/service-client";
+import { registerKanamePanel, siteIdentity, recordActivity } from "./kaname";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { extname } from "node:path";
@@ -73,9 +76,20 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       return fn(user);
     });
 
+  registerLogin(app, "asobiba", async (grant,reply) => {
+    const role = grant.role === "user" ? "user" : "admin";
+    const user = await s.db.user.upsert({
+      where:{kanameIssuer_kanameSubject:siteIdentity(grant.subject)}, update:{role,displayName:grant.login},
+      create:{id:randomUUID(),login:"@kaname:"+randomUUID(),displayName:grant.login,role,...siteIdentity(grant.subject)},
+    });
+    if (user.kanameSuspended) throw forbidden("Доступ к Asobiba приостановлен.");
+    setCookie(reply,(await s.auth.createSession(user.id,true)).token);
+    await recordActivity(s, grant.subject);
+  });
+  registerKanamePanel(app,s);
   // ---------- auth ----------
   app.post("/api/auth/register", async (req, reply) => {
-    if (s.env.provisionedAccountsOnly) throw forbidden("Аккаунты создаёт администратор");
+    if (kanameEnabled() || s.env.provisionedAccountsOnly) throw forbidden("Постоянный доступ выдаётся в Kaname.");
     if (req.user) throw new HttpError(409, "already_signed_in", "Сначала выйдите из текущей сессии");
     const body = parse(z.object({ login: z.string(), password: z.string(), invite: z.string() }), req.body);
     const user = await s.auth.register(body);
@@ -88,6 +102,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   const perLogin = new FailureLimiter(10, 15 * 60_000, s.now);
   const perIp = new FailureLimiter(30, 15 * 60_000, s.now);
   app.post("/api/auth/login", async (req, reply) => {
+    if (kanameEnabled()) throw forbidden("Войдите через Kaname.");
     if (req.user) throw new HttpError(409, "already_signed_in", "Сначала выйдите из текущей сессии");
     const body = parse(z.object({ login: z.string().max(64), password: z.string().max(256) }), req.body);
     const loginKey = [body.login.trim().toLowerCase()];
@@ -117,7 +132,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       await s.lobbies.visit(user, body.lobbyId);
       return { user, lobby: await s.lobbies.join(user, body.lobbyId, body.role) };
     });
-    if (s.env.provisionedAccountsOnly) throw forbidden("Войдите в аккаунт, чтобы открыть лобби");
+    if (kanameEnabled() ? process.env.KANAME_GUESTS !== "1" : s.env.provisionedAccountsOnly) throw forbidden("Войдите в аккаунт, чтобы открыть лобби");
     const invitation = await s.lobbies.invitation(body.lobbyId);
     if (invitation.status === "closed") throw new HttpError(409, "closed", "Лобби закрыто");
     guestLimit.check([req.ip]);
@@ -146,7 +161,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   app.get("/api/invites/check/:code", async (req) => s.auth.checkInvite(parse(z.object({ code: z.string().max(100) }), req.params).code));
 
   app.post("/api/invites", async (req, reply) => {
-    if (s.env.provisionedAccountsOnly) throw forbidden("Аккаунты создаёт администратор");
+    if (kanameEnabled() || s.env.provisionedAccountsOnly) throw forbidden("Постоянный доступ выдаётся в Kaname.");
     const admin = requireAdmin(req);
     const body = parse(z.object({ role: z.enum(["user", "admin"]).optional() }).optional(), req.body);
     const { invite, code } = await s.auth.createInvite(admin.id, body?.role ?? "user");
@@ -265,7 +280,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     if (!file) throw notFound("Файл не найден");
     if (file.ownerId !== user.id && !(await s.lobbies.canReadAsset(user.id, assetId))) throw forbidden("Файл пока недоступен в этом лобби");
     reply.header("content-type", file.mime);
-    reply.header("cache-control", "private, max-age=86400, immutable");
+    reply.header("cache-control", kanameEnabled() ? "private, no-store" : "private, max-age=86400, immutable");
     reply.header("x-content-type-options", "nosniff");
     reply.header("accept-ranges", "bytes");
     if (req.method === "GET" && req.headers.range) {
@@ -314,7 +329,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     const bytes = await stat(path).then((st) => st.size, () => null);
     if (bytes === null) throw notFound("Файл не найден");
     reply.header("content-type", VIDEO_MIME[extname(name)] ?? "application/octet-stream");
-    reply.header("cache-control", "private, max-age=31536000, immutable");
+    reply.header("cache-control", kanameEnabled() ? "private, no-store" : "private, max-age=31536000, immutable");
     reply.header("x-content-type-options", "nosniff");
     reply.header("accept-ranges", "bytes");
     if (req.method === "GET" && req.headers.range) {
@@ -402,22 +417,40 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       socket.close(4401, "unauthorized");
       return;
     }
-    const send = (msg: ServerMessage) => {
+    const deliver = (msg: ServerMessage) => {
       if (msg.type === "match" && msg.match) {
         const game = msg.match.game as { width?: number; height?: number } | null;
         if (game && typeof game.width === "number" && typeof game.height === "number" && game.width * game.height > 200 * 200) msg = { ...msg, match: packJinchiMatch(msg.match) };
       }
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
     };
-    const sub: Subscriber = { userId: user.id, send, closed: () => socket.readyState === socket.CLOSING || socket.readyState === socket.CLOSED };
     const token = req.cookies[SESSION_COOKIE]!;
+    let checking = false;
+    const pending: ServerMessage[] = [];
+    const send = (message: ServerMessage) => {
+      if (!kanameEnabled()) return deliver(message);
+      if (socket.readyState !== socket.OPEN) return;
+      if (pending.length >= 128) { socket.close(1013, "slow_connection"); return; }
+      pending.push(message);
+      if (checking) return;
+      checking = true;
+      void s.auth.userBySession(token).then(current => {
+        if (!current || current.id !== user.id) { socket.close(4401, "session_ended"); return; }
+        for (const event of pending) deliver(event);
+      }).catch(() => socket.close(1011, "access_unavailable")).finally(() => {
+        pending.length = 0;
+        checking = false;
+      });
+    };
+    const sub: Subscriber = { userId: user.id, send, closed: () => socket.readyState === socket.CLOSING || socket.readyState === socket.CLOSED };
     const stopWatching = s.auth.watchSession(token, () => socket.close(4401, "session_ended"));
     let expiryTimer: NodeJS.Timeout | undefined;
     const checkExpiry = async () => {
       const expires = await s.auth.sessionExpiresAt(token);
+      if (kanameEnabled() && !await s.auth.userBySession(token)) { socket.close(4401,"session_ended"); return; }
       if (socket.readyState !== socket.OPEN) return;
       if (expires === null || expires <= s.now()) { socket.close(4401, "session_ended"); return; }
-      expiryTimer = setTimeout(() => void checkExpiry().catch(() => socket.close(1011)), Math.min(expires - s.now(), 2 ** 31 - 1));
+      expiryTimer = setTimeout(() => void checkExpiry().catch(() => socket.close(1011)), Math.min(expires - s.now(), kanameEnabled() ? 15000 : 2 ** 31 - 1));
       expiryTimer.unref();
     };
     void checkExpiry().catch(() => socket.close(1011));
