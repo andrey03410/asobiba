@@ -33,8 +33,13 @@ async function client(number) {
 async function call(c, name, args = {}) {
   const res = await c.callTool({ name, arguments: args });
   const txt = res.content.find(block => block.type === "text")?.text;
-  if (res.isError) throw new Error(`${name}: ${txt}`);
-  return JSON.parse(txt);
+  const value = JSON.parse(txt);
+  if (res.isError) {
+    const error = new Error(`${name}: ${value.error?.message ?? txt}`);
+    error.code = value.error?.code;
+    throw error;
+  }
+  return value;
 }
 
 const scenarios = [
@@ -136,7 +141,13 @@ async function play([game, presetId, count]) {
           player.finished = true;
         } else if (event.kind === "turn") {
           const action = decide(game, event);
-          await call(player.c, "agent_act", { ...player.conn, cursor: event.cursor, action });
+          try {
+            await call(player.c, "agent_act", { ...player.conn, cursor: event.cursor, action });
+          } catch (error) {
+            // A running timer can change the phase between agent_wait and agent_act.
+            if (error.code === "stale_agent_event") continue;
+            throw error;
+          }
           player.moves++;
         }
       }
