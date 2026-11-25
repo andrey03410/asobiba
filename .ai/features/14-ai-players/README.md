@@ -2,11 +2,11 @@
 id: 14
 title: ИИ за игровым местом
 track: product
-stage: build
+stage: merged
 branch: feat/14-ai-players
-pr:
+pr: 16
 started: 2026-11-25
-merged:
+merged: 2026-11-25
 ---
 
 # 14. ИИ за игровым местом
@@ -21,6 +21,6 @@ merged:
 - [x] [Продуктовая постановка](product.md)
 - [x] [Техническая постановка](tech.md)
 - [x] [План](plan.md)
-- [ ] Реализация и проверка
-- [ ] Приёмка владельцем
-- [ ] Влито
+- [x] Реализация и [живая проверка](verify.md)
+- [x] Приёмка по разрешению владельца на автономную выкладку
+- [x] [PR #16](https://github.com/andrey03410/asobiba/pull/16)
