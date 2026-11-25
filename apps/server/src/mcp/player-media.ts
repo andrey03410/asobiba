@@ -4,7 +4,9 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { Resvg } from "@resvg/resvg-js";
-import { imageSize } from "image-size";
+import sharp from "sharp";
+import { MAX_IMAGE_SIDE } from "../assets/images";
+import type { YomifudaView } from "@asobiba/game-yomifuda";
 import type { Block, QuizorView } from "@asobiba/game-quizor";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -62,12 +64,33 @@ function findBlock(blocks: Block[], id: string): Block | undefined {
   }
 }
 
-function revealedImage(bytes: Buffer, mime: string, block?: Block): Media {
-  const progress = block?.playerProgress ?? 1;
+function currentPage(delay: number[] = [], loop = 0, elapsedMs: number): number {
+  if (delay.length < 2 || elapsedMs <= 0) return 0;
+  // Browsers display zero/very short animation frames for 100 ms.
+  const durations = delay.map(ms => ms <= 10 ? 100 : ms);
+  const cycle = durations.reduce((sum, ms) => sum + ms, 0);
+  if (loop > 0 && elapsedMs >= loop * cycle) return durations.length - 1;
+  let cursor = elapsedMs % cycle;
+  for (const [i, ms] of durations.entries()) {
+    if (cursor < ms) return i;
+    cursor -= ms;
+  }
+  return durations.length - 1;
+}
 
-  const { width, height } = imageSize(bytes);
-  if (!width || !height) throw notFound("Изображение недоступно");
-  const source = `data:${mime};base64,${bytes.toString("base64")}`;
+async function revealedImage(bytes: Buffer, elapsedMs: number, block?: Block): Promise<Media> {
+  const progress = block?.playerProgress ?? 1;
+  const options = { limitInputPixels: MAX_IMAGE_SIDE ** 2 };
+  const metadata = await sharp(bytes, options).metadata();
+  const page = currentPage(metadata.delay, metadata.loop, elapsedMs);
+  // Animated readers may composite preceding frames to reconstruct the requested page.
+  if ((page + 1) * metadata.width * metadata.height > 128_000_000)
+    throw new HttpError(422, "animation_too_large", "Этот кадр анимации слишком велик для показа через MCP");
+  const { info: { width, height }, data } = await sharp(bytes, { ...options, page, pages: 1 })
+    .autoOrient().png().timeout({ seconds: 5 }).toBuffer({ resolveWithObject: true });
+  if (!block?.effect || block.effect === "none" || progress >= 1)
+    return { bytes: data, mimeType: "image/png" };
+  const source = `data:image/png;base64,${data.toString("base64")}`;
   const image = (extra = "") => `<image width="${width}" height="${height}" ${extra} href="${source}"/>`;
   const render = (body: string, w = width, h = height, viewW = w, viewH = h) =>
     new Resvg(
@@ -75,8 +98,6 @@ function revealedImage(bytes: Buffer, mime: string, block?: Block): Media {
     )
       .render()
       .asPng();
-  if (!block?.effect || block.effect === "none" || progress >= 1)
-    return { bytes: render(image()), mimeType: "image/png" };
   let body: string;
   switch (block.effect) {
     case "blur":
@@ -126,7 +147,7 @@ async function clip(path: string, block: Block, offset: number, seconds: number)
   const from = (block.from ?? 0) + offset * rate;
   const visibleDuration = Math.min(
     seconds,
-    (block.playerElapsedSeconds ?? Infinity) - offset,
+    (block.playerElapsedSeconds ?? 0) - offset,
     ((block.to ?? Infinity) - from) / rate,
   );
   if (visibleDuration < 0.02) throw forbidden("Эта часть записи ещё не воспроизводилась");
@@ -259,10 +280,25 @@ export function registerPlayerMedia(
               ].some((item) => item.asset === assetId && item.media === "audio"),
             )
           ) {
-            block = { type: "audio", asset: assetId };
+            // Players can play an audio answer option on demand.
+            block = { type: "audio", asset: assetId, playerElapsedSeconds: Infinity };
           }
-          if (file.mime.startsWith("image/"))
-            return response(revealedImage(await readFile(file.path), file.mime, block));
+          if (file.mime.startsWith("image/")) {
+            const now = quiz?.paused ? quiz.serverNow : context.now;
+            let startedAt = context.startedAt ?? now;
+            if (quiz) {
+              const isBackground = quiz.roundVisual?.background?.asset === assetId;
+              startedAt = block?.playerImageStartedAt ?? (isBackground ? quiz.roundStartedAt : quiz.answerOpenedAt) ?? startedAt;
+            }
+            if (context.gameId === "yomifuda" && context.view) {
+              const cards = context.view as YomifudaView;
+              if (cards.hand.some(card => card.image?.asset === assetId)) startedAt = cards.choiceStartedAt;
+              else if (cards.table.some(item => !item.hidden && item.card.image?.asset === assetId))
+                startedAt = cards.revealStartedAt ?? cards.choiceStartedAt;
+              else startedAt = cards.revealEndsAt ?? cards.revealStartedAt ?? cards.choiceStartedAt;
+            }
+            return response(await revealedImage(await readFile(file.path), now - startedAt, block));
+          }
           if (!block || (block.type !== "audio" && block.type !== "video"))
             throw forbidden("Запись пока недоступна");
           return response(await clip(file.path, block, offsetSeconds, seconds ?? MAX_CLIP_SECONDS));

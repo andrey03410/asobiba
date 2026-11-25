@@ -61,37 +61,41 @@ export function quizorPlayerActions(view: QuizorView, seat: number): PlayerActio
   });
 }
 
-function presentedBlock(block: Block, startedAt: number, now: number, active: boolean): Block {
+function presentedBlock(block: Block, startedAt: number, now: number, playedMs: number, imageStartedAt: number): Block {
   if (block.type === "scene") return { type: "scene", durationSeconds: block.durationSeconds };
   const progress = blockProgress(block, now, startedAt);
-  if (block.type === "group") return { ...block, blocks: block.blocks?.map(child => presentedBlock(child, startedAt, now, active)) };
+  if (block.type === "group") return { ...block, blocks: block.blocks?.map(child => presentedBlock(child, startedAt, now, playedMs, imageStartedAt)) };
   if (block.type === "text") return { ...block, text: visibleBlockText(block, progress) };
-  if (block.type === "image" && block.effect && block.effect !== "none") {
-    return { ...block, playerProgress: Math.floor(progress * 100) / 100 };
-  }
-  if ((block.type === "audio" || block.type === "video") && active) {
-    return { ...block, playerElapsedSeconds: Math.max(0, Math.floor((now - startedAt) / 100) / 10) };
+  if (block.type === "image") return { ...block, playerImageStartedAt: imageStartedAt,
+    ...(block.effect && block.effect !== "none" && { playerProgress: Math.floor(progress * 100) / 100 }) };
+  if (block.type === "audio" || block.type === "video") {
+    const elapsed = Math.min(playedMs, (block.durationSeconds ?? Infinity) * 1000);
+    return { ...block, playerElapsedSeconds: Math.max(0, Math.floor(elapsed / 100) / 10) };
   }
   return block;
 }
 
-function presentedBlocks(blocks: Block[], index: number, startedAt: number, now: number): Block[] {
+function presentedBlocks(blocks: Block[], index: number, startedAt: number, now: number, completed: number[] = []): Block[] {
   let offset = startedAt - blocks.slice(0, index).reduce((total, block) => total + blockDuration(block), 0);
+  let imageStartedAt = startedAt - completed.slice(0, index).reduce((total, ms) => total + (ms ?? 0), 0);
   return blocks.map((block, i) => {
-    const visible = presentedBlock(block, offset, now, index === i);
+    // Text effects follow the board's timeline. Playback stops immediately when another block takes focus.
+    const playedMs = i === index ? now - startedAt : completed[i] ?? 0;
+    const visible = presentedBlock(block, offset, now, playedMs, imageStartedAt);
     offset += blockDuration(block);
+    imageStartedAt += completed[i] ?? 0;
     return visible;
   });
 }
 
 export function quizorPlayerView(view: QuizorView, _seat: number, gameTime = view.serverNow, handles = new PlayerHandles()): QuizorView {
   // Browser caches may contain future files. History renders the prompt, reference, answers and corrections only.
-  const { preload, videoPreload, presenterNotes, agentTask, ...visible } = view;
+  const { preload, videoPreload, presenterNotes, agentTask, playedBlockMs, playedRevealMs, ...visible } = view;
   const now = view.paused ? view.serverNow : gameTime;
   return encodeQuizorIds({
     ...visible, controls: [], board: view.phase === "board" ? view.board : [],
-    blocks: presentedBlocks(view.blocks, view.blockIndex, view.blockStartedAt ?? now, now),
-    reveal: presentedBlocks(view.reveal, view.revealIndex ?? 0, view.revealBlockStartedAt ?? view.revealStartedAt ?? view.serverNow, now),
+    blocks: presentedBlocks(view.blocks, view.blockIndex, view.blockStartedAt ?? now, now, playedBlockMs),
+    reveal: presentedBlocks(view.reveal, view.revealIndex ?? 0, view.revealBlockStartedAt ?? view.revealStartedAt ?? view.serverNow, now, playedRevealMs),
     history: view.history.map(h => ({ ...h, blocks: [], fields: [], reveal: [] })),
     fields: (view.phase === "answer" || view.phase === "show") && (view.canAnswer || view.ownAnswer !== null) ? view.fields : [],
   }, view, handles);

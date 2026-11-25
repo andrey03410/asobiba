@@ -482,13 +482,18 @@ export class LobbyService {
     return refs.some(ref => ref.assetId === assetId);
   }
 
-  botMediaView(lobbyId: string, key: string, controllerId?: string) {
+  botMediaView(lobbyId: string, key: string, controllerId?: string): Promise<{
+    gameId: string; view: unknown; now: number; startedAt?: number;
+  }> {
     return this.lock(lobbyId, async () => {
       const userId = await this.botIdentity(lobbyId, key, controllerId);
       const room = await this.room(lobbyId);
       await this.advanceForPlayer(room);
       const seat = this.viewerSeat(room, userId);
-      if (!room.match || seat === null) return { gameId: (await this.loadRow(lobbyId)).gameId, view: null, now: this.deps.now() };
+      if (!room.match || seat === null) {
+        const row = await this.loadRow(lobbyId);
+        return { gameId: row.gameId, view: null, now: this.deps.now(), startedAt: row.createdAt.getTime() };
+      }
       const projected = seatProjection(room.match, seat);
       if (room.match.game.id === "quizor") {
         const quiz = projected.game as { paused?: boolean; resumeAt?: number | null };
@@ -496,7 +501,7 @@ export class LobbyService {
           return { gameId: "quizor", view: null, now: projected.now };
         }
       }
-      return { gameId: room.match.game.id, view: projected.game as unknown, now: projected.now };
+      return { gameId: room.match.game.id, view: projected.game, now: projected.now, startedAt: room.match.startedAt };
     });
   }
 
