@@ -59,15 +59,16 @@ it("isolates two equally named players' forms and hands, including across restar
   const {user} = await signUp(test, "cards-host");
   const svc = test.services.lobbies;
   const {url,id} = await svc.create(user,{config:presetDocument(yomifuda,yomifuda.presets[0])});
-  const first = await svc.joinBot(url,{name:"Рин",attempt:randomString(40)} ,user,"controller-1");
-  await expect(svc.joinBot(url,{name:"Рин",attempt:randomString(40)},user,"controller-1")).rejects.toMatchObject({code:"bot_already_seated"});
+  const controller = (await test.services.auth.createToken(user.id, "Cards", "player")).token.id;
+  const first = await svc.joinBot(url,{name:"Рин",attempt:randomString(40)} ,user,controller);
+  await expect(svc.joinBot(url,{name:"Рин",attempt:randomString(40)},user,controller)).rejects.toMatchObject({code:"bot_already_seated"});
   const second = await svc.joinBot(url,{name:"Рин",attempt:randomString(40)});
   expect([first.member.login,second.member.login]).toEqual(["Рин · ИИ №1","Рин · ИИ №2"]);
   await expect(svc.botWait(id,first.key,0,0)).rejects.toMatchObject({status:403});
-  await expect(svc.botIdentity(id,second.key,"controller-1")).rejects.toMatchObject({status:403});
+  await expect(svc.botIdentity(id,second.key,controller)).rejects.toMatchObject({status:403});
   await svc.start(user,id);
   const see = async (key:string, controller?:string) => (await svc.botWait(id,key,0,0,undefined,controller)).event!;
-  const a = await see(first.key,"controller-1");
+  const a = await see(first.key,controller);
   const b = await see(second.key);
   const hand = (event: typeof a) => event.actions.map(form => String(form.fields?.cardId));
   expect(hand(a)).toHaveLength(3);
@@ -76,9 +77,9 @@ it("isolates two equally named players' forms and hands, including across restar
   for (const id of hand(b)) expect(JSON.stringify(a)).not.toContain('"'+id+'"');
   svc.shutdown();
   expect(await svc.restoreAll()).toMatchObject({restored:1});
-  const restored = await see(first.key,"controller-1");
+  const restored = await see(first.key,controller);
   expect(hand(restored)).toEqual(hand(a));
-  await expect(svc.botAct(id,first.key,a.cursor,{type:"play",...a.actions[0]?.fields},"controller-1")).rejects.toMatchObject({code:"stale_agent_event"});
+  await expect(svc.botAct(id,first.key,a.cursor,{type:"play",...a.actions[0]?.fields},controller)).rejects.toMatchObject({code:"stale_agent_event"});
 });
 
 it("revokes a removed bot, keeps numbers unique and cancels an outstanding wait", async () => {
@@ -108,4 +109,25 @@ it("enforces the site guest policy on joins, actions and reconnects", async () =
   await expect(svc.botWait(lobby.id,player.key,0,0)).rejects.toMatchObject({status:403});
   await expect(svc.botAct(lobby.id,player.key,123,{type:"ready"})).rejects.toMatchObject({status:403});
   await expect(svc.joinBot(lobby.url,opts)).rejects.toMatchObject({status:403});
+});
+
+it("admits a friend's authenticated player in accounts-only mode and binds the seat to their token", async () => {
+  const owner = (await signUp(test, "owner")).user;
+  const friend = (await signUp(test, "friend")).user;
+  const { auth, lobbies, env } = test.services;
+  const controller = (await auth.createToken(friend.id, "Player", "player")).token.id;
+  const organizer = (await auth.createToken(friend.id, "Organizer", "organizer")).token.id;
+  const lobby = await lobbies.create(owner, { config: presetDocument(ticTacToe, ticTacToe.presets[0]) });
+  env.provisionedAccountsOnly = true;
+  const options = { name: "Рин", attempt: randomString(40) };
+  await expect(lobbies.joinBot(lobby.url, options)).rejects.toMatchObject({ status: 403 });
+  await expect(lobbies.joinBot(lobby.url, options, friend, organizer)).rejects.toMatchObject({ status: 403 });
+  await expect(lobbies.joinBot(lobby.url, options, owner, controller)).rejects.toMatchObject({ status: 403 });
+
+  const player = await lobbies.joinBot(lobby.url, options, friend, controller);
+  const event = await lobbies.botWait(lobby.id, player.key, 0, 0, undefined, controller);
+  expect(event.event?.kind).toBe("waiting");
+  await expect(lobbies.botWait(lobby.id, player.key, 0, 0)).rejects.toMatchObject({ status: 403 });
+  await auth.revokeToken(friend.id, controller);
+  await expect(lobbies.botWait(lobby.id, player.key, 0, 0, undefined, controller)).rejects.toMatchObject({ status: 403 });
 });

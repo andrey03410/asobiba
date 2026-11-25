@@ -1,5 +1,6 @@
 import { kanameEnabled } from "@kaname/service-client";
 import { grantForUser } from "../kaname";
+import { PLAYER_TOKEN_PREFIX } from "../auth/service";
 import type { BotOptions, BotDifficulty, ConfigDto, CreateLobbyRequest, LobbyAgentAssignment, LobbyAgentCommand, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
 import { quizorCanUseAgentPresenter, quizorCanUseAlgorithm, type QuizorRules } from "@asobiba/game-quizor";
@@ -400,23 +401,30 @@ export class LobbyService {
     });
   }
 
-  private async authorizeBot(ownerAuthorized: boolean, hostId: string) {
-    if (ownerAuthorized) {
-      if (kanameEnabled()) await grantForUser(this.deps.db, hostId);
-    } else if (kanameEnabled() ? process.env.KANAME_GUESTS !== "1" : this.deps.env.provisionedAccountsOnly) {
-      throw forbidden("Гостевой вход отключён");
+  private async authorizeBot(controllerId?: string, actorId?: string) {
+    if (!controllerId) {
+      if (actorId || (kanameEnabled() ? process.env.KANAME_GUESTS !== "1" : this.deps.env.provisionedAccountsOnly))
+        throw forbidden("Для входа нужен личный игровой токен");
+      return;
     }
+    // mcpIdentity has verified the actual account and its current Kaname assignment.
+    // Recheck local token ownership, scope and revocation, including on a resumed long poll.
+    const token = await this.deps.db.apiToken.findUnique({ where: { id: controllerId },
+      select: { userId: true, revokedAt: true, prefix: true, kanameToken: true } });
+    if (!token || token.revokedAt || !token.prefix.startsWith(PLAYER_TOKEN_PREFIX) ||
+      token.kanameToken !== kanameEnabled() || (actorId && token.userId !== actorId))
+      throw forbidden("Игровой токен недействителен");
   }
 
-  joinBot(link: string, input: BotOptions & { attempt: string }, owner?: UserDto, controllerId?: string) {
+  joinBot(link: string, input: BotOptions & { attempt: string }, actor?: UserDto, controllerId?: string) {
     const { lobbyId, invite } = parseBotLink(link, this.deps.env.publicUrl);
     const options = botOptions(input);
     const key = botKey(lobbyId, invite, input.attempt);
     const keyHash = sha256(key);
     return this.lock(lobbyId, async () => {
       const row = await this.loadRow(lobbyId);
-      const ownerAuthorized = owner?.id === row.hostId;
-      await this.authorizeBot(ownerAuthorized, row.hostId);
+      if (controllerId && !actor) throw forbidden("Игровой токен не связан с аккаунтом");
+      await this.authorizeBot(controllerId, actor?.id);
       if (row.status === "closed") throw conflict("closed", "Лобби закрыто");
       const existing = await this.deps.db.lobbyMember.findUnique({ where: { botKeyHash: keyHash } });
       let userId: string;
@@ -432,13 +440,13 @@ export class LobbyService {
           if (!reserved) throw conflict("invalid_bot_invite", "Приглашение на место уже использовано или отменено");
           const claimed = await this.deps.db.lobbyMember.updateMany({
             where: { lobbyId, userId: reserved.userId, botInviteHash: sha256(invite), botKeyHash: null, role: "player" },
-            data: { botKeyHash: keyHash, botInviteHash: null, botOwnerAuthorized: ownerAuthorized, botControllerId: controllerId },
+            data: { botKeyHash: keyHash, botInviteHash: null, botControllerId: controllerId },
           });
           if (!claimed.count) throw conflict("invalid_bot_invite", "Приглашение на место уже использовано");
           userId = reserved.userId;
         } else {
           this.requireCapacity(row);
-          const member = await this.deps.db.$transaction(tx => insertBot(tx, lobbyId, options, { botKeyHash: keyHash, botOwnerAuthorized: ownerAuthorized, botControllerId: controllerId }));
+          const member = await this.deps.db.$transaction(tx => insertBot(tx, lobbyId, options, { botKeyHash: keyHash, botControllerId: controllerId }));
           userId = member.userId;
         }
       }
@@ -453,10 +461,10 @@ export class LobbyService {
   /** A bearer has authority over exactly one seat. Its durable identity has no browser session. */
   private async botMember(lobbyId: string, key: string, controllerId?: string) {
     const member = await this.deps.db.lobbyMember.findUnique({ where: { botKeyHash: sha256(key) },
-      include: { lobby: { select: { status: true, hostId: true } } } });
+      include: { lobby: { select: { status: true } } } });
     if (!member || member.lobbyId !== lobbyId || member.role !== "player" || member.botControllerId !== (controllerId ?? null) || member.lobby.status === "closed")
       throw forbidden("Игровое подключение недействительно");
-    await this.authorizeBot(member.botOwnerAuthorized, member.lobby.hostId);
+    await this.authorizeBot(controllerId);
     return member;
   }
 

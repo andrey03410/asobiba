@@ -146,7 +146,6 @@ model LobbyMember {
   botDifficulty String?
   botInviteHash String? @unique
   botKeyHash String? @unique
-  botOwnerAuthorized Boolean @default(false)
   botControllerId String?
   joinedAt DateTime @default(now())
   lobby    Lobby    @relation(fields: [lobbyId], references: [id], onDelete: Cascade)

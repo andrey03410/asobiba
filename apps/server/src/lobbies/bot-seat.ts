@@ -40,7 +40,7 @@ export function botKey(lobbyId: string, invite: string | undefined, attempt: str
 }
 
 export async function insertBot(tx: Prisma.TransactionClient, lobbyId: string, options: Required<BotOptions>,
-  credentials: { botInviteHash?: string; botKeyHash?: string; botOwnerAuthorized?: boolean; botControllerId?: string }) {
+  credentials: { botInviteHash?: string; botKeyHash?: string; botControllerId?: string }) {
   const previous = await tx.lobbyMember.aggregate({ where: { lobbyId }, _max: { botNumber: true } });
   const id = newId("usr");
   await tx.user.create({ data: { id, login: `@bot:${id}`, displayName: options.name, role: "guest" } });
