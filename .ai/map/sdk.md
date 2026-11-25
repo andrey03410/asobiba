@@ -161,3 +161,9 @@ skippedRounds — не запущенные. Исчерпание бюджета
 - [задача 07](../features/07-video-games/README.md) — контракт видео `GameVideoSupport`, `VideoDirective`, `videoKey`
 
 - [задача 08](../features/08-jinchi-playtest/README.md) — безопасные info/tuning/summary, hooks поиска действия и HUD результата
+
+## Действия ИИ за игровым местом
+
+`GameDefinition.playerActions` строит формы ввода из проекции конкретного места. `playerView` позволяет исключить техническую предзагрузку клиента, `compactPlayerView` сокращает передачу большого представления. Сервер вызывает `Match.dispatchPlayer` для хода ИИ, а серия и игра проверяют обычные ограничения. Игровые права и типы действий ведущего отделены от места. Пример свободного ввода — слово в Русском поле, закрытого одновременного выбора — карта в Ёмифуде.
+
+[Контракт игр](../../packages/sdk/src/game.ts) · [Матч](../../packages/sdk/src/match.ts)

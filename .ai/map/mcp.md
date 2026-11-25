@@ -6,14 +6,14 @@
 
 ## Где код
 
-- [`apps/server/src/mcp/routes.ts`](../../apps/server/src/mcp/routes.ts) — `POST /mcp`: токен `Authorization: Bearer asb_…` → новый `McpServer` и `StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })` на каждый запрос. `GET`/`DELETE` — 405. Без токена — 401 с `WWW-Authenticate`.
-- [`server.ts`](../../apps/server/src/mcp/server.ts) — `createMcpServer(user, services)`: 27 инструментов, ошибки `HttpError` превращаются в `isError` с `{ error, issues }`.
+- [`apps/server/src/mcp/routes.ts`](../../apps/server/src/mcp/routes.ts) — `POST /mcp`: токен `Authorization: Bearer asb_…` → новый `McpServer` и `StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })` на каждый запрос. `GET`/`DELETE` — 405. Без токена доступен гостевой игровой профиль. Некорректный или отозванный токен возвращает 401.
+- [`server.ts`](../../apps/server/src/mcp/server.ts) — `createMcpServer(user, services)`: организаторские инструменты, ошибки `HttpError` превращаются в `isError` с `{ error, issues }`.
 - [`instructions.ts`](../../apps/server/src/mcp/instructions.ts) — инструкция `initialize` (меньше 3 КБ) и `TOOL_NAMES`.
 - [`.mcp.json`](../../.mcp.json) — подключение для Claude Code: `http://localhost:8787/mcp` с `${ASOBIBA_MCP_TOKEN}`.
 
 ## Как устроено
 
-- Инструменты:
+- Инструменты организатора:
   - `games_list`, `game_capabilities(gameId)` — info, tuning-направления, примеры запросов, схема, руководства, слоты, темы, каталог, пресеты целиком;
   - `jinchi_generate(request, title?, info?)` — детерминированная генерация, сохранённый configId, summary и diagnostics;
   - `config_validate`, `config_simulate(config, rounds?)` (до 200 раундов, синхронно), `config_preview(config, moment?, seed?, target?)` — PNG 768 px шириной как MCP-картинка плюс текст с итогом раунда;
@@ -22,7 +22,7 @@
   - `asset_list`, `asset_create_svg(name, svg)`, `asset_import_url(url, name?)`, `asset_upload_begin(name)` → `{ uploadUrl, method: "PUT", expiresAt, example }`;
   - `lobby_create({name?, configId | config})` → `{ lobby: { id, url, … } }`, `lobby_list`, `lobby_get` (состав и счёт без ходов), `lobby_close` (только хозяин). Если имя не передано, используется заголовок конфига.
 - Симуляция и превью сначала проверяют конфиг и отвечают ошибкой с `issues`, если он невалиден.
-- Каждый вызов заново ищет пользователя по токену (`lastUsedAt` обновляется не чаще раза в минуту). Отозванный токен — 401.
+- Для аутентифицированного запроса сервер заново ищет пользователя по токену (`lastUsedAt` обновляется не чаще раза в минуту). Отозванный токен — 401.
 - Гость не получает MCP-токены: HTTP-кабинет и выпуск требуют аккаунта; `AuthService.createToken` также запрещает гостя, `userByToken` исключает роль guest. Лобби, созданное агентом аккаунта, использует ту же ссылку для гостевого входа друзей.
 - Ссылки (`url` лобби, `uploadUrl`) строятся от `PUBLIC_URL`.
 
@@ -119,3 +119,11 @@ PNG-превью — независимая учебная сцена, оно н
 - [задача 07](../features/07-video-games/README.md) — инструменты `video_snapshot_*`
 
 - [задача 08](../features/08-jinchi-playtest/README.md) — agent-first info, jinchi_generate и compact configId проверки
+
+## Игровой профиль и гостевая ссылка
+
+Для игры по гостевой ссылке подключите обычный адрес MCP без заголовка Authorization и передайте агенту URL лобби. Агент вызывает `agent_prepare_join`, сохраняет идентификатор попытки, вызывает `agent_join_by_link` с именем и затем `agent_wait` / `agent_act` с ключом места. При повторе входа используется тот же идентификатор попытки. Номер события защищает от запоздавшего и дублированного хода. Уровни — low, medium, high, maximum. Средний применяется по умолчанию.
+
+Для создания вслепую подключите отдельный токен игрока из кабинета. Вызов `lobby_create` принимает configId или preset и поручение player. Для игры в этом чате используйте `agent_attach`, для другого чата передайте адресное приглашение. Публичная ссылка подходит для остальных свободных мест. Игровой профиль даёт справку без исходника вопросов и пресетов. Управление исходниками и ведущим доступно через отдельное подключение организатора. Для игры, где чат уже знает ответы, передайте место чистому контексту.
+
+[Игровые инструменты](../../apps/server/src/mcp/player.ts) · [Постановка](../features/14-ai-players/product.md)
