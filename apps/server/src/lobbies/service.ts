@@ -12,7 +12,7 @@ import type { Env } from "../env";
 import { quizorMediaRefs, yomifudaMediaRefs } from "../games/media-refs";
 import { badRequest, conflict, forbidden, notFound } from "../http-errors";
 import { newId, randomSeed, randomString, sha256 } from "../ids";
-import { BOT_INSTRUCTIONS, BOT_LEASE_MS, BotConnection, botKey, botOptions, insertBot, parseBotLink, playerSnapshot, seatProjection } from "./bot-seat";
+import { BOT_INSTRUCTIONS, BOT_LEASE_MS, BotConnection, botKey, botOptions, insertBot, makePlayerHandles, parseBotLink, playerSnapshot, seatProjection } from "./bot-seat";
 import { LobbyAgent, type AgentEvent } from "./agent";
 
 export interface Subscriber {
@@ -120,7 +120,7 @@ export class LobbyService {
         try {
           const seats = last.seatUsers as string[];
           const record: MatchRecord = { seed: last.seed, startedAt: last.startedAt.getTime(), seats: seats.length, log: last.log as unknown as MatchLogEntry[] };
-          const restored = Match.restore({ game, config, record, now: last.finishedAt?.getTime() ?? this.deps.now() });
+          const restored = Match.restore({ game, config, record, now: last.finishedAt?.getTime() ?? this.deps.now(), makePlayerHandle: makePlayerHandles(last.playerHandleSecret) });
           if (restored.currentPhase !== "finished") throw new Error("Saved finished match did not finish during replay");
           match = restored;
         } catch (error) {
@@ -930,7 +930,8 @@ export class LobbyService {
       const now = this.deps.now();
       const seed = randomSeed();
       const seatNames = seatUsers.map((id) => this.memberName(row.members.find((m) => m.userId === id)!));
-      const match = Match.start({ game, config, seats: seatUsers.length, seed, startedAt: now });
+      const playerHandleSecret = randomString(48);
+      const match = Match.start({ game, config, seats: seatUsers.length, seed, startedAt: now, makePlayerHandle: makePlayerHandles(playerHandleSecret) });
       if (aiPresenter && match.currentPhase === "playing") {
         const result = match.dispatchControl("system", { type: "presenter-presence", online: true, requireAssignment: true }, now);
         if (!result.ok) throw conflict(result.error.code, result.error.message);
@@ -939,7 +940,7 @@ export class LobbyService {
       await this.deps.db.$transaction([
         this.deps.db.match.updateMany({ where: { lobbyId, status: "playing" }, data: { status: "aborted", finishedAt: new Date(now) } }),
         this.deps.db.match.create({
-          data: { id: matchId, lobbyId, seed, startedAt: new Date(now), seatUsers, seatNames,
+          data: { id: matchId, lobbyId, seed, playerHandleSecret, startedAt: new Date(now), seatUsers, seatNames,
             log: match.record().log as unknown as Prisma.InputJsonValue, status: "playing",
             ...(aiPresenter ? { checkpointAt: new Date(match.checkpointAt) } : {}) },
         }),
@@ -1254,7 +1255,7 @@ export class LobbyService {
           const restoreAt = aiPresenter
             ? Math.max(row.checkpointAt?.getTime() ?? record.startedAt, record.log.at(-1)?.at ?? record.startedAt)
             : this.deps.now();
-          const match = Match.restore({ game, config, record, now: restoreAt });
+          const match = Match.restore({ game, config, record, now: restoreAt, makePlayerHandle: makePlayerHandles(row.playerHandleSecret) });
           Object.assign(room, { match, matchId: row.id, seatUsers, seatNames: row.seatNames as string[], finishedSaved: false, presence: null, presenterOnline: null });
           room.agentCheckpointAt = row.checkpointAt?.getTime() ?? null;
           if (room.agentAssignment) await this.dropAgent(room, restoreAt);

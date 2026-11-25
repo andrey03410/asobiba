@@ -91,7 +91,7 @@ function decide(game, event) {
   }
   if (game === "quizor") {
     if (has("answer") && view.prompt.includes("два плюс два")) {
-      return { type: "answer", questionId: view.questionId, answers: { sum: "4" } };
+      return { type: "answer", questionId: view.questionId, answers: { [view.fields[0].id]: "4" } };
     }
     if (has("ready")) return { type: "ready", phase: view.phase, ...(view.questionId ? { questionId: view.questionId } : {}) };
   }

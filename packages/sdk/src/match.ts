@@ -1,3 +1,4 @@
+import { PlayerHandles } from "./player-handles";
 import type { ConfigDocument } from "./config";
 import { type AnyGame, type ControlRole, type GameContext, isActionError, type RoundResult, type Seat, type SeriesProgress } from "./game";
 import { createRng, type Rng } from "./rng";
@@ -63,6 +64,7 @@ export interface MatchView<PV = unknown> {
 export type DispatchResult = { ok: true } | { ok: false; error: { code: string; message: string } };
 
 export interface StartOptions {
+  makePlayerHandle?: (seat: Seat, scope: string, value: string) => string;
   game: AnyGame;
   config: ConfigDocument;
   seats: number;
@@ -100,7 +102,24 @@ export class Match {
   private pauseState: MatchPause | null = null;
   private clockShiftMs = 0;
 
+  private readonly makePlayerHandle?: StartOptions["makePlayerHandle"];
+  private readonly seatHandles = new Map<Seat, PlayerHandles>();
+
+  private handlesFor(seat: Seat): PlayerHandles {
+    const known = this.seatHandles.get(seat);
+    if (known) return known;
+    const generate = this.makePlayerHandle;
+    const handles = new PlayerHandles(generate && ((scope, value) => generate(seat, scope, value)));
+    this.seatHandles.set(seat, handles);
+    return handles;
+  }
+
+  projectPlayerView(seat: Seat, view: MatchView, gameTime: number): unknown {
+    return this.game.playerView?.(view.game, seat, gameTime, this.handlesFor(seat)) ?? view.game;
+  }
+
   private constructor(options: StartOptions) {
+    this.makePlayerHandle = options.makePlayerHandle;
     this.game = options.game;
     this.config = options.config;
     this.seats = options.seats;
@@ -125,9 +144,9 @@ export class Match {
   }
 
   /** Rebuilds a match from its record and advances it to `now`. */
-  static restore(options: { game: AnyGame; config: ConfigDocument; record: MatchRecord; now: number }): Match {
+  static restore(options: { game: AnyGame; config: ConfigDocument; record: MatchRecord; now: number; makePlayerHandle?: StartOptions["makePlayerHandle"] }): Match {
     const { record } = options;
-    const match = Match.start({ game: options.game, config: options.config, seats: record.seats, seed: record.seed, startedAt: record.startedAt });
+    const match = Match.start({ game: options.game, config: options.config, seats: record.seats, seed: record.seed, startedAt: record.startedAt, makePlayerHandle: options.makePlayerHandle });
     for (const entry of record.log) {
       let res: DispatchResult;
       if (entry.pauseReason !== undefined) res = match.setPaused(entry.pauseReason, entry.at);
@@ -202,10 +221,10 @@ export class Match {
     if (this.pauseState) return fail("paused", "Партия на паузе");
     if (this.phase === "intermission") return fail("intermission", "Пауза между раундами");
     const input = mcpPlayer && this.game.preparePlayerAction
-      ? this.game.preparePlayerAction(rawAction, this.game.view(this.state, seat), this.gameClock)
+      ? this.game.preparePlayerAction(rawAction, this.game.view(this.state, seat), this.gameClock, this.handlesFor(seat))
       : rawAction;
     const parsed = this.game.actionSchema.safeParse(input);
-    if (!parsed.success) return fail("bad_action", parsed.error.issues[0]?.message ?? "Неверное действие");
+    if (!parsed.success) return fail("bad_action", mcpPlayer ? "Недоступное действие игрока" : parsed.error.issues[0]?.message ?? "Неверное действие");
     if (this.game.kind === "turn" && !this.game.currentSeats(this.state).includes(seat)) {
       return fail("not_your_turn", "Сейчас не ваш ход");
     }

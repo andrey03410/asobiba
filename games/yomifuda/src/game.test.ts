@@ -299,3 +299,15 @@ it("offers only cards from this seat, including simultaneous personal choices", 
     expect(yomifuda.playerActions(view, 2)).toEqual([]);
   }
 });
+
+it("keeps author-supplied card and attribute IDs private and plays by the handed-out handle", () => {
+  const config = presetDocument(yomifuda, yomifuda.presets[0]);
+  const match = Match.start({game: yomifuda, config, seats: yomifuda.seats(config.rules as YomifudaRules).min, seed: 42, startedAt: 100});
+  const raw = match.view(0);
+  const original = raw.game as ReturnType<typeof yomifuda.view>;
+  const ai = match.projectPlayerView(0, raw, 100) as typeof original;
+  expect(ai.attribute.id).not.toBe(original.attribute.id);
+  expect(ai.hand[0].id).not.toBe(original.hand[0].id);
+  expect(match.dispatchPlayer(0, { type: "play", round: ai.round, cardId: original.hand[0].id }, 100).ok).toBe(false);
+  expect(match.dispatchPlayer(0, { type: "play", round: ai.round, cardId: ai.hand[0].id }, 100).ok).toBe(true);
+});

@@ -1,6 +1,6 @@
 import type { BotDifficulty, BotOptions } from "@asobiba/api";
 import type { Match, PlayerActionForm } from "@asobiba/sdk";
-import { randomInt } from "node:crypto";
+import { createHmac, randomInt } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { badRequest, conflict } from "../http-errors";
 import { newId, sha256 } from "../ids";
@@ -56,15 +56,25 @@ interface Snapshot {
   actions: PlayerActionForm[];
 }
 
+/** Only the derived handle goes to the player. The match secret lives outside the public log and replay seed. */
+export function makePlayerHandles(secret: string | null) {
+  if (!secret) return undefined;
+  return (seat: number, scope: string, value: string) =>
+    createHmac("sha256", secret).update(JSON.stringify([seat, scope, value])).digest("base64url").slice(0, 24);
+}
+
 export function seatProjection(match: Match, seat: number) {
   const matchView = match.view(seat);
   const now = (matchView.pause?.since ?? match.checkpointAt) - (matchView.clockShiftMs ?? 0);
-  const game = match.game.playerView?.(matchView.game, seat, now) ?? matchView.game;
+  const game = match.projectPlayerView(seat, matchView, now);
   return { matchView, game, now };
 }
 
 export function playerSnapshot(match: Match | null, matchId: string | null, seat: number | null, names: string[], lobbyState: unknown): Snapshot {
   if (!match || seat === null) return { kind: "waiting", matchId, seat: null, state: lobbyState, actions: [] };
+  if (match.pause) return { kind: "paused", matchId, seat, actions: [], state: {
+    phase: "paused", pause: match.pause, gameId: match.game.id, seatNames: names, lobby: lobbyState,
+  } };
   const { matchView: view, game } = seatProjection(match, seat);
   const playing = !view.pause && view.phase === "playing" && (match.game.kind === "realtime" || view.currentSeats.includes(seat));
   const actions = playing ? match.game.playerActions(game, seat) : [];

@@ -1,3 +1,5 @@
+import { PlayerHandles } from "@asobiba/sdk";
+import { decodeQuizorAction, encodeQuizorIds } from "./player-ids";
 import { blockProgress, visibleBlockText } from "./block-presentation";
 import { blockDuration, type Block } from "./rules";
 import type { PlayerActionForm } from "@asobiba/sdk";
@@ -9,7 +11,9 @@ function answerInput(field: PublicField): Record<string, unknown> {
     case "text": return { type: "string", maxLength: field.maxLength };
     case "number": return { type: "number", minimum: field.min, maximum: field.max };
     case "oral": return { const: true, description: "Подтвердить устный ответ" };
-    case "choice": return { enum: ids(field.options) };
+    case "choice": return field.pick === "frame"
+      ? { type: "string", description: "Получите текущий кадр через agent_media и выберите handle видимой области." }
+      : { enum: ids(field.options) };
     case "multi": return { type: "array", items: { enum: ids(field.options) }, uniqueItems: true, maxItems: field.maxSelected };
     case "order": return { type: "array", items: { enum: ids(field.items) }, uniqueItems: true, minItems: field.items?.length, maxItems: field.items?.length };
     case "list": return { type: "array", items: { type: "string" }, maxItems: field.maxItems };
@@ -80,26 +84,40 @@ function presentedBlocks(blocks: Block[], index: number, startedAt: number, now:
   });
 }
 
-export function quizorPlayerView(view: QuizorView, _seat: number, gameTime = view.serverNow): QuizorView {
+export function quizorPlayerView(view: QuizorView, _seat: number, gameTime = view.serverNow, handles = new PlayerHandles()): QuizorView {
   // Browser caches may contain future files. History renders the prompt, reference, answers and corrections only.
   const { preload, videoPreload, presenterNotes, agentTask, ...visible } = view;
   const now = view.paused ? view.serverNow : gameTime;
-  return {
-    ...visible, controls: [],
+  return encodeQuizorIds({
+    ...visible, controls: [], board: view.phase === "board" ? view.board : [],
     blocks: presentedBlocks(view.blocks, view.blockIndex, view.blockStartedAt ?? now, now),
     reveal: presentedBlocks(view.reveal, view.revealIndex ?? 0, view.revealBlockStartedAt ?? view.revealStartedAt ?? view.serverNow, now),
     history: view.history.map(h => ({ ...h, blocks: [], fields: [], reveal: [] })),
     fields: (view.phase === "answer" || view.phase === "show") && (view.canAnswer || view.ownAnswer !== null) ? view.fields : [],
-  };
+  }, view, handles);
 }
 
 /** Scene selection and cue IDs are server rendering details. The MCP client requests the current fragment by key. */
 export function quizorPlayerWireView(view: QuizorView): unknown {
-  return { ...view, video: view.video ? { key: view.video.key, startedAt: view.video.startedAt } : null };
+  let appeal = null;
+  if (view.appeal) {
+    const { votes, ...details } = view.appeal;
+    appeal = { ...details, voteCount: Object.keys(votes).length, ownVote: votes[String(view.seat)] ?? null };
+  }
+  const fields = view.fields.map(field => {
+    if (field.pick === "frame") return { ...field, options: [] };
+    const options = field.options?.map(({ card, ...option }) => option);
+    const items = field.items?.map(({ card, ...item }) => item);
+    const left = field.left?.map(({ id, text, asset, media }) => ({ id, text, asset, media }));
+    const right = field.right?.map(({ id, text, asset, media }) => ({ id, text, asset, media }));
+    return { ...field, ...(options && { options }), ...(items && { items }), ...(left && { left }), ...(right && { right }) };
+  });
+  return { ...view, fields, appeal, video: view.video ? { key: view.video.key, startedAt: view.video.startedAt } : null };
 }
 
-export function prepareQuizorPlayerAction(action: unknown, view: QuizorView, gameTime: number): unknown {
-  if (typeof action !== "object" || !action || !("type" in action) || action.type !== "buzz") return action;
+export function prepareQuizorPlayerAction(action: unknown, view: QuizorView, gameTime: number, handles: PlayerHandles): unknown {
+  if (typeof action !== "object" || !action || Array.isArray(action)) return null;
+  if (!("type" in action) || action.type !== "buzz") return decodeQuizorAction(action as Record<string, unknown>, view, handles);
   const elapsed = view.answerOpenedAt === null || view.answerOpenedAt === undefined ? 0 : gameTime - view.answerOpenedAt;
   return { ...action, reactionMs: Math.min(86_400_000, Math.max(0, elapsed)) };
 }

@@ -1,4 +1,4 @@
-import { actionError, defineGame, seriesSchema, type GameContext, type RoundResult } from "@asobiba/sdk";
+import { PlayerHandles, actionError, defineGame, seriesSchema, type GameContext, type RoundResult } from "@asobiba/sdk";
 import { z } from "zod";
 import { YOMIFUDA_GUIDE } from "./guide";
 import { YOMIFUDA_INFO, YOMIFUDA_PROMPT_EXAMPLES, YOMIFUDA_TUNING, summarizeYomifudaConfig } from "./information";
@@ -35,6 +35,7 @@ export interface YomifudaView {
   totalRounds: number;
   seat: number | null;
   attribute: YomifudaAttribute;
+  attributes?: YomifudaAttribute[];
   hand: PublicCard[];
   players: { seat: number; score: number; handCount: number; played: boolean; ready: boolean }[];
   table: YomifudaTableCard[];
@@ -156,6 +157,7 @@ function view(s: YomifudaState, seat: number | null): YomifudaView {
   return {
     phase: s.phase, round: s.round, totalRounds: s.cards.length / s.hands.length, seat: own,
     attribute: { ...s.rules.attributes.find((a) => a.id === s.attributeId)! },
+    attributes: s.rules.attributes.map(a => ({ ...a })),
     hand: own === null ? [] : s.hands[own].map((id) => publicCard(s.cards.find((c) => c.id === id)!)),
     players: s.hands.map((hand, seat) => ({ seat, score: s.scores[seat], handCount: hand.length, played: s.chosen[seat] !== null, ready: s.ready[seat] })),
     table, stockCount: s.drawPile.length, choiceStartedAt: s.choiceStartedAt,
@@ -192,6 +194,21 @@ export const yomifuda = defineGame<YomifudaRules, YomifudaVisual, YomifudaState,
   turnBudgetSeconds: () => 0,
   timeoutPolicy: "skip",
   legalActions: (s, seat) => canPlay(s, seat) ? s.hands[seat].map((cardId) => ({ type: "play", round: s.round, cardId })) : canReady(s, seat) ? [{ type: "ready", round: s.round }] : [],
+  playerView: (view, _seat, _now, handles = new PlayerHandles()) => {
+    const card = <T extends PublicCard>(entry: T): T => ({ ...entry, id: handles.issue("card", entry.id) });
+    const attribute = (item: YomifudaAttribute) => ({ ...item, id: handles.issue("attribute", item.id) });
+    return { ...view, attribute: attribute(view.attribute), attributes: view.attributes?.map(attribute),
+      hand: view.hand.map(card), table: view.table.map(item => item.hidden ? item : { ...item, card: card(item.card) }),
+      ...(view.finalDeck && { finalDeck: view.finalDeck.map(entry => ({ ...card(entry),
+        values: Object.fromEntries(Object.entries(entry.values).map(([id, value]) => [handles.issue("attribute", id), value])),
+      })) }),
+    };
+  },
+  preparePlayerAction: (action, view, _now, handles) => {
+    if (!action || typeof action !== "object" || !("type" in action) || action.type !== "play") return action;
+    const cardId = "cardId" in action ? handles.resolve("card", action.cardId, view.hand.map(card => card.id)) : undefined;
+    return cardId === undefined ? null : { ...action, cardId };
+  },
   playerActions: (view, seat) => {
     if (view.seat !== seat) return [];
     if (view.canReady) return [{ type: "ready", fields: { round: view.round } }];
