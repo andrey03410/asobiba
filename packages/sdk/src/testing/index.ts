@@ -27,12 +27,13 @@ export const raceGame = defineGame({
   kind: "turn",
   rulesSchema: raceRules,
   visualSchema: z.strictObject({}).prefault({}),
-  actionSchema: z.strictObject({ add: z.union([z.literal(1), z.literal(2)]) }),
+  actionSchema: z.strictObject({ type: z.literal("add").optional(), add: z.union([z.literal(1), z.literal(2)]) }),
   seats: (rules) => ({ min: rules.players, max: rules.players }),
   checkRules: (rules) => (rules.target < rules.players ? [{ path: "target", code: "too_small", message: "target меньше числа игроков" }] : []),
   setup: ({ firstSeat }): RaceState => ({ total: 0, turn: firstSeat, moves: 0, firstSeat, winner: null }),
   currentSeats: (s: RaceState) => (s.winner === null ? [s.turn] : []),
   turnId: (s: RaceState) => s.moves,
+  playerActions: (view: RaceState, seat) => view.turn === seat && view.winner === null ? [{ type: "add", fields: { add: { enum: [1, 2] } } }] : [],
   legalActions: () => [{ add: 1 as const }, { add: 2 as const }],
   applyAction: (s: RaceState, seat, action, ctx) => {
     if (s.winner !== null) return actionError("finished", "Раунд окончен");
@@ -72,7 +73,7 @@ export const driftGame = defineGame({
   tickRate: 10,
   rulesSchema: driftRules,
   visualSchema: z.strictObject({}).prefault({}),
-  actionSchema: z.strictObject({ speed: z.int().min(0).max(5) }),
+  actionSchema: z.strictObject({ type: z.literal("steer").optional(), speed: z.int().min(0).max(5) }),
   seats: (rules) => ({ min: rules.players, max: rules.players }),
   setup: ({ seats }): DriftState => ({
     positions: Array.from({ length: seats }, () => 0),
@@ -80,6 +81,7 @@ export const driftGame = defineGame({
     winner: null,
   }),
   currentSeats: () => [],
+  playerActions: () => [{ type: "steer", fields: { speed: { type: "integer", minimum: 0, maximum: 5 } } }],
   legalActions: () => [{ speed: 1 }, { speed: 3 }, { speed: 5 }],
   applyAction: (s: DriftState, seat, action) => {
     const speeds = [...s.speeds];

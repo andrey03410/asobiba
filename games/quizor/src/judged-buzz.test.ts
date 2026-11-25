@@ -223,3 +223,22 @@ describe("Judged buzzer attempt lifecycle", () => {
     });
   });
 });
+
+it("measures AI buzzes on the match clock even with a supplied reaction", () => {
+  const match = start("algorithm");
+  const opened = view(match).answerOpenedAt!;
+  expect(match.dispatchPlayer(0, { type: "buzz", reactionMs: 0 }, opened + 375)).toEqual({ok: true});
+  expect(match.record().log.at(-1)?.action).toEqual({type:"buzz", reactionMs:375});
+});
+
+it("reveals timed player text on the same clock as the board, without preloads or duplicate history media", () => {
+  const m = start("algorithm");
+  const source = { ...view(m), phase: "show" as const, blockIndex: 0, blockStartedAt: 1000,
+    blocks: [{ type: "group" as const, blocks: [{ type: "text" as const, text: "Первая вторая секрет", effect: "words" as const, effectSeconds: 3 }] }],
+    preload: [{ type: "image" as const, asset: "future-asset" }],
+  };
+  const early = quizor.playerView!(source, 0, 1900);
+  expect(early.blocks[0]?.blocks?.[0]?.text).toBe("Первая");
+  expect(JSON.stringify(early)).not.toContain("future-asset");
+  expect(quizor.playerView!(source, 0, 4500).blocks[0]?.blocks?.[0]?.text).toBe("Первая вторая секрет");
+});

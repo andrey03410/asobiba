@@ -1,3 +1,4 @@
+import { blockProgress, visibleBlockText } from "../block-presentation";
 import {
   Fragment,
   useEffect,
@@ -270,14 +271,7 @@ function Content({
   startedAt,
   ...props
 }: Props & { block: Block; active: boolean }) {
-  const progress = Math.max(
-    0,
-    Math.min(
-      1,
-      (now - startedAt) /
-        ((block.effectSeconds ?? blockDuration(block) / 1000) * 1000 || 1),
-    ),
-  );
+  const progress = blockProgress(block, now, startedAt);
   // A Douga scene plays on the board's video stage, not inside the block list.
   if (block.type === "scene") return null;
   if (block.type === "group")
@@ -296,21 +290,7 @@ function Content({
       </div>
     );
   if (block.type === "text") {
-    const words = (block.text ?? "").split(/\s+/);
-    const text =
-      block.effect === "words"
-        ? words
-            .slice(0, Math.max(1, Math.ceil(words.length * progress)))
-            .join(" ")
-        : block.effect === "hidden-words"
-          ? words
-              .map((w, i) =>
-                i < Math.ceil(words.length * progress)
-                  ? w
-                  : "▰".repeat(Math.min(w.length, 7)),
-              )
-              .join(" ")
-          : (block.text ?? "");
+    const text = visibleBlockText(block, progress);
     return (
       <div
         className={`qz-text qz-text-${block.size ?? "normal"}`}

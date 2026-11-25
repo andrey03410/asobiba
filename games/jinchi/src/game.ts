@@ -1,3 +1,4 @@
+import { packJinchiView } from "./wire";
 import { actionError, defineGame, type GameContext, type RoundResult } from "@asobiba/sdk";
 import { z } from "zod";
 import { JINCHI_GUIDE } from "./guide";
@@ -415,6 +416,26 @@ export const jinchi = defineGame({
     const impossibleRoll = Boolean(state.dice && !state.result && !hasPlacement(state));
     return { ...state, canAct, impossibleRoll, canRotate: !state.turnRotationLocked, canReroll: canAct && canReroll(state), canSkip: canAct && impossibleRoll && canReroll(state) };
   },
+  playerActions: (view: JinchiView, seat) => {
+    if (view.currentSeat !== seat || !view.canAct) return [];
+    if (!view.dice) return [{ type: "roll" }];
+    // List a bounded sample and offer free coordinates for every other legal anchor.
+    const anchors = findPlacements(view, seat, undefined, 12);
+    return [
+      ...anchors.map(({ type, ...fields }) => ({ type, fields })),
+      ...(anchors.length === 12 ? [{ type: "place", fields: {
+        x: { type: "integer", minimum: 0, maximum: view.width - 1 },
+        y: { type: "integer", minimum: 0, maximum: view.height - 1 },
+        rotated: view.canRotate ? { type: "boolean" } : false,
+      }, description: "Любая допустимая позиция прямоугольника по правилам размещения." }] : []),
+      ...(view.canReroll ? [{ type: "reroll" }] : []),
+      ...(view.canSkip ? [{ type: "skip-impossible" }] : []),
+    ];
+  },
+  compactPlayerView: (view: JinchiView) => view.area > 2_500 ? {
+    boardEncoding: "Поля идут по строкам. # — стена, . — пусто, 1–8 — место плюс один. runs: длина в системе 36, двоеточие, символ и точка с запятой.",
+    ...packJinchiView(view) as object,
+  } : view,
   info: JINCHI_INFO, tuning: JINCHI_TUNING, promptExamples: JINCHI_PROMPT_EXAMPLES, examplePresetId: "duel",
   summarizeConfig: summarizeJinchiConfig,
   guide: JINCHI_GUIDE, presets: JINCHI_PRESETS, slots: [], themes: [],

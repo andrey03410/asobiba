@@ -7,7 +7,7 @@ config_probe принимает массив Answers и объясняет оц�
 Режимы: secret (все тайно), buzz (честная кнопка), chooser (выбравший), turns (по очереди).
 Адресат: all,chooser,turn,owner,random,leader,trailing,presenter. По умолчанию all и secret.
 Судьи: algorithm,presenter,assisted,vote,best,self. ai зарезервирован: проверка сейчас запрещает его.
-Устному oral нужен человек (presenter/vote/self/assisted); эталон в reference.
+Устный oral оценивает ведущий, сам игрок или участники по правилам presenter/vote/self/assisted; эталон в reference.
 Текст: answers/wrong — {text,grade,keywords,strictness,comment}; wrong всегда раньше answers.
 strictness literal/exact/strict/normal/soft, text.wordOrder/text.numbers управляют нормализацией.
 Оценки grades: {id,label,fraction,points,correct}; fraction умножается на value, points фиксированы.

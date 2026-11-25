@@ -1,3 +1,4 @@
+import { prepareQuizorPlayerAction, quizorPlayerActions, quizorPlayerView, quizorPlayerWireView } from "./player";
 import {
   actionError,
   defineGame,
@@ -3680,6 +3681,10 @@ export const quizor = defineGame<
     `${s.phase}:${s.active?.question.id ?? s.roundId}:${s.blockIndex}:${s.answering ?? ""}`,
   turnBudgetSeconds: () => 0,
   timeoutPolicy: "skip",
+  playerActions: quizorPlayerActions,
+  playerView: quizorPlayerView,
+  compactPlayerView: quizorPlayerWireView,
+  preparePlayerAction: prepareQuizorPlayerAction,
   legalActions,
   applyAction,
   applyControl,

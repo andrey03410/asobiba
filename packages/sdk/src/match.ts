@@ -187,12 +187,24 @@ export class Match {
 
   /** Applies a human action. Pending timer and round events up to `at` are processed first. */
   dispatch(seat: Seat, rawAction: unknown, at: number): DispatchResult {
+    return this.dispatchSeat(seat, rawAction, at, false);
+  }
+
+  /** An independently authenticated player capability uses the very same seat rules and log. */
+  dispatchPlayer(seat: Seat, rawAction: unknown, at: number): DispatchResult {
+    return this.dispatchSeat(seat, rawAction, at, true);
+  }
+
+  private dispatchSeat(seat: Seat, rawAction: unknown, at: number, mcpPlayer: boolean): DispatchResult {
     this.advance(Math.max(at, this.wallClock));
     if (seat < 0 || seat >= this.seats || !Number.isInteger(seat)) return fail("bad_seat", "Нет такого места");
     if (this.phase === "finished") return fail("finished", "Партия закончена");
     if (this.pauseState) return fail("paused", "Партия на паузе");
     if (this.phase === "intermission") return fail("intermission", "Пауза между раундами");
-    const parsed = this.game.actionSchema.safeParse(rawAction);
+    const input = mcpPlayer && this.game.preparePlayerAction
+      ? this.game.preparePlayerAction(rawAction, this.game.view(this.state, seat), this.gameClock)
+      : rawAction;
+    const parsed = this.game.actionSchema.safeParse(input);
     if (!parsed.success) return fail("bad_action", parsed.error.issues[0]?.message ?? "Неверное действие");
     if (this.game.kind === "turn" && !this.game.currentSeats(this.state).includes(seat)) {
       return fail("not_your_turn", "Сейчас не ваш ход");

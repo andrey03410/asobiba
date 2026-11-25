@@ -25,6 +25,9 @@ export interface GameCatalog {
 }
 
 export function createCatalog(games: readonly AnyGame[]): GameCatalog {
+  for (const game of games) {
+    if (typeof game.playerActions !== "function") throw new Error(`createCatalog: ${game.id} must define playerActions`);
+  }
   const map = new Map(games.map((g) => [g.id, g]));
   if (map.size !== games.length) throw new Error("createCatalog: duplicate game id");
   return { get: (id) => map.get(id), list: () => [...map.values()] };

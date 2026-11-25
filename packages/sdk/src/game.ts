@@ -104,6 +104,19 @@ export interface AgentRoleInfo {
   example: string;
 }
 
+/** Layout of a player command. Fixed values can be sent as-is, open inputs use JSON Schema. */
+export interface PlayerActionForm {
+  type: string;
+  fields?: Record<string, unknown>;
+  description?: string;
+}
+
+export interface PlayerRoleInfo {
+  role: "player";
+  description: string;
+  example: string;
+}
+
 /** A compact observation derived only from the spectator view. */
 export interface AgentObservation {
   state: unknown;
@@ -183,6 +196,14 @@ export interface GameDefinition<R = unknown, V = unknown, S = unknown, A = unkno
   roundResult(state: S): RoundResult | null;
   /** What a seat (or a spectator, `null`) may see. */
   view(state: S, seat: Seat | null): PV;
+  /** Human-visible input forms. Only a seat projection is available to this callback. */
+  playerActions(view: PV, seat: Seat): PlayerActionForm[];
+  /** Strip transport-only details (e.g. unrevealed media prefetched by a browser). */
+  playerView?(view: PV, seat: Seat, gameTime?: number): PV;
+  /** Transport projection for large boards and opaque rendering handles. */
+  compactPlayerView?(view: PV): unknown;
+  /** Trusted enrichment of an MCP action, e.g. server-measured buzzer reaction. */
+  preparePlayerAction?(action: unknown, view: PV, gameTime: number): unknown;
   /** Secrets for the separately authorized presenter; hosts do not receive this view. */
   presenterView?(state: S): PV;
   /** Whether the remaining work can proceed without the current presenter. */

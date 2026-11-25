@@ -289,3 +289,13 @@ describe("Yomifuda match contract", () => {
     expect(documentSchema(yomifuda).parse({ ...config, series: {} }).series.rounds).toBe(1);
   });
 });
+
+it("offers only cards from this seat, including simultaneous personal choices", () => {
+  const rules = fixture();
+  const state = yomifuda.setup({rules, seats: rules.players, firstSeat: 0, round: 0, rng: createRng(42), now: 0});
+  for (const seat of [0, 1]) {
+    const view = yomifuda.view(state, seat);
+    expect(yomifuda.playerActions(view, seat)).toEqual(view.hand.map(card => ({type:"play", fields:{round:view.round, cardId:card.id}})));
+    expect(yomifuda.playerActions(view, 2)).toEqual([]);
+  }
+});

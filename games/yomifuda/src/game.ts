@@ -192,6 +192,11 @@ export const yomifuda = defineGame<YomifudaRules, YomifudaVisual, YomifudaState,
   turnBudgetSeconds: () => 0,
   timeoutPolicy: "skip",
   legalActions: (s, seat) => canPlay(s, seat) ? s.hands[seat].map((cardId) => ({ type: "play", round: s.round, cardId })) : canReady(s, seat) ? [{ type: "ready", round: s.round }] : [],
+  playerActions: (view, seat) => {
+    if (view.seat !== seat) return [];
+    if (view.canReady) return [{ type: "ready", fields: { round: view.round } }];
+    return view.canPlay ? view.hand.map(card => ({ type: "play", fields: { round: view.round, cardId: card.id } })) : [];
+  },
   applyAction,
   nextWakeAt: (s) => s.phase === "reveal" ? s.revealEndsAt : null,
   wake: (s, ctx) => s.phase === "reveal" && s.revealEndsAt !== null && ctx.now >= s.revealEndsAt ? { ...s, phase: "review" } : s,

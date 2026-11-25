@@ -1,3 +1,4 @@
+import { polePlayerActions } from "./player";
 import { actionError, defineGame, type RoundResult, type Seat } from "@asobiba/sdk";
 import { POLE_INFO, POLE_PROMPT_EXAMPLES, POLE_TUNING, summarizePoleConfig } from "./info";
 import { z } from "zod";
@@ -149,11 +150,15 @@ export interface PoleState {
   oneByOne: boolean;
   attemptsLeft: number;
   letterCap: number;
+  tableRules: Pick<PoleRules, "wheel" | "scoring" | "chests" | "timers"> & { super: Omit<PoleRules["super"], "puzzles"> };
 }
 
 export interface PoleView {
   phase: Phase;
   you: number | null;
+  tableRules?: PoleState["tableRules"];
+  /** Button availability for the acting seat, using its public rules and balance. */
+  input?: { mustSolve: boolean; canBuy: boolean; canSabotage: boolean; canDetect: boolean; capacity: number };
   turn: number;
   wordIndex: number;
   wordCount: number;
@@ -752,6 +757,15 @@ function openChest(state: PoleState, rules: PoleRules, seat: number, index: numb
   return { ...next, phase: "spin", chestGood: null, turnNo: next.turnNo + 1, streak: 0 };
 }
 
+function playingSeats(state: PoleState): number[] {
+  if (state.result || state.phase === "done") return [];
+  if (state.phase === "sk-letters") return state.finalists.filter((seat) => state.chosen[seat] === null);
+  if (state.phase === "sk-sabotage") return state.finalists.filter((seat) => state.sabotage[seat] === null);
+  if (state.phase === "race") return state.finalists.filter((seat) => !state.players[seat]?.out);
+  if (SUPER.has(state.phase)) return state.players[state.turn]?.out ? [] : [state.turn];
+  return inRound(state).includes(state.turn) ? [state.turn] : inRound(state).slice(0, 1);
+}
+
 export const russkoePole = defineGame({
   id: "russkoe-pole",
   version: 1,
@@ -799,6 +813,7 @@ export const russkoePole = defineGame({
       note: "",
       peeks: [],
     }));
+    const { puzzles, ...superRules } = rules.super;
     const blank: PoleState = {
       phase: "spin",
       seats,
@@ -823,6 +838,7 @@ export const russkoePole = defineGame({
       alphabet: alphabetChars(rules.alphabet),
       yoAsYe: rules.alphabet.yoAsYe,
       showCalled: rules.showCalled,
+      tableRules: { wheel: rules.wheel, scoring: rules.scoring, chests: rules.chests, timers: rules.timers, super: superRules },
       clock: { turn: rules.timers.turnSeconds, letters: rules.super.lettersSeconds, answer: rules.super.answerSeconds, race: rules.super.raceSeconds },
       maxSpins: rules.timers.maxSpins,
       livesMax: rules.scoring.lives,
@@ -852,14 +868,7 @@ export const russkoePole = defineGame({
     return say(withWord(blank, rules, 0, firstSeat, rng), "Партия началась");
   },
 
-  currentSeats: (state: PoleState) => {
-    if (state.result || state.phase === "done") return [];
-    if (state.phase === "sk-letters") return state.finalists.filter((seat) => state.chosen[seat] === null);
-    if (state.phase === "sk-sabotage") return state.finalists.filter((seat) => state.sabotage[seat] === null);
-    if (state.phase === "race") return state.finalists.filter((seat) => !state.players[seat]?.out);
-    if (SUPER.has(state.phase)) return state.players[state.turn]?.out ? [] : [state.turn];
-    return inRound(state).includes(state.turn) ? [state.turn] : inRound(state).slice(0, 1);
-  },
+  currentSeats: playingSeats,
 
   turnId: (state: PoleState) => {
     if (state.phase === "sk-letters" || state.phase === "sk-sabotage" || state.phase === "race") return state.phase;
@@ -1152,9 +1161,20 @@ export const russkoePole = defineGame({
     const privateLetters = new Set<string>(state.phase === "race" || state.sabotageOpen ? mine : []);
     for (const item of peeked) for (const letter of item.letters) privateLetters.add(letter);
     const superPhase = SUPER.has(state.phase);
+    const actor = seat !== null && playingSeats(state).includes(seat) ? state.players[seat] : null;
+    const sector = state.sector === null ? null : state.tableRules.wheel[state.sector];
+    const modifiers = state.tableRules.super.modifiers;
     return {
       phase: state.phase,
       you: seat,
+      tableRules: state.tableRules,
+      ...(actor && seat !== null ? { input: {
+        mustSolve: state.phase === "guess" && state.tableRules.scoring.threeGuesses && inRound(state).length === 1 && actor.correct >= 3,
+        canBuy: (state.phase === "letters" || state.phase === "sk-letters") && modifiers.buyLetter && actor.total >= modifiers.buyLetterCost,
+        canSabotage: state.phase === "sk-sabotage" && actor.total >= state.tableRules.super.sabotage.cost,
+        canDetect: Boolean(state.phase === "detector" && sector?.type === "prize" && actor.total + actor.round >= sector.detectorCost),
+        capacity: state.phase === "roulette" && sector?.type === "roulette" ? sector.capacity : 0,
+      } } : {}),
       turn: state.turn,
       wordIndex: state.wordIndex,
       wordCount: state.wordCount,
@@ -1205,6 +1225,7 @@ export const russkoePole = defineGame({
     };
   },
 
+  playerActions: polePlayerActions,
   guide: POLE_GUIDE,
   ai: [
     { role: "observer", description: "Видит открытые буквы, ход и счёт.", example: "Понаблюдай и подведи итоги игры." },
