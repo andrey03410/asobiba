@@ -31,6 +31,10 @@ export function LobbyInvitation({ invitation: lobby, name, error, busy, onName, 
       <button type="submit" className="btn btn-primary btn-wide" disabled={busy}>{busy ? "Подключаюсь…" : canPlay ? "Присоединиться" : "Смотреть"}</button>
       {canPlay && <button type="button" className="btn btn-wide" disabled={busy || !name.trim()} onClick={() => onJoin("spectator")}>Смотреть</button>}
     </form>}
+    {canPlay && <details className="config-details">
+      <summary>Пригласить своего ИИ</summary>
+      <p>Передайте ссылку на это лобби чату с подключённым Asobiba MCP и попросите занять место игрока.</p>
+    </details>}
     <p className="muted small">Есть аккаунт? <Link to={`/login?next=${encodeURIComponent(`/lobby/${lobby.id}`)}`}>Войти в аккаунт</Link></p>
   </div></div>;
 }

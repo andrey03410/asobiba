@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiRequestError, api, assetUrl, errorMessage } from "../api";
 import { useUser } from "../auth";
+import { BotLabel, BotReservation } from "../components/BotSeats";
 import { AgentParticipation } from "../components/AgentParticipation";
 import { ConfigNameAction } from "../components/ConfigNameAction";
 import { ConfigPreview } from "../components/ConfigPreview";
@@ -28,10 +29,12 @@ function MemberList({
   lobby,
   client,
   meId,
+  onRemoveBot,
 }: {
   lobby: LobbyDto;
   client: WebGameClient | undefined;
   meId: string;
+  onRemoveBot?: (member: LobbyMemberDto) => void;
 }) {
   const players = lobby.members
     .filter((m) => m.role === "player")
@@ -83,8 +86,12 @@ function MemberList({
                 {i + 1}
               </span>
             )}
-            <span className="member-login">{m.login}</span>
+            <div className="member-identity"><span className="member-login">{m.login}</span>
+              {m.bot && <BotLabel bot={m.bot} />}
+            </div>
             {marks(m)}
+            {m.bot && onRemoveBot && <button type="button" className="btn btn-ghost btn-small"
+              aria-label={`Освободить место · ${m.login}`} onClick={() => onRemoveBot(m)}>Убрать</button>}
           </li>
         ))}
         {Array.from({ length: free }, (_, k) => (
@@ -248,8 +255,9 @@ export function LobbyPage() {
   const presenterHint = waitingForAi
     ? "Дождитесь, пока подключится ИИ-ведущий."
     : "Для начала квиза назначьте ведущего.";
+  const reserved = lobby.members.some((m) => m.bot?.status === "reserved");
   const canStart =
-    isHost && open && players >= lobby.minPlayers && !missingPresenter;
+    isHost && open && players >= lobby.minPlayers && !missingPresenter && !reserved;
   const missing = Math.max(0, lobby.minPlayers - players);
   const link = lobby.url || window.location.href;
   const canDisconnectAgent = isHost && lobby.agent && lobby.status !== "closed" &&
@@ -278,7 +286,12 @@ export function LobbyPage() {
         </section>
       )}
       <section className="card">
-        <MemberList lobby={lobby} client={client} meId={user.id} />
+        <MemberList lobby={lobby} client={client} meId={user.id}
+          onRemoveBot={isHost && open ? (member) => {
+            if (!busy && window.confirm(`Освободить место игрока «${member.login}»?`))
+              void run(() => api.removeBot(lobby.id, member.userId));
+          } : undefined} />
+        {isHost && open && <BotReservation key={lobby.id} lobbyId={lobby.id} available={players < lobby.seats} />}
         <AgentParticipation lobby={lobby} />
         {lobby.gameId === "quizor" &&
           presenterPolicy !== "none" &&
@@ -355,7 +368,7 @@ export function LobbyPage() {
               Стать игроком
             </button>
           )}
-          {me?.role === "player" && open && lobby.gameId === "quizor" && (
+          {me?.role === "player" && open && (isHost || lobby.gameId === "quizor") && (
             <button
               type="button"
               className="btn"
@@ -373,7 +386,8 @@ export function LobbyPage() {
               title={
                 canStart
                   ? undefined
-                  : missingPresenter
+                  : reserved ? "Дождитесь подключения приглашённого ИИ или освободите его место."
+                    : missingPresenter
                     ? presenterHint
                     : `Нужно ещё ${missing} ${plural(missing, ["игрок", "игрока", "игроков"])}`
               }
@@ -581,6 +595,7 @@ export function LobbyPage() {
                   ? "Лобби закрыто."
                   : missing > 0
                     ? `Ждём ${missing} ${plural(missing, ["игрока", "игроков", "игроков"])}, потом хозяин начнёт партию.`
+                    : reserved ? "Ждём подключения приглашённого ИИ."
                     : waitingForAi
                       ? "Ждём ИИ-ведущего."
                       : isHost
