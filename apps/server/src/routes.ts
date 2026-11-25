@@ -179,8 +179,8 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   app.get("/api/tokens", async (req) => ({ tokens: await s.auth.listTokens(requireAccount(req).id), mcpUrl }));
   app.post("/api/tokens", async (req, reply) => {
     const user = requireAccount(req);
-    const body = parse(z.object({ name: z.string().max(60) }), req.body);
-    const { token, secret } = await s.auth.createToken(user.id, body.name);
+    const body = parse(z.object({ name: z.string().max(60), scope: z.enum(["organizer", "player"]).optional() }), req.body);
+    const { token, secret } = await s.auth.createToken(user.id, body.name, body.scope);
     reply.code(201);
     return { token, secret, mcpUrl };
   });

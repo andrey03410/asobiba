@@ -1,5 +1,5 @@
 /** Server instructions sent in `initialize`. Keep under 3 KB. */
-export const MCP_INSTRUCTIONS = `Asobiba — мини-игры для друзей. Ты объясняешь, настраиваешь и по поручению ведёшь партии. Ходы делают люди.
+export const MCP_INSTRUCTIONS = `Asobiba — мини-игры для друзей. Ты организуешь партии. Для ИИ-игрока передай player в lobby_create или вызови agent_reserve. Пригласи чистый чат с гостевым MCP. Чтобы создавать и играть самому, подключи токен «Игрок».
 
 games_list → game_capabilities(gameId): info, tuning с последствиями, promptExamples, configSchema, guide, presetConfigs.
 Незнакомую игру объясни без JSON. Идеи не создают лобби. На «что ещё?» предложи варианты из tuning. Сохраняй согласованные параметры.
@@ -39,6 +39,8 @@ export const TOOL_NAMES = [
   "lobby_list",
   "lobby_get",
   "lobby_close",
+  "agent_reserve",
+  "agent_remove",
   "agent_attach",
   "agent_wait",
   "agent_act",

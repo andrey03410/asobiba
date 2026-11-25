@@ -79,7 +79,9 @@ export interface CreateInviteResponse {
 /** GET /api/invites → { invites } */
 
 // ---------- personal MCP tokens ----------
+export type TokenScope = "organizer" | "player";
 export interface TokenDto {
+  scope?: TokenScope;
   id: string;
   name: string;
   prefix: string;
@@ -92,7 +94,7 @@ export interface TokensResponse {
   tokens: TokenDto[];
   mcpUrl: string;
 }
-/** POST /api/tokens { name } → { token, secret, mcpUrl } — the secret is shown only once. DELETE /api/tokens/:id → 204 */
+/** POST /api/tokens { name, scope? } → { token, secret, mcpUrl } — the secret is shown only once. DELETE /api/tokens/:id → 204 */
 export interface CreateTokenResponse {
   token: TokenDto;
   secret: string;

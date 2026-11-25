@@ -199,7 +199,10 @@ describe("MCP over Streamable HTTP", () => {
       expect(response.isError).toBe(true);
       expect(response.json.error.code).toBe("unsupported_probe");
       const tools = await client.listTools();
-      expect(tools.tools.some(tool => /action|control|move/.test(tool.name))).toBe(false);
+      expect(tools.tools.map(tool => tool.name)).not.toContain("agent_join_by_link");
+      expect(tools.tools.map(tool => tool.name)).not.toContain("agent_media");
+      const seat = await client.callTool({name:"agent_act",arguments:{lobbyId:"lob_test",key:"asp_" + "x".repeat(40),cursor:1,action:{type:"place",row:0,col:0}}});
+      expect(seat.isError).toBe(true);
     } finally { await client.close(); }
   });
 
