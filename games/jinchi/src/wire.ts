@@ -167,17 +167,21 @@ function decodeIndices(input: unknown, area: number): number[] {
 
 /** Only the Jinchi shape is packed; no player-specific field is shared or removed. */
 export function packJinchiMatch(match: MatchView): MatchView {
-  const game = match.game;
-  if (!envelope(game) || !Array.isArray(game.cells) || !Array.isArray(game.bases) || !Array.isArray(game.rules.map.rows)) return match;
+  const game = packJinchiView(match.game);
+  return game === match.game ? match : { ...match, game };
+}
+
+export function packJinchiView(game: unknown): unknown {
+  if (!envelope(game) || !Array.isArray(game.cells) || !Array.isArray(game.bases) || !Array.isArray(game.rules.map.rows)) return game;
   const { width, height, area } = dimensions(game, game.rules.map);
   if (game.cells.length !== area || game.bases.length !== area) invalid();
   const last = game.lastMove;
   if (last !== null && last !== undefined && (!object(last) || !Array.isArray(last.indices) || !Array.isArray(last.captured))) invalid();
-  return { ...match, game: {
+  return {
     ...game, cells: encodeGrid(game.cells), bases: encodeGrid(game.bases),
     rules: { ...game.rules, map: { ...game.rules.map, rows: encodeRows(game.rules.map.rows, width, height) } },
     ...(object(last) ? { lastMove: { ...last, indices: encodeIndices(last.indices as number[], area), captured: encodeIndices(last.captured as number[], area) } } : {}),
-  } };
+  };
 }
 
 interface GridMemo<T> { encoding: string; data: string; length: number; value: T; width?: number }

@@ -142,11 +142,18 @@ model LobbyMember {
   userId   String
   role     String // player | spectator
   guestNumber Int?
+  botNumber Int?
+  botDifficulty String?
+  botInviteHash String? @unique
+  botKeyHash String? @unique
+  botControllerId String?
   joinedAt DateTime @default(now())
   lobby    Lobby    @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([lobbyId, userId])
+  @@unique([lobbyId, botNumber])
+  @@unique([lobbyId, botControllerId])
 }
 
 /// A guest opened a specific lobby link; this grants its referenced images, not membership.
@@ -167,6 +174,7 @@ model Match {
   lobbyId    String
   lobby      Lobby     @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
   seed       Int
+  playerHandleSecret String? // Server-only key for opaque per-seat input IDs across restarts.
   startedAt  DateTime
   seatUsers  Json // userId by seat
   seatNames  Json @default("[]")

@@ -4,27 +4,34 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from "fastify";
 import type { Services } from "../app";
 import { CONFIG_REQUEST_BODY_BYTES } from "../configs/service";
+import { createPlayerServer } from "./player";
+import { FailureLimiter } from "../auth/rate-limit";
 import { createMcpServer } from "./server";
 
-/** Streamable HTTP without sessions: a fresh MCP server per POST, authorized by a personal token. */
+/** Stateless transport. Each POST selects its own server-side authority. */
 export function registerMcpRoutes(app: FastifyInstance, s: Services): void {
+  const joins = new FailureLimiter(30, 15 * 60_000, s.now);
   app.post("/mcp", { bodyLimit: CONFIG_REQUEST_BODY_BYTES }, async (req, reply) => {
-    const header = req.headers.authorization ?? "";
-    const secret = header.startsWith("Bearer ") ? header.slice(7).trim() : undefined;
-    const user = await s.auth.userByToken(secret);
-    if (!user) {
+    const header = req.headers.authorization;
+    const secret = header?.startsWith("Bearer ") ? header.slice(7).trim() : undefined;
+    const identity = await s.auth.mcpIdentity(secret);
+    if (header !== undefined && !identity) {
       reply.code(401).header("www-authenticate", 'Bearer realm="asobiba"');
       return {
         jsonrpc: "2.0",
-        error: { code: -32001, message: "Нужен личный токен: Authorization: Bearer asb_… (создаётся в кабинете на сайте)" },
+        error: { code: -32001, message: "Недействительный токен MCP" },
         id: null,
       };
     }
-    if (kanameEnabled() && (req.body as { method?: string })?.method === "tools/call") {
+    const user = identity?.user;
+    if (user && kanameEnabled() && (req.body as { method?: string })?.method === "tools/call") {
       const identity = await s.db.user.findUnique({ where: { id: user.id }, select: { kanameSubject: true } });
       if (identity?.kanameSubject) await recordActivity(s, identity.kanameSubject);
     }
-    const server = createMcpServer(user, s);
+    const server = identity?.scope === "organizer" ? createMcpServer(identity.user, s) : createPlayerServer(user, s, () => {
+      joins.check([req.ip]);
+      joins.fail([req.ip]);
+    }, identity?.tokenId);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
     reply.raw.on("close", () => {

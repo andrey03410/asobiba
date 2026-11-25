@@ -1,3 +1,4 @@
+import type { BotOptions } from "@asobiba/api";
 /**
  * Typed client for the same-origin HTTP API (`packages/api`). The session is an
  * httpOnly cookie, so every call goes with `credentials: "same-origin"`.
@@ -162,7 +163,7 @@ export const api = {
 
   // MCP tokens
   tokens: () => request<TokensResponse>("GET", "/api/tokens"),
-  createToken: (name: string) => request<CreateTokenResponse>("POST", "/api/tokens", { body: { name } }),
+  createToken: (name: string, scope: "organizer" | "player" = "organizer") => request<CreateTokenResponse>("POST", "/api/tokens", { body: { name, scope } }),
   revokeToken: (id: string) => request<void>("DELETE", `/api/tokens/${enc(id)}`),
 
   // games
@@ -202,6 +203,8 @@ export const api = {
   startLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/start`),
   setLobbyPaused: (id: string, paused: boolean) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/pause`, { body: { paused } }),
   lobbyAgentAction: (id: string, body: LobbyAgentCommand) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/agent`, { body }),
+  reserveBot: (id: string, body: BotOptions) => request<{ inviteUrl: string; userId: string }>("POST", `/api/lobbies/${enc(id)}/bots`, { body }),
+  removeBot: (id: string, userId: string) => request<LobbyResponse>("DELETE", `/api/lobbies/${enc(id)}/bots/${enc(userId)}`),
   setPresenter: (id: string, userId: string | null) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/presenter`, { body: { userId } }),
   closeLobby: (id: string) => request<LobbyResponse>("POST", `/api/lobbies/${enc(id)}/close`),
 };

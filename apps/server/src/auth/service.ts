@@ -1,6 +1,6 @@
 import { kanameEnabled } from "@kaname/service-client";
 import { grantForUser } from "../kaname";
-import type { InviteDto, Role, TokenDto, UserDto } from "@asobiba/api";
+import type { InviteDto, Role, TokenDto, TokenScope, UserDto } from "@asobiba/api";
 import type { User } from "../generated/prisma/client";
 import bcrypt from "bcryptjs";
 import type { Db } from "../db";
@@ -8,6 +8,8 @@ import { badRequest, conflict, forbidden, notFound, unauthorized } from "../http
 import { newId, randomString, sha256 } from "../ids";
 
 export const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
+export const PLAYER_TOKEN_PREFIX = "asb.player_";
+
 const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
 const LOGIN_RE = /^[\p{L}\p{N}_.-]{3,24}$/u;
 const DUMMY_HASH = bcrypt.hashSync("asobiba-dummy-password", 10);
@@ -177,26 +179,32 @@ export class AuthService {
 
   // ---------- personal MCP tokens ----------
 
-  async createToken(userId: string, name: string): Promise<{ token: TokenDto; secret: string }> {
+  async createToken(userId: string, name: string, scope: TokenScope = "organizer"): Promise<{ token: TokenDto; secret: string }> {
     if ((await this.db.user.findUnique({ where: { id: userId } }))?.role === "guest") throw forbidden("Для агента нужен аккаунт");
     const clean = name.trim().slice(0, 60) || "Агент";
-    const secret = `asb_${randomString(40)}`;
+    const secret = (scope === "player" ? PLAYER_TOKEN_PREFIX : "asb_") + randomString(40);
     const count = await this.db.apiToken.count({ where: { userId, revokedAt: null } });
     if (count >= 20) throw conflict("too_many_tokens", "Слишком много токенов: отзовите ненужные");
     const token = await this.db.apiToken.create({
-      data: { id: newId("tok"), userId, name: clean, kanameToken: kanameEnabled(), tokenHash: sha256(secret), prefix: secret.slice(0, 10) },
+      data: { id: newId("tok"), userId, name: clean, kanameToken: kanameEnabled(), tokenHash: sha256(secret), prefix: secret.slice(0, scope === "player" ? 17 : 10) },
     });
     return { token: tokenDto(token), secret };
   }
 
   async userByToken(secret: string | undefined): Promise<UserDto | null> {
     if (!secret?.startsWith("asb_")) return null;
+    return (await this.mcpIdentity(secret))?.user ?? null;
+  }
+
+  async mcpIdentity(secret: string | undefined): Promise<{ user: UserDto; scope: TokenScope; tokenId: string } | null> {
+    if (!secret || (!secret.startsWith("asb_") && !secret.startsWith(PLAYER_TOKEN_PREFIX))) return null;
     const token = await this.db.apiToken.findUnique({ where: { tokenHash: sha256(secret) }, include: { user: true } });
     if (!token || token.kanameToken !== kanameEnabled() || token.revokedAt || token.user.role === "guest") return null;
     if (!token.lastUsedAt || Date.now() - token.lastUsedAt.getTime() > 60_000) {
       await this.db.apiToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } });
     }
-    return kanameEnabled() ? this.kanameUser(token.user) : userDto(token.user);
+    const user = kanameEnabled() ? await this.kanameUser(token.user) : userDto(token.user);
+    return user ? {user, tokenId: token.id, scope: token.prefix.startsWith(PLAYER_TOKEN_PREFIX) ? "player" : "organizer"} : null;
   }
 
   async listTokens(userId: string): Promise<TokenDto[]> {
@@ -233,6 +241,7 @@ function tokenDto(token: { id: string; name: string; prefix: string; createdAt: 
     id: token.id,
     name: token.name,
     prefix: token.prefix,
+    scope: token.prefix.startsWith(PLAYER_TOKEN_PREFIX) ? "player" : "organizer",
     createdAt: token.createdAt.toISOString(),
     lastUsedAt: token.lastUsedAt?.toISOString() ?? null,
     revokedAt: token.revokedAt?.toISOString() ?? null,

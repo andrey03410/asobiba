@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { type ConfigDocument, documentSchema, type GameCatalog, presetDocument } from "./config";
-import type { AgentRoleInfo, AnyGame, SlotDescriptor, ThemeDescriptor } from "./game";
+import type { AgentRoleInfo, AnyGame, PlayerRoleInfo, SlotDescriptor, ThemeDescriptor } from "./game";
 import { gameInformation, type GameInformation, type TuningDirection } from "./info";
 
 /** Explains the parts of a config document that are the same for every game. */
@@ -32,10 +32,11 @@ export interface GameGuide {
   tuning: TuningDirection[];
   promptExamples: string[];
   ai?: AgentRoleInfo[];
+  player: PlayerRoleInfo;
   exampleConfig: ConfigDocument | null;
 }
 
-export interface GameCapabilities extends GameSummary, Pick<GameGuide, "info" | "tuning" | "promptExamples" | "ai"> {
+export interface GameCapabilities extends GameSummary, Pick<GameGuide, "info" | "tuning" | "promptExamples" | "ai" | "player"> {
   sdkGuide: string;
   guide: string;
   configSchema: unknown;
@@ -67,10 +68,12 @@ export function configJsonSchema(game: AnyGame): unknown {
   return z.toJSONSchema(documentSchema(game), { io: "input", unrepresentable: "any" });
 }
 
-function guideDetails(game: AnyGame): Pick<GameGuide, "info" | "tuning" | "promptExamples" | "ai"> {
+function guideDetails(game: AnyGame): Pick<GameGuide, "info" | "tuning" | "promptExamples" | "ai" | "player"> {
   return {
     info: gameInformation(game),
     tuning: game.tuning ?? [],
+    player: { role: "player", description: "Занимает отдельное место, видит свои игровые данные и самостоятельно делает ходы.",
+      example: `Зайди в «${game.title}» игроком по ссылке на лобби и сыграй на высоком уровне.` },
     promptExamples: game.promptExamples ?? [],
     ...(game.ai ? { ai: game.ai } : {}),
   };

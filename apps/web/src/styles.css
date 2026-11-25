@@ -1158,6 +1158,8 @@ textarea:focus {
   font-weight: 700;
   flex: none;
 }
+.member-identity { display: grid; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.bot-invitation { margin-bottom: 1rem; }
 .member-login {
   font-weight: 600;
   overflow: hidden;

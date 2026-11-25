@@ -24,12 +24,13 @@ function ConnectInstructions({ mcpUrl, secret }: { mcpUrl: string; secret: strin
   );
 }
 
-export function TokensTab() {
+export function TokensTab({ guestsAllowed }: { guestsAllowed: boolean }) {
   const toast = useToast();
   const [tokens, setTokens] = useState<TokenDto[] | null>(null);
   const [mcpUrl, setMcpUrl] = useState(`${window.location.origin}/mcp`);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [scope, setScope] = useState<"organizer" | "player">("organizer");
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<CreateTokenResponse | null>(null);
 
@@ -52,7 +53,7 @@ export function TokensTab() {
     e.preventDefault();
     setBusy(true);
     try {
-      const res = await api.createToken(name.trim() || "Мой агент");
+      const res = await api.createToken(name.trim() || "Мой агент", scope);
       setCreated(res);
       setMcpUrl(res.mcpUrl);
       setName("");
@@ -84,10 +85,20 @@ export function TokensTab() {
       <section className="card">
         <h2>Подключить своего ИИ-агента</h2>
         <p>
-          Агент собирает игры по вашим словам: читает возможности игры, собирает конфиг, проверяет его, смотрит превью и создаёт лобби. Ходить за вас он не
-          будет. Для подключения нужен личный токен — агент действует от вашего имени.
+          {guestsAllowed
+            ? "Для игры по гостевой ссылке подключите MCP без токена. Чтобы чат мог также создать лобби, выдайте ему токен «ИИ-игрок»."
+            : "Чтобы агент вошёл по ссылке на лобби или создал свой стол, подключите MCP с токеном «ИИ-игрок» из своего аккаунта."}
+          {" "}Для настройки игр и ведения партий используйте отдельный чат с токеном организатора.
         </p>
+        <CopyBlock text={mcpUrl} label="Копировать адрес MCP" />
         <form className="inline-form" onSubmit={create}>
+          <label className="field">
+            <span className="field-label">Права токена</span>
+            <select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}>
+              <option value="organizer">Организатор</option>
+              <option value="player">ИИ-игрок</option>
+            </select>
+          </label>
           <label className="field grow">
             <span className="field-label">Название токена</span>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="например, Claude на ноутбуке" maxLength={60} />
@@ -123,7 +134,7 @@ export function TokensTab() {
                 <div className="row-main">
                   <b>{t.name}</b> <code>{t.prefix}…</code>
                   <span className="muted small">
-                    создан {formatDate(t.createdAt)} · {t.lastUsedAt ? `последний вызов ${formatDate(t.lastUsedAt)}` : "ещё не использовался"}
+                    {t.scope === "player" ? "ИИ-игрок" : "Организатор"} · создан {formatDate(t.createdAt)} · {t.lastUsedAt ? `последний вызов ${formatDate(t.lastUsedAt)}` : "ещё не использовался"}
                   </span>
                 </div>
                 <button type="button" className="btn btn-danger btn-small" onClick={() => revoke(t)}>

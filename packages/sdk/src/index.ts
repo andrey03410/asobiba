@@ -9,3 +9,4 @@ export * from "./simulate";
 export * from "./client";
 export * from "./video";
 export * from "./info";
+export * from "./player-handles";

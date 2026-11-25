@@ -587,3 +587,13 @@ describe("acceptance fixes", () => {
     });
   });
 });
+
+it("describes free guesses without exposing the simulation's answer", () => {
+  const state = play({}, 2, []);
+  const hidden = { ...state, phase: "guess" as const, answer: "тайна", tiles: Array.from("тайна", ch => ({ ch, open: false })) };
+  const changed = { ...hidden, answer: "буква", tiles: Array.from("буква", ch => ({ ch, open: false })) };
+  const options = (s: PoleState) => russkoePole.playerActions(russkoePole.view(s, 0), 0);
+  expect(options(hidden)).toEqual(options(changed));
+  expect(options(hidden)).toContainEqual(expect.objectContaining({ type: "solve", fields: { text: expect.objectContaining({type: "string"}) } }));
+  expect(JSON.stringify(options(hidden))).not.toContain("тайна");
+});

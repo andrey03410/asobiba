@@ -15,6 +15,7 @@ import { catalog as defaultCatalog } from "./games/catalog";
 import { HttpError } from "./http-errors";
 import { LobbyService } from "./lobbies/service";
 import { registerMcpRoutes } from "./mcp/routes";
+import { registerBotRoutes } from "./lobbies/bot-routes";
 import { registerRoutes, SESSION_COOKIE } from "./routes";
 import { VideoRuntime } from "./video/runtime";
 import { VideoService } from "./video/service";
@@ -98,6 +99,7 @@ export async function buildApp(options: AppOptions): Promise<{ app: FastifyInsta
   });
 
   registerRoutes(app, services);
+  registerBotRoutes(app, services);
   registerMcpRoutes(app, services);
 
   if (env.production && existsSync(join(env.webDist, "index.html"))) {

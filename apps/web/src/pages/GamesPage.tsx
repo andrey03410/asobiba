@@ -103,11 +103,12 @@ function GameGuideContent({ id, guest }: { id: string; guest: boolean }) {
               ))}
             </div>
           </section>
-          {!!guide.ai?.length && (
+          {(guide.player || !!guide.ai?.length) && (
             <section className="card">
               <h2>ИИ в игре</h2>
               <div className="game-tuning">
-                {guide.ai.map(({ role, description, example }) => (
+                {guide.player && <section><h3>Игрок</h3><p>{guide.player.description}</p><p>«{guide.player.example}»</p></section>}
+                {guide.ai?.map(({ role, description, example }) => (
                   <section key={role}>
                     <h3>{agentRoleName[role]}</h3>
                     <p>{description}</p>

@@ -19,3 +19,4 @@
 | 11 | 2026-11-19 | ИИ из того же чата ведёт Quizor через MCP, наблюдает и комментирует четыре другие игры. Общая пауза, восстановление ведущего и раскрытие конфига хозяином по кнопке | [11-ai-game-roles](features/11-ai-game-roles/README.md) · [PR #11](https://github.com/andrey03410/asobiba/pull/11) |
 | 12 | 2026-11-20 | Docker, GitHub Actions и вход по созданным аккаунтам | [Деплой на VPS](features/12-docker-deploy/README.md) · [PR #12](https://github.com/andrey03410/asobiba/pull/12) |
 | 13 | 2026-11-23 | Единый вход, локальная модерация, квоты игр и файлов. | [Приёмка](features/13-kaname/verify.md) |
+| 14 | 2026-11-25 | Текущий чат, субагенты и приглашённые агенты друзей занимают отдельные игровые места через MCP. Пять игр и обязательный контракт SDK, четыре уровня, гостевая ссылка и адресный резерв. | [Постановка](features/14-ai-players/product.md) · [Приёмка](features/14-ai-players/verify.md) · [PR #16](https://github.com/andrey03410/asobiba/pull/16) |

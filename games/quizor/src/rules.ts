@@ -189,6 +189,10 @@ export interface Block {
     | "zoom"
     | "spotlight";
   effectSeconds?: number;
+  /** Transport-only visibility limits for the player's currently presented media. */
+  playerProgress?: number;
+  playerElapsedSeconds?: number;
+  playerImageStartedAt?: number;
   from?: number;
   to?: number;
   speed?: number;

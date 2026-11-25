@@ -40,6 +40,8 @@ export interface TttMove {
 
 export interface TttState {
   placement: TttRules["placement"];
+  win: TttRules["win"];
+  turns: TttRules["turns"];
   width: number;
   height: number;
   /** -1 empty, -2 blocked, otherwise the seat that owns the cell. */
@@ -122,6 +124,8 @@ export const ticTacToe = defineGame({
     for (const [r, c] of blocked) if (r < height && c < width) cells[indexOf(width, r, c)] = BLOCKED;
     return {
       placement: rules.placement,
+      win: rules.win,
+      turns: rules.turns,
       width,
       height,
       cells,
@@ -215,6 +219,12 @@ export const ticTacToe = defineGame({
     ...s,
     you: seat,
     legal: seat !== null && !s.result && s.turnSeat === seat ? legalCells(s) : [],
+  }),
+
+  playerActions: (view: TttView, seat) => view.you !== seat ? [] : view.legal.map(index => {
+    const col = index % view.width;
+    return view.placement === "gravity" ? { type: "drop", fields: { col } }
+      : { type: "place", fields: { row: Math.floor(index / view.width), col } };
   }),
 
   guide: TIC_TAC_TOE_GUIDE,

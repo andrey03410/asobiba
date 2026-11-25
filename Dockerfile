@@ -17,6 +17,8 @@ ENV NEXT_TELEMETRY_DISABLED=1 VITE_PROVISIONED_ACCOUNTS_ONLY=1
 RUN npm ci && npm run build
 
 FROM base AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends chromium ffmpeg && rm -rf /var/lib/apt/lists/*
+ENV REMOTION_BROWSER_EXECUTABLE=/usr/bin/chromium
 COPY --from=build --chown=node:node /workspace/asobiba /workspace/asobiba
 COPY --from=build --chown=node:node /workspace/douga /workspace/douga
 RUN install -d -o node -g node storage

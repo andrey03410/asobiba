@@ -3,7 +3,8 @@ import { answersSchema, probeQuestion, resolveQuestion, type QuizorRules } from 
 import type { UserDto } from "@asobiba/api";
 import { describeGame, listGames, simulate } from "@asobiba/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { json, run } from "./result";
+import { botOptions, lobbyResult, registerBotReservations } from "./player";
 import { z } from "zod";
 import type { Services } from "../app";
 import { configNameSchema, type UserValidation } from "../configs/service";
@@ -12,25 +13,6 @@ import { renderPreview } from "../preview/render";
 import { MCP_INSTRUCTIONS } from "./instructions";
 import { generationSchema } from '@asobiba/game-jinchi';
 import { generateJinchiConfiguration } from '../games/generate-jinchi';
-
-function json(value: unknown): CallToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
-}
-
-function toolError(e: unknown): CallToolResult {
-  if (e instanceof HttpError) {
-    return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: { code: e.code, message: e.message }, issues: e.issues }, null, 2) }] };
-  }
-  return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: { code: "internal", message: (e as Error).message } }) }] };
-}
-
-async function run(fn: () => Promise<CallToolResult>): Promise<CallToolResult> {
-  try {
-    return await fn();
-  } catch (e) {
-    return toolError(e);
-  }
-}
 
 const configArg = z.record(z.string(), z.unknown()).describe("Документ конфига { sdk, game, gameVersion, title, info?, rules, series, timer, visual }");
 const agentAssignment = z.strictObject({
@@ -42,6 +24,8 @@ const agentConnection = { lobbyId: z.string().min(1).max(80), key: z.string().le
 /** One MCP server per request (stateless transport), acting as the token owner. */
 export function createMcpServer(user: UserDto, s: Services): McpServer {
   const server = new McpServer({ name: "asobiba", version: "0.1.0" }, { instructions: MCP_INSTRUCTIONS });
+
+  registerBotReservations(server, user, s);
 
   const validated = (res: UserValidation) => {
     if (!res.ok) throw new HttpError(422, "invalid_config", "Конфиг не прошёл проверку — сначала исправьте его (config_validate)", res.issues);
@@ -320,11 +304,16 @@ export function createMcpServer(user: UserDto, s: Services): McpServer {
     {
       title: "Создать лобби",
       description: "Передайте ровно один источник: свой configId или весь config. Имя по умолчанию берётся из title документа. Если человек поручил роль в партии, передайте agent и после выдачи ссылки вызовите agent_attach. Владелец токена — хозяин и первый игрок.",
-      inputSchema: { name: z.string().max(60).optional().describe("Имя лобби, по умолчанию title документа"), configId: z.string().min(1).max(80).optional(), config: configArg.optional(), agent: agentAssignment.optional() },
+      inputSchema: { name: z.string().max(60).optional().describe("Имя лобби, по умолчанию title документа"), configId: z.string().min(1).max(80).optional(), config: configArg.optional(), agent: agentAssignment.optional(), player: botOptions.optional().describe("Зарезервировать отдельное место для ИИ-игрока") },
     },
-    ({ name, configId, config, agent }) =>
+    ({ name, configId, config, agent, player }) =>
       run(async () => {
-        const lobby = await s.lobbies.create(user, { name, configId, config, agent }, true);
+        const req = {name, configId, config, agent};
+        if (player) {
+          const {lobby, inviteUrl} = await s.lobbies.createWithBot(user, req, player);
+          return json({lobby:lobbyResult(lobby), inviteUrl});
+        }
+        const lobby = await s.lobbies.create(user, req, true);
         return json({ lobby: { id: lobby.id, url: lobby.url, name: lobby.name, status: lobby.status, seats: lobby.seats, configTitle: lobby.config.title, summary: lobby.information.summary, agent: lobby.agent } });
       }),
   );

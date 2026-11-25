@@ -1,3 +1,4 @@
+import { prepareQuizorPlayerAction, quizorPlayerActions, quizorPlayerView, quizorPlayerWireView } from "./player";
 import {
   actionError,
   defineGame,
@@ -306,9 +307,13 @@ export interface QuizorView {
   video?: VideoDirective | null;
   videoPreload?: VideoDirective[];
   revealStartedAt?: number | null;
+  /** Observed display time of completed blocks in this seat's presentation. */
+  playedBlockMs?: number[];
+  playedRevealMs?: number[];
   revealBlockStartedAt?: number | null;
   revealIndex?: number;
   roundVisual?: QuizorVisual;
+  roundStartedAt?: number;
   preload?: { asset: string; type: "image" | "audio" | "video" }[];
   answerOpenedAt?: number | null;
   presenterNotes?: string[];
@@ -383,6 +388,8 @@ export interface QuizorState {
   personalOpenedAt: Record<string, number>;
   personalDeadlines: Record<string, number>;
   personalBlockStartedAt: Record<string, number>;
+  completedBlockMs: Record<string, number[]>;
+  roundStartedAt: number;
   revealStartedAt: number | null;
   revealBlockStartedAt: number | null;
   revealIndex: number;
@@ -526,7 +533,14 @@ function cfgThemes(s: QuizorState, r: Round, ctx: Ctx): string[] {
     ? ctx.rng.shuffle(themes)
     : themes;
 }
+function finishBlock(s: QuizorState, track: string, index: number, startedAt: number | null) {
+  if (index < 0 || startedAt === null) return;
+  // Old match checkpoints predate per-seat playback accounting.
+  const tracks = (s.completedBlockMs ??= {});
+  (tracks[track] ??= [])[index] = Math.max(0, s.now - startedAt);
+}
 function advanceIntro(s: QuizorState, ctx: Ctx) {
+  finishBlock(s, "shared", s.blockIndex, s.blockStartedAt);
   const blocks = s.rules.rounds[s.round]?.intro ?? [];
   if (s.blockIndex + 1 < blocks.length) {
     s.blockIndex++;
@@ -537,6 +551,7 @@ function advanceIntro(s: QuizorState, ctx: Ctx) {
 function advanceRevealBlock(s: QuizorState) {
   const blocks = s.active?.question.reveal ?? [];
   if (s.revealIndex + 1 < blocks.length) {
+    finishBlock(s, "reveal", s.revealIndex, s.revealBlockStartedAt);
     s.revealIndex++;
     s.revealBlockStartedAt = s.now;
     s.blockDeadline = s.now + blockDuration(blocks[s.revealIndex]);
@@ -859,6 +874,7 @@ function resolvePendingVotes(s: QuizorState) {
     }
 }
 function beginContent(s: QuizorState) {
+  s.completedBlockMs = {};
   s.questionDeadline = null;
   s.phase = "preload";
   s.ready = [];
@@ -872,6 +888,12 @@ function showNext(s: QuizorState) {
   if (!s.active) return;
   s.deadline = s.answerOpenedAt === null ? null : s.questionDeadline;
   s.ready = [];
+  finishBlock(s, "shared", s.blockIndex, s.blockStartedAt);
+  if (settings(s).pacing === "self") {
+    for (const seat of s.eligible) {
+      finishBlock(s, String(seat), s.personalBlocks[seat] ?? -1, s.personalBlockStartedAt[seat] ?? null);
+    }
+  }
   s.blockIndex++;
   s.blockStartedAt = s.now;
   if (s.blockIndex >= s.active.question.blocks.length) {
@@ -1064,6 +1086,7 @@ function beginQuestion(s: QuizorState, id: string, ctx: Ctx) {
   beginContent(s);
 }
 function startRound(s: QuizorState, index: number, ctx: Ctx) {
+  s.roundStartedAt = s.now;
   s.roundOut = [];
   s.roundCorrect = Array(s.seats).fill(0);
   s.round = index;
@@ -1080,6 +1103,7 @@ function startRound(s: QuizorState, index: number, ctx: Ctx) {
   s.phase = "intro";
   s.played = [];
   s.presenterAssigned = false;
+  s.completedBlockMs = {};
   s.blockIndex = r.intro.length ? 0 : -1;
   s.blockStartedAt = s.now;
   s.blockDeadline = null;
@@ -1149,6 +1173,7 @@ function startFinal(s: QuizorState, ctx: Ctx) {
     return;
   }
   s.roundId = "final";
+  s.roundStartedAt = s.now;
   s.title = "Финал";
   s.active = null;
   s.eligible = [...s.finalSeats];
@@ -1820,6 +1845,8 @@ function setup(ctx: SetupContext<QuizorRules>): QuizorState {
     personalOpenedAt: {},
     personalDeadlines: {},
     personalBlockStartedAt: {},
+    completedBlockMs: {},
+    roundStartedAt: ctx.now,
     revealStartedAt: null,
     revealBlockStartedAt: null,
     revealIndex: 0,
@@ -1948,6 +1975,7 @@ function shiftDeadlines(s: QuizorState, delta: number) {
     "revealBlockStartedAt",
   ] as const)
     if (s[key] !== null) s[key]! += delta;
+  if (s.roundStartedAt !== undefined) s.roundStartedAt += delta;
   if (s.appeal) s.appeal.deadline += delta;
   for (const map of [
     s.locks,
@@ -2261,7 +2289,9 @@ function applyAction(
       s.submissions[seat]
     )
       return fail();
-    s.personalBlocks[seat] = (s.personalBlocks[seat] ?? s.blockIndex) + 1;
+    const previous = s.personalBlocks[seat] ?? s.blockIndex;
+    finishBlock(s, String(seat), previous, s.personalBlockStartedAt[seat] ?? s.blockStartedAt);
+    s.personalBlocks[seat] = previous + 1;
     s.personalBlockStartedAt[seat] = s.now;
     if (
       s.personalBlocks[seat] >= total ||
@@ -3237,6 +3267,10 @@ function view(s: QuizorState, seat: number | null): QuizorView {
         ? s.active.question.prompt
         : "",
     blocks: structuredClone(blocks),
+    ...(seat !== null && {
+      playedBlockMs: [...(s.completedBlockMs?.[cfg.pacing === "self" && s.phase !== "intro" ? seat : "shared"] ?? [])],
+      playedRevealMs: [...(s.completedBlockMs?.reveal ?? [])],
+    }),
     blockIndex,
     blockStartedAt: personal
       ? (s.personalBlockStartedAt[seat] ?? s.blockStartedAt)
@@ -3331,6 +3365,7 @@ function view(s: QuizorState, seat: number | null): QuizorView {
   out.revealStartedAt = s.revealStartedAt;
   out.revealBlockStartedAt = s.revealBlockStartedAt;
   out.revealIndex = s.revealIndex;
+  out.roundStartedAt = s.roundStartedAt;
   out.roundVisual = s.finalStarted
     ? undefined
     : s.rules.rounds[s.round]?.visual;
@@ -3680,6 +3715,10 @@ export const quizor = defineGame<
     `${s.phase}:${s.active?.question.id ?? s.roundId}:${s.blockIndex}:${s.answering ?? ""}`,
   turnBudgetSeconds: () => 0,
   timeoutPolicy: "skip",
+  playerActions: quizorPlayerActions,
+  playerView: quizorPlayerView,
+  compactPlayerView: quizorPlayerWireView,
+  preparePlayerAction: prepareQuizorPlayerAction,
   legalActions,
   applyAction,
   applyControl,
