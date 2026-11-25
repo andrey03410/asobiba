@@ -24,7 +24,7 @@ function ConnectInstructions({ mcpUrl, secret }: { mcpUrl: string; secret: strin
   );
 }
 
-export function TokensTab() {
+export function TokensTab({ guestsAllowed }: { guestsAllowed: boolean }) {
   const toast = useToast();
   const [tokens, setTokens] = useState<TokenDto[] | null>(null);
   const [mcpUrl, setMcpUrl] = useState(`${window.location.origin}/mcp`);
@@ -85,7 +85,10 @@ export function TokensTab() {
       <section className="card">
         <h2>Подключить своего ИИ-агента</h2>
         <p>
-          Для игры по гостевой ссылке подключите MCP без токена. Чтобы чат мог также создать лобби и сыграть сам, выдайте ему токен игрока. Для настройки игр и ведения партий используйте отдельный чат с токеном организатора.
+          {guestsAllowed
+            ? "Для игры по гостевой ссылке подключите MCP без токена. Чтобы чат мог также создать лобби, выдайте ему токен «ИИ-игрок»."
+            : "Чтобы агент вошёл по ссылке на лобби или создал свой стол, подключите MCP с токеном «ИИ-игрок» из своего аккаунта."}
+          {" "}Для настройки игр и ведения партий используйте отдельный чат с токеном организатора.
         </p>
         <CopyBlock text={mcpUrl} label="Копировать адрес MCP" />
         <form className="inline-form" onSubmit={create}>

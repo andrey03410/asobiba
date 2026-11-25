@@ -52,7 +52,7 @@ export function AccountPage() {
         ))}
       </div>
       <div role="tabpanel">
-        {tab === "agent" && <TokensTab />}
+        {tab === "agent" && <TokensTab guestsAllowed={kaname?.enabled ? kaname.guestsEnabled : import.meta.env.VITE_PROVISIONED_ACCOUNTS_ONLY !== "1"} />}
         {tab === "assets" && <AssetsTab />}
         {tab === "configs" && <ConfigsTab />}
         {tab === "invites" && user.role === "admin" && <InvitesTab />}
