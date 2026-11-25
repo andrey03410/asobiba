@@ -471,17 +471,14 @@ export class LobbyService {
   async botIdentity(lobbyId: string, key: string, controllerId?: string) { return (await this.botMember(lobbyId, key, controllerId)).userId; }
 
   async canReadBotAsset(lobbyId: string, key: string, assetId: string, controllerId?: string): Promise<boolean> {
-    const member = await this.botMember(lobbyId, key, controllerId);
-    const room = await this.room(lobbyId);
+    await this.botMember(lobbyId, key, controllerId);
     const row = await this.loadRow(lobbyId);
     const config = row.config as unknown as ConfigDocument;
     if (config.game !== "quizor" && config.game !== "yomifuda") {
       return collectAssetRefs({ visual: config.visual }).some(ref => ref.assetId === assetId);
     }
-    const seat = this.viewerSeat(room, member.userId);
-    if (!room.match || seat === null) return false;
-    const { game } = seatProjection(room.match, seat);
-    const refs = config.game === "quizor" ? quizorMediaRefs(game) : config.game === "yomifuda" ? yomifudaMediaRefs(game) : [];
+    const { view } = await this.botMediaView(lobbyId, key, controllerId);
+    const refs = config.game === "quizor" ? quizorMediaRefs(view) : yomifudaMediaRefs(view);
     return refs.some(ref => ref.assetId === assetId);
   }
 
@@ -493,6 +490,12 @@ export class LobbyService {
       const seat = this.viewerSeat(room, userId);
       if (!room.match || seat === null) return { gameId: (await this.loadRow(lobbyId)).gameId, view: null, now: this.deps.now() };
       const projected = seatProjection(room.match, seat);
+      if (room.match.game.id === "quizor") {
+        const quiz = projected.game as { paused?: boolean; resumeAt?: number | null };
+        if (room.match.pause || quiz.paused || (quiz.resumeAt != null && projected.now < quiz.resumeAt)) {
+          return { gameId: "quizor", view: null, now: projected.now };
+        }
+      }
       return { gameId: room.match.game.id, view: projected.game as unknown, now: projected.now };
     });
   }

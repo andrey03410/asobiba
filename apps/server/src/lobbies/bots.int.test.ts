@@ -1,3 +1,4 @@
+import { quizor } from "@asobiba/game-quizor";
 import { ticTacToe } from "@asobiba/game-tic-tac-toe";
 import { yomifuda } from "@asobiba/game-yomifuda";
 import { presetDocument } from "@asobiba/sdk";
@@ -130,4 +131,15 @@ it("admits a friend's authenticated player in accounts-only mode and binds the s
   await expect(lobbies.botWait(lobby.id, player.key, 0, 0)).rejects.toMatchObject({ status: 403 });
   await auth.revokeToken(friend.id, controller);
   await expect(lobbies.botWait(lobby.id, player.key, 0, 0, undefined, controller)).rejects.toMatchObject({ status: 403 });
+});
+
+it("hides the paused Quizor board from the player media channel", async () => {
+  const { user } = await signUp(test, "quiz-host");
+  const svc = test.services.lobbies;
+  const lobby = await svc.create(user, { config: presetDocument(quizor, quizor.presets[0]) });
+  const bot = await svc.joinBot(lobby.url, { name: "Рин", attempt: randomString(40) });
+  await svc.start(user, lobby.id);
+  expect((await svc.botMediaView(lobby.id, bot.key)).view).not.toBeNull();
+  await svc.pause(user, lobby.id, true);
+  expect((await svc.botMediaView(lobby.id, bot.key)).view).toBeNull();
 });
