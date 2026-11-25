@@ -1,5 +1,6 @@
+import { kanameEnabled } from "@kaname/service-client";
 import { grantForUser } from "../kaname";
-import type { ConfigDto, CreateLobbyRequest, LobbyAgentAssignment, LobbyAgentCommand, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
+import type { BotOptions, BotDifficulty, ConfigDto, CreateLobbyRequest, LobbyAgentAssignment, LobbyAgentCommand, LobbyDto, LobbyInvitationDto, LobbyStatus, LobbySummaryDto, ServerMessage, UserDto } from "@asobiba/api";
 import { collectAssetRefs, describeConfig, type ConfigDocument, type VideoDirective, type DispatchResult, type GameCatalog, Match, type MatchLogEntry, type MatchRecord } from "@asobiba/sdk";
 import { quizorCanUseAgentPresenter, quizorCanUseAlgorithm, type QuizorRules } from "@asobiba/game-quizor";
 import { isDeepStrictEqual } from "node:util";
@@ -9,7 +10,8 @@ import type { Db } from "../db";
 import type { Env } from "../env";
 import { quizorMediaRefs, yomifudaMediaRefs } from "../games/media-refs";
 import { badRequest, conflict, forbidden, notFound } from "../http-errors";
-import { newId, randomSeed } from "../ids";
+import { newId, randomSeed, randomString, sha256 } from "../ids";
+import { BOT_INSTRUCTIONS, BOT_LEASE_MS, BotConnection, botKey, botOptions, insertBot, parseBotLink, playerSnapshot, seatProjection } from "./bot-seat";
 import { LobbyAgent, type AgentEvent } from "./agent";
 
 export interface Subscriber {
@@ -35,6 +37,10 @@ interface Room {
   presence: Set<number> | null;
   presenterOnline: boolean | null;
   agent: LobbyAgent;
+  bots: Map<string, BotConnection>;
+  botLobbyState: unknown;
+  revision: number;
+  botMemberIds: Set<string>;
   agentAssignment: LobbyAgentAssignment | null;
   agentCheckpointAt: number | null;
 }
@@ -86,7 +92,7 @@ export class LobbyService {
   private async loadRow(lobbyId: string): Promise<LobbyRow> {
     const row = await this.deps.db.lobby.findUnique({
       where: { id: lobbyId },
-      include: { host: true, members: { include: { user: true }, orderBy: { joinedAt: "asc" } } },
+      include: { host: true, members: { where: { role: { not: "removed-bot" } }, include: { user: true }, orderBy: { joinedAt: "asc" } } },
     });
     if (!row) throw notFound("Лобби не найдено");
     return row;
@@ -100,7 +106,7 @@ export class LobbyService {
   private async room(lobbyId: string): Promise<Room> {
     const existing = this.rooms.get(lobbyId);
     if (existing) return existing;
-    const lobby = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { id: true, hostId: true, status: true, config: true, agent: true, members: { select: { userId: true, role: true } } } });
+    const lobby = await this.deps.db.lobby.findUnique({ where: { id: lobbyId }, select: { id: true, hostId: true, status: true, config: true, agent: true, members: { select: { userId: true, role: true, botNumber: true } } } });
     if (!lobby) throw notFound("Лобби не найдено");
     const last = await this.deps.db.match.findFirst({ where: { lobbyId }, orderBy: { startedAt: "desc" } });
     const raced = this.rooms.get(lobbyId);
@@ -136,6 +142,10 @@ export class LobbyService {
       presence: null,
       presenterOnline: null,
       agent: new LobbyAgent(),
+      bots: new Map(),
+      botLobbyState: null,
+      revision: 0,
+      botMemberIds: new Set(lobby.members.filter(member => member.botNumber !== null && member.role === "player").map(member => member.userId)),
       agentAssignment: lobby.agent as LobbyAgentAssignment | null,
       agentCheckpointAt: null,
     };
@@ -176,6 +186,8 @@ export class LobbyService {
         return {
           userId: m.userId,
           login: this.memberName(m),
+          ...(m.botNumber !== null ? { bot: { number: m.botNumber, difficulty: m.botDifficulty as BotDifficulty,
+            status: !m.botKeyHash ? "reserved" : (room?.bots.get(m.userId)?.expiresAt ?? 0) > this.deps.now() ? "connected" : "disconnected" } as const } : {}),
           role: m.role === "player" ? "player" : m.role === "presenter" ? "presenter" : "spectator",
           seat: m.role === "player" && seat >= 0 ? seat : null,
           ...(m.role === "spectator" ? { eligiblePresenter: row.status !== "playing" || seat < 0 } : {}),
@@ -197,6 +209,7 @@ export class LobbyService {
   // ---------- queries ----------
 
   private memberName(member: LobbyRow["members"][number]): string {
+    if (member.botNumber !== null) return `${member.user.displayName} · ИИ №${member.botNumber}`;
     return member.user.role === "guest" ? `${member.user.displayName} · гость ${member.guestNumber}` : (member.user.displayName ?? member.user.login);
   }
 
@@ -306,6 +319,19 @@ export class LobbyService {
   // ---------- commands ----------
 
   async create(user: UserDto, req: CreateLobbyRequest, createdByAgent = false): Promise<LobbyDto> {
+    const { id } = await this.insertLobby(user, req, createdByAgent);
+    return this.get(id);
+  }
+
+  async createWithBot(user: UserDto, req: CreateLobbyRequest, bot: BotOptions) {
+    const invite = randomString(36);
+    const { id, botId } = await this.insertLobby(user, req, true, { options: botOptions(bot), invite });
+    const lobby = await this.get(id);
+    return { lobby, userId: botId!, inviteUrl: `${lobby.url}#bot=${invite}` };
+  }
+
+  private async insertLobby(user: UserDto, req: CreateLobbyRequest, createdByAgent: boolean,
+    bot?: { options: Required<BotOptions>; invite: string }) {
     if (user.role === "guest") throw forbidden("Создать лобби можно только с аккаунтом");
     if ((req.configId !== undefined) === (req.config !== undefined)) {
       throw badRequest("config_source", "Передайте ровно одно: config или свой configId");
@@ -316,26 +342,236 @@ export class LobbyService {
     if (req.agent) this.requireAgentRole(config, req.agent);
     const name = (req.name ?? "").trim().slice(0, 60) || config.title;
     const id = newId("lob", 10);
-    const grant = await grantForUser(this.deps.db,user.id);
-    await this.deps.db.$transaction(async tx => {
+    const grant = await grantForUser(this.deps.db, user.id);
+    if (bot && max < 2) throw conflict("lobby_full", "Для хозяина и ИИ нужны два места");
+    const botId = await this.deps.db.$transaction(async tx => {
       const limit = grant?.limits.lobbies;
       if (limit != null && await tx.lobby.count({where:{hostId:user.id,status:{not:"closed"}}}) >= limit)
         throw conflict("lobby_quota","Достигнут лимит открытых лобби.");
-      await tx.lobby.create({
-      data: {
-        id,
-        name,
-        gameId: config.game,
-        config: config as unknown as Prisma.InputJsonValue,
-        createdByAgent,
+      await tx.lobby.create({ data: {
+        id, name, gameId: config.game, config: config as unknown as Prisma.InputJsonValue, createdByAgent,
         ...(req.agent ? { agent: { ...req.agent } } : {}),
-        seats: max,
-        hostId: user.id,
-        members: { create: { userId: user.id, role: "player" } },
-      },
+        seats: max, hostId: user.id, members: { create: { userId: user.id, role: "player" } },
+      } });
+      if (bot) return (await insertBot(tx, id, bot.options, { botInviteHash: sha256(bot.invite) })).userId;
     });
+    return { id, botId };
+  }
+
+  private requireOpenSeats(row: LobbyRow) {
+    if (row.status === "closed") throw conflict("closed", "Лобби закрыто");
+    if (row.status === "playing") throw conflict("match_in_progress", "Место можно занять до начала партии");
+  }
+
+  private requireCapacity(row: LobbyRow) {
+    if (row.members.filter(member => member.role === "player").length >= row.seats)
+      throw conflict("lobby_full", "Все места заняты");
+  }
+
+  reserveBot(user: UserDto, lobbyId: string, input: BotOptions) {
+    const options = botOptions(input);
+    return this.lock(lobbyId, async () => {
+      const row = await this.loadRow(lobbyId);
+      this.requireHost(row, user);
+      this.requireOpenSeats(row);
+      this.requireCapacity(row);
+      const invite = randomString(36);
+      const member = await this.deps.db.$transaction(tx => insertBot(tx, lobbyId, options, { botInviteHash: sha256(invite) }));
+      const lobby = await this.publishLobby(await this.room(lobbyId));
+      return { userId: member.userId, inviteUrl: `${lobby.url}#bot=${invite}` };
     });
-    return this.get(id);
+  }
+
+  removeBot(user: UserDto, lobbyId: string, userId: string) {
+    return this.lock(lobbyId, async () => {
+      const row = await this.loadRow(lobbyId);
+      this.requireHost(row, user);
+      this.requireOpenSeats(row);
+      const match = row.members.find(member => member.userId === userId && member.botNumber !== null);
+      if (!match) throw notFound("Такого ИИ нет в лобби");
+      // Retain the number and credential hash so removal also cancels delayed join retries.
+      await this.deps.db.lobbyMember.update({ where: { lobbyId_userId: { lobbyId, userId } },
+        data: { role: "removed-bot", botInviteHash: null, botControllerId: null } });
+      const room = await this.room(lobbyId);
+      room.bots.get(userId)?.notify();
+      room.bots.delete(userId);
+      this.schedule(room);
+      return this.publishLobby(room);
+    });
+  }
+
+  private async authorizeBot(ownerAuthorized: boolean, hostId: string) {
+    if (ownerAuthorized) {
+      if (kanameEnabled()) await grantForUser(this.deps.db, hostId);
+    } else if (kanameEnabled() ? process.env.KANAME_GUESTS !== "1" : this.deps.env.provisionedAccountsOnly) {
+      throw forbidden("Гостевой вход отключён");
+    }
+  }
+
+  joinBot(link: string, input: BotOptions & { attempt: string }, owner?: UserDto, controllerId?: string) {
+    const { lobbyId, invite } = parseBotLink(link, this.deps.env.publicUrl);
+    const options = botOptions(input);
+    const key = botKey(lobbyId, invite, input.attempt);
+    const keyHash = sha256(key);
+    return this.lock(lobbyId, async () => {
+      const row = await this.loadRow(lobbyId);
+      const ownerAuthorized = owner?.id === row.hostId;
+      await this.authorizeBot(ownerAuthorized, row.hostId);
+      if (row.status === "closed") throw conflict("closed", "Лобби закрыто");
+      const existing = await this.deps.db.lobbyMember.findUnique({ where: { botKeyHash: keyHash } });
+      let userId: string;
+      if (existing) {
+        if (existing.role !== "player" || existing.lobbyId !== lobbyId || existing.botControllerId !== (controllerId ?? null)) throw forbidden("Подключение ИИ завершено");
+        userId = existing.userId;
+      } else {
+        this.requireOpenSeats(row);
+        if (controllerId && row.members.some(member => member.botControllerId === controllerId))
+          throw conflict("bot_already_seated", "Это игровое подключение уже управляет местом в лобби");
+        if (invite) {
+          const reserved = row.members.find(member => member.botInviteHash === sha256(invite));
+          if (!reserved) throw conflict("invalid_bot_invite", "Приглашение на место уже использовано или отменено");
+          const claimed = await this.deps.db.lobbyMember.updateMany({
+            where: { lobbyId, userId: reserved.userId, botInviteHash: sha256(invite), botKeyHash: null, role: "player" },
+            data: { botKeyHash: keyHash, botInviteHash: null, botOwnerAuthorized: ownerAuthorized, botControllerId: controllerId },
+          });
+          if (!claimed.count) throw conflict("invalid_bot_invite", "Приглашение на место уже использовано");
+          userId = reserved.userId;
+        } else {
+          this.requireCapacity(row);
+          const member = await this.deps.db.$transaction(tx => insertBot(tx, lobbyId, options, { botKeyHash: keyHash, botOwnerAuthorized: ownerAuthorized, botControllerId: controllerId }));
+          userId = member.userId;
+        }
+      }
+      const room = await this.room(lobbyId);
+      await this.renewBot(room, userId);
+      const lobby = await this.get(lobbyId);
+      const member = lobby.members.find(member => member.userId === userId)!;
+      return { lobbyId, userId, key, member, url: lobby.url };
+    });
+  }
+
+  /** A bearer has authority over exactly one seat. Its durable identity has no browser session. */
+  private async botMember(lobbyId: string, key: string, controllerId?: string) {
+    const member = await this.deps.db.lobbyMember.findUnique({ where: { botKeyHash: sha256(key) },
+      include: { lobby: { select: { status: true, hostId: true } } } });
+    if (!member || member.lobbyId !== lobbyId || member.role !== "player" || member.botControllerId !== (controllerId ?? null) || member.lobby.status === "closed")
+      throw forbidden("Игровое подключение недействительно");
+    await this.authorizeBot(member.botOwnerAuthorized, member.lobby.hostId);
+    return member;
+  }
+
+  async botIdentity(lobbyId: string, key: string, controllerId?: string) { return (await this.botMember(lobbyId, key, controllerId)).userId; }
+
+  async canReadBotAsset(lobbyId: string, key: string, assetId: string, controllerId?: string): Promise<boolean> {
+    const member = await this.botMember(lobbyId, key, controllerId);
+    const room = await this.room(lobbyId);
+    const row = await this.loadRow(lobbyId);
+    const config = row.config as unknown as ConfigDocument;
+    if (config.game !== "quizor" && config.game !== "yomifuda") {
+      return collectAssetRefs({ visual: config.visual }).some(ref => ref.assetId === assetId);
+    }
+    const seat = this.viewerSeat(room, member.userId);
+    if (!room.match || seat === null) return false;
+    const { game } = seatProjection(room.match, seat);
+    const refs = config.game === "quizor" ? quizorMediaRefs(game) : config.game === "yomifuda" ? yomifudaMediaRefs(game) : [];
+    return refs.some(ref => ref.assetId === assetId);
+  }
+
+  botMediaView(lobbyId: string, key: string, controllerId?: string) {
+    return this.lock(lobbyId, async () => {
+      const userId = await this.botIdentity(lobbyId, key, controllerId);
+      const room = await this.room(lobbyId);
+      await this.advanceForPlayer(room);
+      const seat = this.viewerSeat(room, userId);
+      if (!room.match || seat === null) return { gameId: (await this.loadRow(lobbyId)).gameId, view: null, now: this.deps.now() };
+      const projected = seatProjection(room.match, seat);
+      return { gameId: room.match.game.id, view: projected.game as unknown, now: projected.now };
+    });
+  }
+
+  private async renewBot(room: Room, userId: string) {
+    const now = this.deps.now();
+    const existing = room.bots.get(userId);
+    const connected = existing && existing.expiresAt > now;
+    const bot = existing ?? new BotConnection();
+    bot.expiresAt = now + BOT_LEASE_MS;
+    room.bots.set(userId, bot);
+    if (!connected) {
+      bot.invalidate();
+      await this.syncPresence(room);
+      await this.publishLobby(room);
+    }
+    this.schedule(room);
+    return bot;
+  }
+
+  private async advanceForPlayer(room: Room, now = this.deps.now()) {
+    if (room.match?.advance(now)) {
+      await this.afterMatchChange(room);
+      this.publishMatch(room);
+    }
+  }
+
+  private botEvent(room: Room, userId: string, bot: BotConnection, reading: boolean) {
+    return bot.current(playerSnapshot(room.match, room.matchId, this.viewerSeat(room, userId), room.seatNames, room.botLobbyState), room.revision, reading);
+  }
+
+  async botWait(lobbyId: string, key: string, after: number, timeoutMs: number, signal?: AbortSignal, controllerId?: string) {
+    let waitingConnection: BotConnection | undefined;
+    const deadline = Date.now() + Math.min(25_000, Math.max(0, timeoutMs));
+    const read = async () => this.lock(lobbyId, async () => {
+      const member = await this.botMember(lobbyId, key, controllerId);
+      const room = await this.room(lobbyId);
+      if (waitingConnection && room.bots.get(member.userId) !== waitingConnection)
+        throw conflict("bot_disconnected", "Ожидание завершено после отключения игрового места");
+      const bot = await this.renewBot(room, member.userId);
+      waitingConnection = bot;
+      await this.advanceForPlayer(room);
+      const event = this.botEvent(room, member.userId, bot, true);
+      const instructions = BOT_INSTRUCTIONS[member.botDifficulty as BotDifficulty];
+      if (after !== event.cursor) return { result: { event, instructions } };
+      const remaining = deadline - Date.now();
+      const wait = remaining > 0 && !signal?.aborted ? bot.wait(remaining, signal) : undefined;
+      return { result: { event: null, instructions }, wait };
+    });
+    for (;;) {
+      const step = await read();
+      if (!step.wait) return step.result;
+      await step.wait;
+    }
+  }
+
+  botAct(lobbyId: string, key: string, cursor: number, action: unknown, controllerId?: string) {
+    return this.lock(lobbyId, async () => {
+      const member = await this.botMember(lobbyId, key, controllerId);
+      const room = await this.room(lobbyId);
+      const bot = await this.renewBot(room, member.userId);
+      const now = this.deps.now();
+      await this.advanceForPlayer(room, now);
+      const event = this.botEvent(room, member.userId, bot, false);
+      if (!room.match || event.cursor !== cursor || event.kind !== "turn" || event.seat === null)
+        throw conflict("stale_agent_event", "Получите актуальное состояние своего места");
+      const type = action && typeof action === "object" && "type" in action ? action.type : undefined;
+      if (!event.actions.some(form => form.type === type)) throw badRequest("bad_action", "Это действие сейчас недоступно");
+      const result = room.match.dispatchPlayer(event.seat, action, now);
+      if (!result.ok) throw badRequest(result.error.code, result.error.message);
+      bot.invalidate();
+      await this.saveLog(room);
+      await this.afterMatchChange(room);
+      this.publishMatch(room);
+    });
+  }
+
+  botDetach(lobbyId: string, key: string, controllerId?: string) {
+    return this.lock(lobbyId, async () => {
+      const member = await this.botMember(lobbyId, key, controllerId);
+      const room = await this.room(lobbyId);
+      room.bots.get(member.userId)?.notify();
+      room.bots.delete(member.userId);
+      await this.syncPresence(room);
+      this.schedule(room);
+      await this.publishLobby(room);
+    });
   }
 
   async saveConfig(user: UserDto, lobbyId: string, name: string): Promise<ConfigDto> {
@@ -663,6 +899,9 @@ export class LobbyService {
       if (row.status === "closed") throw conflict("closed", "Лобби закрыто");
       const config = row.config as unknown as ConfigDocument;
       const { game, min, max } = this.seatsOf(config);
+      if (row.members.some(member => member.botNumber !== null && !member.botKeyHash)) {
+        throw conflict("bot_reserved", "Сначала подключите ИИ к его месту или снимите резерв");
+      }
       const players = row.members.filter((m) => m.role === "player").map((m) => m.userId);
       const room = await this.room(lobbyId);
       await this.expireAgent(room, this.deps.now());
@@ -720,6 +959,8 @@ export class LobbyService {
       room.timer = null;
       room.match = null;
       room.agent.drop("disconnected");
+      for (const bot of room.bots.values()) bot.notify();
+      room.bots.clear();
       const dto = await this.publishLobby(room);
       this.publishMatch(room);
       return dto;
@@ -787,6 +1028,7 @@ export class LobbyService {
       return;
     }
     const online = new Set([...room.subscribers].filter(sub => !sub.closed?.()).map(sub => sub.userId));
+    for (const [id, bot] of room.bots) if (bot.expiresAt > this.deps.now()) online.add(id);
     const seats = new Set(room.seatUsers.flatMap((id, seat) => online.has(id) ? [seat] : []));
     let changed = advanced;
     for (let seat = 0; seat < room.seatUsers.length; seat++) {
@@ -837,7 +1079,11 @@ export class LobbyService {
     room.hostId = row.hostId;
     room.presenterId = row.members.find(m => m.role === "presenter")?.userId ?? null;
     room.playerIds = new Set(row.members.filter(member => member.role === "player").map(member => member.userId));
+    room.botMemberIds = new Set(row.members.filter(member => member.botNumber !== null).map(member => member.userId));
     const dto = this.dto(row, room);
+    room.botLobbyState = { name: dto.name, gameId: dto.gameId, status: dto.status, seats: dto.seats,
+      summary: dto.information.summary, members: dto.members };
+    for (const bot of room.bots.values()) bot.notify();
     for (const sub of room.subscribers) sub.send({ type: "lobby", lobby: dto });
     return dto;
   }
@@ -900,7 +1146,10 @@ export class LobbyService {
     const member = room.playerIds.has(userId) || controlRole !== undefined
       || (await this.deps.db.lobbyVisit.findUnique({ where: { lobbyId_userId: { lobbyId, userId } } })) !== null;
     if (!member) throw forbidden("Сначала откройте лобби");
-    const current = game.video.directives(room.match.view(this.viewerSeat(room, userId), controlRole).game);
+    const seat = this.viewerSeat(room, userId);
+    const projection = seat !== null && room.botMemberIds.has(userId)
+      ? seatProjection(room.match, seat).game : room.match.view(seat, controlRole).game;
+    const current = game.video.directives(projection);
     this.rememberVideo(lobbyId, userId, current);
     const directive = this.videoSeen.get(`${lobbyId}\n${userId}`)?.get(key);
     if (!directive) throw forbidden("Эта сцена пока не показана");
@@ -909,7 +1158,9 @@ export class LobbyService {
   }
 
   private publishMatch(room: Room) {
+    room.revision++;
     room.agent.publish(room.agentAssignment?.role, room.matchId, room.match);
+    for (const bot of room.bots.values()) bot.notify();
     for (const sub of room.subscribers) this.sendMatch(room, sub);
   }
 
@@ -937,7 +1188,8 @@ export class LobbyService {
   private schedule(room: Room) {
     if (room.timer) clearTimeout(room.timer);
     room.timer = null;
-    const at = Math.min(room.match?.nextWakeAt() ?? Infinity, room.agent.expiresAt ?? Infinity);
+    let at = Math.min(room.match?.nextWakeAt() ?? Infinity, room.agent.expiresAt ?? Infinity);
+    for (const bot of room.bots.values()) at = Math.min(at, bot.expiresAt);
     if (!Number.isFinite(at)) return;
     const delay = Math.min(Math.max(0, at - this.deps.now()), MAX_TIMER_MS);
     room.timer = setTimeout(() => void this.wake(room.lobbyId), delay);
@@ -950,7 +1202,15 @@ export class LobbyService {
       if (!room) return;
       const now = this.deps.now();
       await this.expireAgent(room, now);
-      if (!room.match) return;
+      let disconnected = false;
+      for (const [id, bot] of room.bots) {
+        if (bot.expiresAt > now) continue;
+        bot.notify();
+        room.bots.delete(id);
+        disconnected = true;
+      }
+      if (disconnected) { await this.syncPresence(room); await this.publishLobby(room); }
+      if (!room.match) { this.schedule(room); return; }
       const changed = room.match.advance(now);
       await this.afterMatchChange(room);
       if (changed) this.publishMatch(room);
@@ -1007,6 +1267,8 @@ export class LobbyService {
     for (const room of this.rooms.values()) {
       if (room.timer) clearTimeout(room.timer);
       room.agent.drop("disconnected");
+      for (const bot of room.bots.values()) bot.notify();
+      room.bots.clear();
     }
     this.rooms.clear();
   }

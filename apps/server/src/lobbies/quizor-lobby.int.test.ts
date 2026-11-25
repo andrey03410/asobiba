@@ -19,7 +19,7 @@ const game = defineGame({
   setup: (ctx) => ({ paused: false, revealed: false, finished: false, seats: ctx.seats, ownAnswer: null as Record<string,string> | null, endAt: ctx.rules.endAt, asset: ctx.rules.current?.asset ?? "ast_visible", present: [] as number[] }),
   nextWakeAt: (state) => !state.finished ? state.endAt ?? null : null,
   wake: (state) => ({ ...state, finished: true }),
-  currentSeats: (state) => Array.from({ length: state.seats }, (_, seat) => seat), legalActions: () => [{ add: 1 as const }],
+  currentSeats: (state) => Array.from({ length: state.seats }, (_, seat) => seat), legalActions: () => [{ add: 1 as const }], playerActions: () => [],
   applyAction: (state, _seat, action) => "answers" in action ? { ...state, ownAnswer: action.answers } : state, roundResult: (state) => state.finished ? { winners: [0], losers: [], draw: false, reason: "done" } : null,
   applyControl: (state, raw, ctx) => {
     const action = raw as { type: string; seat?: number; online?: boolean };

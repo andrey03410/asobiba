@@ -215,7 +215,21 @@ export type LobbyAgentCommand =
   | { action: "disconnect" | "reconnect" | "algorithm" | "finish" }
   | { action: "human"; userId: string };
 
+export type BotDifficulty = "low" | "medium" | "high" | "maximum";
+
+export interface BotOptions {
+  name: string;
+  difficulty?: BotDifficulty;
+}
+
+export interface BotSeatDto {
+  number: number;
+  difficulty: BotDifficulty;
+  status: "reserved" | "connected" | "disconnected";
+}
+
 export interface LobbyMemberDto {
+  bot?: BotSeatDto;
   userId: string;
   login: string;
   role: "player" | "spectator" | "presenter";
