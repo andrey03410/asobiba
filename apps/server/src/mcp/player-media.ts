@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { Resvg } from "@resvg/resvg-js";
 import { imageSize } from "image-size";
@@ -8,12 +10,25 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Services } from "../app";
+import { REPO_ROOT } from "../env";
 import { quizorMediaRefs, yomifudaMediaRefs } from "../games/media-refs";
 import { badRequest, forbidden, HttpError, notFound } from "../http-errors";
 import { run } from "./result";
 import { sceneMedia } from "./scene-media";
 
 const execute = promisify(execFile);
+// Local workspaces already install Douga. The production image provides ffmpeg on PATH.
+const siblingFfmpeg = resolve(
+  REPO_ROOT,
+  "../douga/node_modules/ffmpeg-static",
+  process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
+);
+function ffmpeg() {
+  return (
+    process.env.ASOBIBA_FFMPEG ??
+    (process.env.NODE_ENV !== "production" && existsSync(siblingFfmpeg) ? siblingFfmpeg : "ffmpeg")
+  );
+}
 const MAX_CLIP_SECONDS = 5;
 let rendering = false;
 
@@ -166,7 +181,7 @@ async function clip(path: string, block: Block, offset: number, seconds: number)
   if (video) args.push("-movflags", "frag_keyframe+empty_moov", "-f", "mp4");
   else args.push("-f", "mp3");
   args.push("pipe:1");
-  const { stdout } = await execute(process.env.ASOBIBA_FFMPEG ?? "ffmpeg", args, {
+  const { stdout } = await execute(ffmpeg(), args, {
     encoding: "buffer",
     maxBuffer: 8 * 1024 * 1024,
     timeout: 12_000,

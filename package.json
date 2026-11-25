@@ -13,6 +13,7 @@
   },
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "predev:server": "node scripts/build-player-scene.mjs --if-missing",
     "dev:server": "node scripts/prisma.mjs migrate deploy && tsx watch --env-file-if-exists=.env --clear-screen=false apps/server/src/main.ts",
     "dev:web": "npm run dev -w @asobiba/web",
     "build": "npm run build -w @asobiba/web && node scripts/build-player-scene.mjs",

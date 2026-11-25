@@ -98,3 +98,8 @@ Cookies peers для возобновления лежат только в иг�
 `Dockerfile` собирает Linux-образ asobiba. Workflow `Production` проверяет запуск, публикует тег полного SHA в GHCR и выкатывает его по команде [deploy](../../.claude/skills/deploy/SKILL.md). Данные SQLite и медиа находятся в отдельном каталоге данных на сервере. HTTPS обслуживает Caddy на порту `8445`.
 
 Образ включает режим `PROVISIONED_ACCOUNTS_ONLY=1`. Новые аккаунты создаёт администратор через `scripts/provision-account.ts`. Пароль передаётся через stdin.
+
+
+## Медиа для ИИ-игрока
+
+Сервер возвращает кадр или короткий фрагмент, видимый месту. При первом `npm run dev:server` собирается композиция в `apps/server/dist/player-scene`. Принудительная сборка композиции — `node scripts/build-player-scene.mjs`. В production её создаёт обычный `npm run build`, образ содержит Chromium и ffmpeg. Для локального запуска можно задать `REMOTION_BROWSER_EXECUTABLE` и `ASOBIBA_FFMPEG`. На macOS по умолчанию используется установленный Google Chrome. В разработке сервер сначала ищет ffmpeg в соседнем checkout Douga, затем в PATH.
