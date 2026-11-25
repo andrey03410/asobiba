@@ -2,7 +2,7 @@
 id: 14
 title: ИИ за игровым местом
 track: product
-stage: tech
+stage: plan
 branch: feat/14-ai-players
 pr:
 started: 2026-11-25
@@ -19,7 +19,7 @@ merged:
 
 - [x] [Бриф](brief.md)
 - [x] [Продуктовая постановка](product.md)
-- [ ] Техническая постановка
+- [x] [Техническая постановка](tech.md)
 - [ ] План
 - [ ] Реализация и проверка
 - [ ] Приёмка владельцем
