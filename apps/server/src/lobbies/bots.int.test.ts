@@ -142,4 +142,5 @@ it("hides the paused Quizor board from the player media channel", async () => {
   expect((await svc.botMediaView(lobby.id, bot.key)).view).not.toBeNull();
   await svc.pause(user, lobby.id, true);
   expect((await svc.botMediaView(lobby.id, bot.key)).view).toBeNull();
+  expect((await svc.botWait(lobby.id, bot.key, 0, 0)).event?.state).not.toHaveProperty("game");
 });
